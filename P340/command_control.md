@@ -29,12 +29,12 @@ Commands keep close to the `ultraArmP340` Python API names, with a few short ali
 
 | Command | API | Example |
 | --- | --- | --- |
-| `go X Y Z [speed]` | `set_coords([x,y,z], speed)` | `go 180 0 80 30` |
-| `coord AXIS VALUE [speed]` | `set_coord(axis, value, speed)` | `coord Z 60` |
+| `go X Y Z [speed]` | full XYZ move | `go 180 0 80 30` |
+| `coord AXIS VALUE [speed]` | one-axis move via full XYZ | `coord Z 60` |
 | `where` | `get_coords_info()` | `where` |
 | `zero` | `go_zero()` | `zero` |
 | `speed VALUE` | default move speed | `speed 40` |
-| `mode abs\|rel` | `set_mode(0/1)` | `mode abs` |
+| `mode abs\|rel` | CLI coordinate mode | `mode abs` |
 | `speedmode const\|accel` | `set_speed_mode(0/2)` | `speedmode accel` |
 | `angle ID DEGREE [speed]` | `set_angle(id, degree, speed)` | `angle 1 30` |
 | `joints J1 J2 J3 [speed]` | `set_angles([j1,j2,j3], speed)` | `joints 0 30 30 20` |

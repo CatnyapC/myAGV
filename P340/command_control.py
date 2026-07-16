@@ -34,7 +34,7 @@ commands:
   where                    print current x y z theta
   zero                     go_zero()
   speed VALUE              set default move speed, 1..200
-  mode abs|rel             set_mode(0/1)
+  mode abs|rel             set CLI coordinate mode
   speedmode const|accel    set_speed_mode(0/2)
   angle ID DEGREE [speed]  set_angle(id, degree, speed), id 1..4
   joints J1 J2 J3 [speed]   set_angles([j1,j2,j3], speed)
@@ -182,15 +182,37 @@ def wait_done(arm, targets=None):
 
 
 def move_coords(arm, values, speed, range_check, coord_mode, wait):
-    coords = [parse_float(value, name) for value, name in zip(values, ["x", "y", "z"])]
-    if range_check and coord_mode == "abs":
+    values = [parse_float(value, name) for value, name in zip(values, ["x", "y", "z"])]
+    coords = values
+    if coord_mode == "rel":
+        current = read_coords(arm)
+        if current is None:
+            raise RuntimeError("could not read current coordinates")
+        coords = [current[index] + value for index, value in enumerate(values)]
+    if range_check:
         for axis, value in zip("XYZ", coords):
             check_range(axis, value)
     check_speed(speed)
+    arm.set_mode(0)
     arm.set_coords(coords, speed)
     if wait:
-        targets = dict(enumerate(coords)) if coord_mode == "abs" else None
-        wait_done(arm, targets)
+        wait_done(arm, dict(enumerate(coords)))
+    print_coords(arm)
+
+
+def move_axis(arm, axis, value, speed, range_check, coord_mode, wait):
+    coords = read_coords(arm)
+    if coords is None:
+        raise RuntimeError("could not read current coordinates")
+    check_speed(speed)
+    axis_index = "XYZ".index(axis)
+    coords[axis_index] = coords[axis_index] + value if coord_mode == "rel" else value
+    if range_check:
+        check_range(axis, coords[axis_index])
+    arm.set_mode(0)
+    arm.set_coords(coords, speed)
+    if wait:
+        wait_done(arm, {axis_index: coords[axis_index]})
     print_coords(arm)
 
 
@@ -220,14 +242,7 @@ def run_command(arm, line, state):
             raise ValueError("axis must be X, Y, or Z")
         value = parse_float(args[1], "value")
         move_speed = parse_int(args[2], "speed") if len(args) == 3 else speed
-        if state["range_check"] and state["coord_mode"] == "abs":
-            check_range(axis, value)
-        check_speed(move_speed)
-        arm.set_coord(axis, value, move_speed)
-        if state["wait"]:
-            targets = {"XYZ".index(axis): value} if state["coord_mode"] == "abs" else None
-            wait_done(arm, targets)
-        print_coords(arm)
+        move_axis(arm, axis, value, move_speed, state["range_check"], state["coord_mode"], state["wait"])
     elif command == "where":
         print_coords(arm)
     elif command == "zero":
@@ -244,8 +259,6 @@ def run_command(arm, line, state):
     elif command == "mode":
         if len(args) != 1 or args[0].lower() not in {"abs", "rel"}:
             raise ValueError("usage: mode abs|rel")
-        mode = 0 if args[0].lower() == "abs" else 1
-        arm.set_mode(mode)
         state["coord_mode"] = args[0].lower()
         print(f"mode={args[0].lower()}")
     elif command == "speedmode":
