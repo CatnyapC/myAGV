@@ -17,6 +17,7 @@ MOVE_START_DELAY = 0.5
 MOVE_POLL_INTERVAL = 0.1
 MOVE_SETTLE_READS = 2
 MOVE_TIMEOUT = 60.0
+COORD_TOLERANCE_MM = 2.0
 
 LIMITS = {
     "X": (-360.0, 365.55),
@@ -122,14 +123,23 @@ def print_coords(arm):
     print(" ".join(f"{label}={float(value):.1f}" for label, value in zip(labels, coords)))
 
 
-def wait_done(arm):
+def coords_reached(arm, targets):
+    coords = arm.get_coords_info()
+    if not coords or len(coords) < 3:
+        return False
+    return all(abs(float(coords[index]) - target) <= COORD_TOLERANCE_MM for index, target in targets.items())
+
+
+def wait_done(arm, targets=None):
     time.sleep(MOVE_START_DELAY)
     deadline = time.monotonic() + MOVE_TIMEOUT
     settled_reads = 0
     while settled_reads < MOVE_SETTLE_READS:
         if time.monotonic() > deadline:
             raise TimeoutError("move did not finish")
-        if arm.is_moving_end() == 1:
+        if targets and coords_reached(arm, targets):
+            settled_reads += 1
+        elif not targets and arm.is_moving_end() == 1:
             settled_reads += 1
         else:
             settled_reads = 0
@@ -144,7 +154,8 @@ def move_coords(arm, values, speed, range_check, coord_mode, wait):
     check_speed(speed)
     arm.set_coords(coords, speed)
     if wait:
-        wait_done(arm)
+        targets = dict(enumerate(coords)) if coord_mode == "abs" else None
+        wait_done(arm, targets)
     print_coords(arm)
 
 
@@ -179,7 +190,8 @@ def run_command(arm, line, state):
         check_speed(move_speed)
         arm.set_coord(axis, value, move_speed)
         if state["wait"]:
-            wait_done(arm)
+            targets = {"XYZ".index(axis): value} if state["coord_mode"] == "abs" else None
+            wait_done(arm, targets)
         print_coords(arm)
     elif command == "where":
         print_coords(arm)
