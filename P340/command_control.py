@@ -18,6 +18,8 @@ MOVE_POLL_INTERVAL = 0.1
 MOVE_SETTLE_READS = 2
 MOVE_TIMEOUT = 60.0
 COORD_TOLERANCE_MM = 2.0
+APPROACH_TIMEOUT = 1.0
+APPROACH_DELTA_MM = 1.0
 
 LIMITS = {
     "X": (-360.0, 365.55),
@@ -123,22 +125,55 @@ def print_coords(arm):
     print(" ".join(f"{label}={float(value):.1f}" for label, value in zip(labels, coords)))
 
 
-def coords_reached(arm, targets):
+def read_coords(arm):
     coords = arm.get_coords_info()
     if not coords or len(coords) < 3:
-        return False
-    return all(abs(float(coords[index]) - target) <= COORD_TOLERANCE_MM for index, target in targets.items())
+        return None
+    return [float(value) for value in coords[:3]]
+
+
+def target_error(coords, targets):
+    return max(abs(coords[index] - target) for index, target in targets.items())
+
+
+def coords_reached(arm, targets):
+    coords = read_coords(arm)
+    return coords is not None and target_error(coords, targets) <= COORD_TOLERANCE_MM
 
 
 def wait_done(arm, targets=None):
-    time.sleep(MOVE_START_DELAY)
+    start = time.monotonic()
+    if targets:
+        time.sleep(MOVE_POLL_INTERVAL)
+    else:
+        time.sleep(MOVE_START_DELAY)
     deadline = time.monotonic() + MOVE_TIMEOUT
+    approach_deadline = start + APPROACH_TIMEOUT
+    best_error = None
     settled_reads = 0
     while settled_reads < MOVE_SETTLE_READS:
-        if time.monotonic() > deadline:
+        now = time.monotonic()
+        if now > deadline:
             raise TimeoutError("move did not finish")
-        if targets and coords_reached(arm, targets):
-            settled_reads += 1
+        if targets:
+            coords = read_coords(arm)
+            if coords is None:
+                settled_reads = 0
+                if now > approach_deadline:
+                    raise TimeoutError("move did not approach target")
+            else:
+                error = target_error(coords, targets)
+                if error <= COORD_TOLERANCE_MM:
+                    settled_reads += 1
+                else:
+                    settled_reads = 0
+                if best_error is None:
+                    best_error = error
+                elif error < best_error - APPROACH_DELTA_MM:
+                    best_error = error
+                    approach_deadline = now + APPROACH_TIMEOUT
+                elif now > approach_deadline:
+                    raise TimeoutError("move did not approach target")
         elif not targets and arm.is_moving_end() == 1:
             settled_reads += 1
         else:
