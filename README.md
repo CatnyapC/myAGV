@@ -17,11 +17,14 @@ sudo apt update
 sudo apt install -y git curl
 ```
 
+If `apt update` hangs on `ports.ubuntu.com` IPv6, use `sudo apt -o Acquire::ForceIPv4=true update`.
+
 Install `uv`:
 
 ```bash
+export UV_INSTALL_DIR="$HOME/.local/uv"
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source "$HOME/.local/bin/env"
+source "$UV_INSTALL_DIR/env"
 ```
 
 Clone this repository and install the Python environment:
@@ -45,20 +48,22 @@ uv run python P340/command_control.py --list-ports
 On Raspberry Pi the port is usually `/dev/ttyUSB0`:
 
 ```bash
-uv run python P340/command_control.py --port /dev/ttyUSB0
+uv run python P340/command_control.py --port /dev/ttyUSB0 --wait
 ```
 
 On macOS it may look like:
 
 ```bash
-uv run python P340/command_control.py --port /dev/cu.usbserial-140
+uv run python P340/command_control.py --port /dev/cu.usbserial-140 --wait
 ```
 
 The script runs `go_zero()` on startup. To skip startup homing:
 
 ```bash
-uv run python P340/command_control.py --port /dev/ttyUSB0 --no-zero
+uv run python P340/command_control.py --port /dev/ttyUSB0 --wait --no-zero
 ```
+
+Use `--wait` for normal operation so each move finishes before the next `p340>` prompt.
 
 ## Update later
 
@@ -95,13 +100,6 @@ Coordinates are millimeters. The script rejects out-of-range coordinates by defa
 | Y | `-365.55..365.55 mm` |
 | Z | `-140..130 mm` |
 
-## Safety
-
-- Start with low speed, for example `speed 20`.
-- Test with no payload first.
-- Keep power within reach before moving the arm.
-- Real usable coordinates depend on the arm mount, gripper length, and workpiece height.
-
 ## 日本語
 
 myAGV 上の ultraArm P340 制御スクリプトは `P340/` にあります。
@@ -117,11 +115,14 @@ sudo apt update
 sudo apt install -y git curl
 ```
 
+`apt update` が `ports.ubuntu.com` の IPv6 接続で止まる場合は、`sudo apt -o Acquire::ForceIPv4=true update` を使います。
+
 `uv` をインストールします。
 
 ```bash
+export UV_INSTALL_DIR="$HOME/.local/uv"
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source "$HOME/.local/bin/env"
+source "$UV_INSTALL_DIR/env"
 ```
 
 このリポジトリを取得し、Python 環境を作ります。
@@ -145,20 +146,22 @@ uv run python P340/command_control.py --list-ports
 Raspberry Pi では通常 `/dev/ttyUSB0` です。
 
 ```bash
-uv run python P340/command_control.py --port /dev/ttyUSB0
+uv run python P340/command_control.py --port /dev/ttyUSB0 --wait
 ```
 
 macOS から操作する場合は、次のようなポート名になります。
 
 ```bash
-uv run python P340/command_control.py --port /dev/cu.usbserial-140
+uv run python P340/command_control.py --port /dev/cu.usbserial-140 --wait
 ```
 
 スクリプト起動時は標準で `go_zero()` を実行します。起動時の原点復帰を省略する場合だけ、次のように `--no-zero` を付けます。
 
 ```bash
-uv run python P340/command_control.py --port /dev/ttyUSB0 --no-zero
+uv run python P340/command_control.py --port /dev/ttyUSB0 --wait --no-zero
 ```
+
+通常操作では `--wait` を付け、1 回の移動が終わってから次の `p340>` プロンプトを出します。
 
 ## 2 回目以降の更新
 
@@ -194,10 +197,3 @@ uv sync
 | X | `-360..365.55 mm` |
 | Y | `-365.55..365.55 mm` |
 | Z | `-140..130 mm` |
-
-## 安全メモ
-
-- 最初は `speed 20` など低速で試してください。
-- 最初はワークを持たせず、空荷重で確認してください。
-- アームを動かす前に、すぐ電源を切れる状態にしてください。
-- 実際に使える座標は、アームの取り付け位置、クランパー長、ワーク高さによって変わります。

@@ -3,12 +3,13 @@
 ## Run
 
 ```bash
-uv run python P340/command_control.py --port /dev/cu.usbserial-140
+uv run python P340/command_control.py --port /dev/cu.usbserial-140 --wait
 ```
 
 Use `P340_PORT=/dev/cu.usbserial-140` to avoid passing `--port`.
 
 The script runs `go_zero()` on startup. Use `--no-zero` only when you need to skip homing.
+Use `--wait` for normal operation so each move finishes before the next `p340>` prompt.
 
 ## Coordinate Scale
 
@@ -54,4 +55,4 @@ Commands keep close to the `ultraArmP340` Python API names, with a few short ali
 - Motion speed is checked as `1..200`.
 - Gripper value is `0..100`: `0` close, `100` open.
 - Gripper speed is `0..1500`.
-- Use `--wait` if you want each move command to block until movement ends.
+- Use `--wait` for normal operation. Without it, move commands return before movement ends.
