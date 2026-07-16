@@ -265,7 +265,7 @@ def main():
     parser.add_argument("--baud", type=int, default=BAUD)
     parser.add_argument("--speed", type=int, default=MOVE_SPEED)
     parser.add_argument("--grip-speed", type=int, default=GRIP_SPEED)
-    parser.add_argument("--zero", action="store_true")
+    parser.add_argument("--no-zero", action="store_true", help="skip startup go_zero()")
     parser.add_argument("--wait", action="store_true")
     parser.add_argument("--no-range-check", action="store_true")
     parser.add_argument("--list-ports", action="store_true")
@@ -285,7 +285,7 @@ def main():
     check_speed(state["speed"])
 
     arm = ultraArmP340(args.port, args.baud)
-    if args.zero:
+    if not args.no_zero:
         arm.go_zero()
         time.sleep(0.5)
 

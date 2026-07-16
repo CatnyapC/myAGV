@@ -3,10 +3,12 @@
 ## Run
 
 ```bash
-uv run python P340/command_control.py --port /dev/cu.usbserial-140 --zero
+uv run python P340/command_control.py --port /dev/cu.usbserial-140
 ```
 
 Use `P340_PORT=/dev/cu.usbserial-140` to avoid passing `--port`.
+
+The script runs `go_zero()` on startup. Use `--no-zero` only when you need to skip homing.
 
 ## Coordinate Scale
 
