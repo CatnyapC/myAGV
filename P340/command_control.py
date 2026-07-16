@@ -13,6 +13,10 @@ MOVE_SPEED = 30
 GRIP_SPEED = 500
 CLAMP_VALUE = 0
 RELEASE_VALUE = 100
+MOVE_START_DELAY = 0.5
+MOVE_POLL_INTERVAL = 0.1
+MOVE_SETTLE_READS = 2
+MOVE_TIMEOUT = 60.0
 
 LIMITS = {
     "X": (-360.0, 365.55),
@@ -119,8 +123,17 @@ def print_coords(arm):
 
 
 def wait_done(arm):
-    while arm.is_moving_end() != 1:
-        time.sleep(0.1)
+    time.sleep(MOVE_START_DELAY)
+    deadline = time.monotonic() + MOVE_TIMEOUT
+    settled_reads = 0
+    while settled_reads < MOVE_SETTLE_READS:
+        if time.monotonic() > deadline:
+            raise TimeoutError("move did not finish")
+        if arm.is_moving_end() == 1:
+            settled_reads += 1
+        else:
+            settled_reads = 0
+        time.sleep(MOVE_POLL_INTERVAL)
 
 
 def move_coords(arm, values, speed, range_check, coord_mode, wait):
@@ -266,7 +279,8 @@ def main():
     parser.add_argument("--speed", type=int, default=MOVE_SPEED)
     parser.add_argument("--grip-speed", type=int, default=GRIP_SPEED)
     parser.add_argument("--no-zero", action="store_true", help="skip startup go_zero()")
-    parser.add_argument("--wait", action="store_true")
+    parser.add_argument("--wait", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--no-wait", action="store_true", help="return prompt before move commands finish")
     parser.add_argument("--no-range-check", action="store_true")
     parser.add_argument("--list-ports", action="store_true")
     args = parser.parse_args()
@@ -280,7 +294,7 @@ def main():
         "grip_speed": args.grip_speed,
         "range_check": not args.no_range_check,
         "coord_mode": "abs",
-        "wait": args.wait,
+        "wait": not args.no_wait,
     }
     check_speed(state["speed"])
 

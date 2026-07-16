@@ -48,22 +48,31 @@ uv run python P340/command_control.py --list-ports
 On Raspberry Pi the port is usually `/dev/ttyUSB0`:
 
 ```bash
-uv run python P340/command_control.py --port /dev/ttyUSB0 --wait
+uv run python P340/command_control.py --port /dev/ttyUSB0
 ```
 
 On macOS it may look like:
 
 ```bash
-uv run python P340/command_control.py --port /dev/cu.usbserial-140 --wait
+uv run python P340/command_control.py --port /dev/cu.usbserial-140
 ```
 
 The script runs `go_zero()` on startup. To skip startup homing:
 
 ```bash
-uv run python P340/command_control.py --port /dev/ttyUSB0 --wait --no-zero
+uv run python P340/command_control.py --port /dev/ttyUSB0 --no-zero
 ```
 
-Use `--wait` for normal operation so each move finishes before the next `p340>` prompt.
+The script waits for each move to finish before showing the next `p340>` prompt.
+
+If a move prints `write failed: [Errno 5] Input/output error`, handle it as a dropped USB serial connection:
+
+1. Stop the script with `Ctrl+C`.
+2. Replug the USB serial cable.
+3. Run `uv run python P340/command_control.py --list-ports` again.
+4. Restart with `uv run python P340/command_control.py --port /dev/ttyUSB0`.
+
+If it keeps happening, use a powered USB hub, direct USB port, or shorter USB cable.
 
 ## Update later
 
@@ -146,22 +155,31 @@ uv run python P340/command_control.py --list-ports
 Raspberry Pi では通常 `/dev/ttyUSB0` です。
 
 ```bash
-uv run python P340/command_control.py --port /dev/ttyUSB0 --wait
+uv run python P340/command_control.py --port /dev/ttyUSB0
 ```
 
 macOS から操作する場合は、次のようなポート名になります。
 
 ```bash
-uv run python P340/command_control.py --port /dev/cu.usbserial-140 --wait
+uv run python P340/command_control.py --port /dev/cu.usbserial-140
 ```
 
 スクリプト起動時は標準で `go_zero()` を実行します。起動時の原点復帰を省略する場合だけ、次のように `--no-zero` を付けます。
 
 ```bash
-uv run python P340/command_control.py --port /dev/ttyUSB0 --wait --no-zero
+uv run python P340/command_control.py --port /dev/ttyUSB0 --no-zero
 ```
 
-通常操作では `--wait` を付け、1 回の移動が終わってから次の `p340>` プロンプトを出します。
+スクリプトは 1 回の移動が終わってから次の `p340>` プロンプトを出します。
+
+移動時に `write failed: [Errno 5] Input/output error` が出る場合は、USB シリアル接続が切断またはリセットされたものとして扱います。
+
+1. `Ctrl+C` でスクリプトを止めます。
+2. USB シリアルケーブルを挿し直します。
+3. `uv run python P340/command_control.py --list-ports` を再実行します。
+4. `uv run python P340/command_control.py --port /dev/ttyUSB0` で起動し直します。
+
+何度も起きる場合は、電源付き USB ハブ、直結 USB ポート、短い USB ケーブルを使ってください。
 
 ## 2 回目以降の更新
 
