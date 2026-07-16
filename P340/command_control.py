@@ -13,13 +13,10 @@ MOVE_SPEED = 30
 GRIP_SPEED = 500
 CLAMP_VALUE = 0
 RELEASE_VALUE = 100
-MOVE_START_DELAY = 0.5
-MOVE_POLL_INTERVAL = 0.1
-MOVE_SETTLE_READS = 2
-MOVE_TIMEOUT = 60.0
 COORD_TOLERANCE_MM = 2.0
 APPROACH_TIMEOUT = 1.0
 APPROACH_DELTA_MM = 1.0
+MOVE_SETTLE_MARGIN = 1.0
 
 LIMITS = {
     "X": (-360.0, 365.55),
@@ -46,7 +43,6 @@ commands:
   gripstop                 set_gripper_release()
   power                    power_on()
   servorelease             release_all_servos()
-  wait                     wait until is_moving_end() == 1
   help                     show this text
   quit                     exit
 
@@ -136,59 +132,35 @@ def target_error(coords, targets):
     return max(abs(coords[index] - target) for index, target in targets.items())
 
 
-def coords_reached(arm, targets):
+def wait_done(arm, start_coords, targets, speed):
+    start_error = target_error(start_coords, targets)
+    if start_error <= COORD_TOLERANCE_MM:
+        return
+
+    time.sleep(APPROACH_TIMEOUT)
     coords = read_coords(arm)
-    return coords is not None and target_error(coords, targets) <= COORD_TOLERANCE_MM
+    if coords is None or target_error(coords, targets) >= start_error - APPROACH_DELTA_MM:
+        raise TimeoutError("move did not approach target")
+    if target_error(coords, targets) <= COORD_TOLERANCE_MM:
+        return
 
-
-def wait_done(arm, targets=None):
-    start = time.monotonic()
-    if targets:
-        time.sleep(MOVE_POLL_INTERVAL)
-    else:
-        time.sleep(MOVE_START_DELAY)
-    deadline = time.monotonic() + MOVE_TIMEOUT
-    approach_deadline = start + APPROACH_TIMEOUT
-    best_error = None
-    settled_reads = 0
-    while settled_reads < MOVE_SETTLE_READS:
-        now = time.monotonic()
-        if now > deadline:
-            raise TimeoutError("move did not finish")
-        if targets:
-            coords = read_coords(arm)
-            if coords is None:
-                settled_reads = 0
-                if now > approach_deadline:
-                    raise TimeoutError("move did not approach target")
-            else:
-                error = target_error(coords, targets)
-                if error <= COORD_TOLERANCE_MM:
-                    settled_reads += 1
-                else:
-                    settled_reads = 0
-                if best_error is None:
-                    best_error = error
-                elif error < best_error - APPROACH_DELTA_MM:
-                    best_error = error
-                    approach_deadline = now + APPROACH_TIMEOUT
-                elif now > approach_deadline:
-                    raise TimeoutError("move did not approach target")
-        elif not targets and arm.is_moving_end() == 1:
-            settled_reads += 1
-        else:
-            settled_reads = 0
-        time.sleep(MOVE_POLL_INTERVAL)
+    distance = sum(
+        (start_coords[index] - target) ** 2 for index, target in targets.items()
+    ) ** 0.5
+    time.sleep(max(0.0, distance / speed - APPROACH_TIMEOUT) + MOVE_SETTLE_MARGIN)
+    coords = read_coords(arm)
+    if coords is None or target_error(coords, targets) > COORD_TOLERANCE_MM:
+        raise TimeoutError("move did not reach target")
 
 
 def move_coords(arm, values, speed, range_check, coord_mode, wait):
     values = [parse_float(value, name) for value, name in zip(values, ["x", "y", "z"])]
+    start_coords = read_coords(arm)
+    if start_coords is None:
+        raise RuntimeError("could not read current coordinates")
     coords = values
     if coord_mode == "rel":
-        current = read_coords(arm)
-        if current is None:
-            raise RuntimeError("could not read current coordinates")
-        coords = [current[index] + value for index, value in enumerate(values)]
+        coords = [start_coords[index] + value for index, value in enumerate(values)]
     if range_check:
         for axis, value in zip("XYZ", coords):
             check_range(axis, value)
@@ -196,14 +168,15 @@ def move_coords(arm, values, speed, range_check, coord_mode, wait):
     arm.set_mode(0)
     arm.set_coords(coords, speed)
     if wait:
-        wait_done(arm, dict(enumerate(coords)))
+        wait_done(arm, start_coords, dict(enumerate(coords)), speed)
     print_coords(arm)
 
 
 def move_axis(arm, axis, value, speed, range_check, coord_mode, wait):
-    coords = read_coords(arm)
-    if coords is None:
+    start_coords = read_coords(arm)
+    if start_coords is None:
         raise RuntimeError("could not read current coordinates")
+    coords = start_coords.copy()
     check_speed(speed)
     axis_index = "XYZ".index(axis)
     coords[axis_index] = coords[axis_index] + value if coord_mode == "rel" else value
@@ -212,7 +185,7 @@ def move_axis(arm, axis, value, speed, range_check, coord_mode, wait):
     arm.set_mode(0)
     arm.set_coords(coords, speed)
     if wait:
-        wait_done(arm, {axis_index: coords[axis_index]})
+        wait_done(arm, start_coords, {axis_index: coords[axis_index]}, speed)
     print_coords(arm)
 
 
@@ -277,8 +250,6 @@ def run_command(arm, line, state):
             raise ValueError("id must be 1..4")
         check_speed(move_speed)
         arm.set_angle(joint_id, degree, move_speed)
-        if state["wait"]:
-            wait_done(arm)
         print(arm.get_angles_info())
     elif command in {"joints", "joints4"}:
         joint_count = 4 if command == "joints4" else 3
@@ -289,8 +260,6 @@ def run_command(arm, line, state):
         move_speed = parse_int(args[joint_count], "speed") if len(args) > joint_count else speed
         check_speed(move_speed)
         arm.set_angles(degrees, move_speed)
-        if state["wait"]:
-            wait_done(arm)
         print(arm.get_angles_info())
     elif command == "angles":
         print(arm.get_angles_info())
@@ -323,9 +292,6 @@ def run_command(arm, line, state):
     elif command == "servorelease":
         arm.release_all_servos()
         print("servos released")
-    elif command == "wait":
-        wait_done(arm)
-        print("done")
     else:
         raise ValueError("unknown command; type help")
 

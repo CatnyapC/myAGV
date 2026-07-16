@@ -9,7 +9,7 @@ uv run python P340/command_control.py --port /dev/cu.usbserial-140
 Use `P340_PORT=/dev/cu.usbserial-140` to avoid passing `--port`.
 
 The script runs `go_zero()` on startup. Use `--no-zero` only when you need to skip homing.
-The script waits for each move to finish before showing the next `p340>` prompt.
+The script waits for each coordinate move to reach its target before showing the next `p340>` prompt.
 
 ## Coordinate Scale
 
@@ -46,7 +46,6 @@ Commands keep close to the `ultraArmP340` Python API names, with a few short ali
 | `gripstop` | `set_gripper_release()` | `gripstop` |
 | `power` | `power_on()` | `power` |
 | `servorelease` | `release_all_servos()` | `servorelease` |
-| `wait` | `is_moving_end()` loop | `wait` |
 | `quit` | exit | `quit` |
 
 ## Notes
@@ -55,5 +54,7 @@ Commands keep close to the `ultraArmP340` Python API names, with a few short ali
 - Motion speed is checked as `1..200`.
 - Gripper value is `0..100`: `0` close, `100` open.
 - Gripper speed is `0..1500`.
-- Pass `--no-wait` only for testing. It returns the prompt before movement ends.
+- Coordinate moves read position once after 1 second. No approach means immediate failure. Otherwise, the script waits for the estimated travel time and reads position once more; only reaching the target within 2 mm counts as complete.
+- Angle commands return after the SDK accepts them because they have no coordinate target for this completion check.
+- Pass `--no-wait` only for testing. It returns the prompt before coordinate movement ends.
 - `write failed: [Errno 5] Input/output error` usually means the USB serial device dropped/reset. Replug USB, run `--list-ports`, and prefer a powered hub or direct USB port.
