@@ -34,11 +34,16 @@ LIMITS = {
 
 MOVES = {
     "forward": "go_ahead",
+    "f": "go_ahead",
     "fwd": "go_ahead",
     "back": "retreat",
+    "b": "retreat",
+    "bwd": "retreat",
     "backward": "retreat",
     "left": "pan_left",
+    "l": "pan_left",
     "right": "pan_right",
+    "r": "pan_right",
     "cw": "clockwise_rotation",
     "clockwise": "clockwise_rotation",
     "ccw": "counterclockwise_rotation",
@@ -71,7 +76,7 @@ commands:
   quit                                   exit
 
 move directions:
-  forward back left right cw ccw
+  forward/f/fwd back/b/bwd left/l right/r cw ccw
 """.strip()
 
 
@@ -254,7 +259,7 @@ def run_move(agv, args, default_speed, default_seconds):
     direction = args[0].lower()
     method_name = MOVES.get(direction)
     if method_name is None:
-        raise ValueError("direction must be forward, back, left, right, cw, or ccw")
+        raise ValueError("direction must be forward/f/fwd, back/b/bwd, left/l, right/r, cw, or ccw")
 
     speed = parse_int(args[1], "speed") if len(args) >= 2 else default_speed
     seconds = parse_float(args[2], "seconds") if len(args) == 3 else default_seconds

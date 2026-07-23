@@ -102,7 +102,7 @@ Type commands at the `myagv>` prompt.
 | `go X Y YAW` | Reserved for navigation, not implemented yet | `go 1.2 0.5 90` |
 | `quit` | Exit | `quit` |
 
-`move` directions: `forward`, `back`, `left`, `right`, `cw`, `ccw`.
+`move` directions: `forward`/`f`/`fwd`, `back`/`b`/`bwd`, `left`/`l`, `right`/`r`, `cw`, `ccw`.
 
 ## Coordinate limits
 
@@ -214,7 +214,7 @@ uv sync
 | `go X Y YAW` | ナビゲーション予約。未実装 | `go 1.2 0.5 90` |
 | `quit` | 終了 | `quit` |
 
-`move` の方向: `forward`, `back`, `left`, `right`, `cw`, `ccw`。
+`move` の方向: `forward`/`f`/`fwd`, `back`/`b`/`bwd`, `left`/`l`, `right`/`r`, `cw`, `ccw`。
 
 ## 座標範囲
 
