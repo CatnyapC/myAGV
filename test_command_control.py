@@ -1,4 +1,3 @@
-import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -34,25 +33,11 @@ class CommandControlTest(unittest.TestCase):
         self.assertTrue(state["arm_homed"])
         self.assertEqual(arm.go_zero.call_count, 2)
 
-    def test_move_can_be_stopped(self):
-        started = threading.Event()
-        stopped = threading.Event()
+    def test_move_stops_after_pulse(self):
         agv = Mock()
-
-        def move(_speed, _seconds):
-            started.set()
-            stopped.wait(1)
-
-        agv.go_ahead.side_effect = move
-        agv.stop.side_effect = stopped.set
-        thread = command_control.run_move(agv, ["forward"], 10, 1)
-        self.assertTrue(started.wait(0.5))
-
-        command_control.stop_agv({"agv": agv, "move_thread": thread})
-        thread.join(0.5)
-
-        self.assertFalse(thread.is_alive())
-        self.assertTrue(stopped.is_set())
+        command_control.run_move(agv, ["forward"], 10, 1)
+        agv.go_ahead.assert_called_once_with(10, 1)
+        agv.stop.assert_called_once()
 
 
 if __name__ == "__main__":

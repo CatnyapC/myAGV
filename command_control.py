@@ -4,7 +4,6 @@ import math
 import os
 import shlex
 import signal
-import threading
 import time
 
 from serial.tools import list_ports
@@ -271,6 +270,7 @@ def get_agv(state):
     if state["agv"] is None:
         state["agv"] = MyAgv(state["agv_port"], state["agv_baud"])
         state["agv"].stop()
+        time.sleep(1)
     return state["agv"]
 
 
@@ -289,28 +289,10 @@ def run_move(agv, args, default_speed, default_seconds):
     check_seconds(seconds)
 
     print(f"move {direction} speed={speed} seconds={seconds:g}")
-
-    def move():
-        try:
-            getattr(agv, method_name)(speed, seconds)
-        except Exception as exc:
-            print(f"error: {exc}")
-        finally:
-            agv.stop()
-
-    thread = threading.Thread(target=move, daemon=True)
-    thread.start()
-    return thread
-
-
-def stop_agv(state):
-    if state["agv"] is None:
-        return
-    state["agv"].stop()
-    thread = state["move_thread"]
-    if thread is not None and thread.is_alive():
-        thread.join(0.2)
-        state["agv"].stop()
+    try:
+        getattr(agv, method_name)(speed, seconds)
+    finally:
+        agv.stop()
 
 
 def run_speed(args, state):
@@ -353,14 +335,9 @@ def run_command(line, state):
     if command in {"h", "help", "?"}:
         print(HELP)
     elif command == "move":
-        thread = state["move_thread"]
-        if thread is not None and thread.is_alive():
-            raise ValueError("chassis already moving; type stop")
-        state["move_thread"] = run_move(
-            get_agv(state), args, state["move_speed"], state["move_seconds"]
-        )
+        run_move(get_agv(state), args, state["move_speed"], state["move_seconds"])
     elif command == "stop":
-        stop_agv(state)
+        get_agv(state).stop()
         print("stopped")
     elif command == "go":
         raise NotImplementedError("go is reserved for navigation")
@@ -490,7 +467,6 @@ def main():
     state = {
         "arm": None,
         "agv": None,
-        "move_thread": None,
         "p340_port": args.p340_port,
         "p340_baud": args.p340_baud,
         "agv_port": args.agv_port,
@@ -525,7 +501,8 @@ def main():
     except KeyboardInterrupt:
         print()
     finally:
-        stop_agv(state)
+        if state["agv"] is not None:
+            state["agv"].stop()
 
 
 if __name__ == "__main__":
