@@ -86,14 +86,14 @@ Type commands at the `myagv>` prompt.
 
 | Command | Meaning | Example |
 | --- | --- | --- |
-| `move DIRECTION [speed] [seconds]` | Manual chassis movement pulse | `move forward 10 1` |
+| `move DIRECTION [speed] [seconds]` | Manual chassis movement pulse, max `10` seconds | `move forward 10 1` |
 | `stop` | Stop chassis movement | `stop` |
 | `reach X Y Z [speed]` | Move to absolute XYZ coordinate in mm | `reach 180 0 80 30` |
 | `coord AXIS VALUE [speed]` | Move one axis only | `coord Z 60` |
 | `where` | Print current coordinates | `where` |
 | `zero` | Run `go_zero()` | `zero` |
 | `speed reach VALUE` | Set default reach speed, `1..200` | `speed reach 40` |
-| `speed grip VALUE` | Set default gripper speed, `0..1500` | `speed grip 500` |
+| `speed grip VALUE` | Set default gripper speed, `1..1500` | `speed grip 500` |
 | `speed move VALUE` | Set default manual move speed, `1..127` | `speed move 10` |
 | `speed go VALUE` | Set future navigation speed | `speed go 0.3` |
 | `clamp [value] [speed]` | Close gripper, default value `0` | `clamp` |
@@ -198,14 +198,14 @@ uv sync
 
 | コマンド | 意味 | 例 |
 | --- | --- | --- |
-| `move DIRECTION [speed] [seconds]` | 手動の車体移動パルス | `move forward 10 1` |
+| `move DIRECTION [speed] [seconds]` | 手動の車体移動パルス。最大 `10` 秒 | `move forward 10 1` |
 | `stop` | 車体移動を停止 | `stop` |
 | `reach X Y Z [speed]` | XYZ 絶対座標へ移動。単位は mm | `reach 180 0 80 30` |
 | `coord AXIS VALUE [speed]` | 1 軸だけ移動 | `coord Z 60` |
 | `where` | 現在座標を表示 | `where` |
 | `zero` | `go_zero()` を実行 | `zero` |
 | `speed reach VALUE` | 標準 reach 速度を設定。`1..200` | `speed reach 40` |
-| `speed grip VALUE` | 標準グリッパー速度を設定。`0..1500` | `speed grip 500` |
+| `speed grip VALUE` | 標準グリッパー速度を設定。`1..1500` | `speed grip 500` |
 | `speed move VALUE` | 標準手動移動速度を設定。`1..127` | `speed move 10` |
 | `speed go VALUE` | 将来のナビゲーション速度を設定 | `speed go 0.3` |
 | `clamp [value] [speed]` | クランパーを閉じる。標準 value は `0` | `clamp` |

@@ -1,7 +1,10 @@
 import argparse
 import glob
+import math
 import os
 import shlex
+import signal
+import threading
 import time
 
 from serial.tools import list_ports
@@ -19,6 +22,8 @@ GRIP_SPEED = 500
 MOVE_SPEED = 10
 GO_SPEED = 0.3
 MOVE_SECONDS = 1.0
+MAX_MOVE_SECONDS = 10.0
+ZERO_TIMEOUT_SECONDS = 60
 CLAMP_VALUE = 0
 RELEASE_VALUE = 100
 COORD_TOLERANCE_MM = 2.0
@@ -61,7 +66,7 @@ commands:
   speed reach|grip|move|go VALUE         set default speed
   mode abs|rel                           set P340 coordinate mode
   speedmode const|accel                  set P340 speed mode
-  angle ID DEGREE [speed]                set P340 angle, id 1..4
+  angle ID DEGREE [speed]                set P340 angle, id 1..3
   joints J1 J2 J3 [speed]                set P340 joints 1..3
   joints4 J1 J2 J3 J4 [speed]            set P340 joints 1..4
   angles                                 print P340 angles
@@ -109,9 +114,12 @@ def print_ports():
 
 def parse_float(value, name):
     try:
-        return float(value)
+        value = float(value)
     except ValueError as exc:
         raise ValueError(f"{name} must be number") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite number")
+    return value
 
 
 def parse_int(value, name):
@@ -133,8 +141,8 @@ def check_reach_speed(speed):
 
 
 def check_grip_speed(speed):
-    if speed < 0 or speed > 1500:
-        raise ValueError("grip speed must be 0..1500")
+    if speed < 1 or speed > 1500:
+        raise ValueError("grip speed must be 1..1500")
 
 
 def check_move_speed(speed):
@@ -143,13 +151,13 @@ def check_move_speed(speed):
 
 
 def check_go_speed(speed):
-    if speed <= 0:
+    if not math.isfinite(speed) or speed <= 0:
         raise ValueError("go speed must be > 0")
 
 
 def check_seconds(seconds):
-    if seconds <= 0:
-        raise ValueError("seconds must be > 0")
+    if not 0 < seconds <= MAX_MOVE_SECONDS:
+        raise ValueError(f"seconds must be > 0 and <= {MAX_MOVE_SECONDS:g}")
 
 
 def check_grip(value, speed):
@@ -236,12 +244,26 @@ def move_axis(arm, axis, value, speed, range_check, coord_mode, wait):
     print_coords(arm)
 
 
-def get_arm(state):
+def run_zero(arm):
+    def timeout(_signum, _frame):
+        raise TimeoutError(f"go_zero() timed out after {ZERO_TIMEOUT_SECONDS}s")
+
+    previous_handler = signal.signal(signal.SIGALRM, timeout)
+    signal.alarm(ZERO_TIMEOUT_SECONDS)
+    try:
+        arm.go_zero()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
+def get_arm(state, home=True):
     if state["arm"] is None:
         state["arm"] = ultraArmP340(state["p340_port"], state["p340_baud"])
-        if not state["no_zero"]:
-            state["arm"].go_zero()
-            time.sleep(0.5)
+    if home and not state["no_zero"] and not state["arm_homed"]:
+        run_zero(state["arm"])
+        state["arm_homed"] = True
+        time.sleep(0.5)
     return state["arm"]
 
 
@@ -267,10 +289,28 @@ def run_move(agv, args, default_speed, default_seconds):
     check_seconds(seconds)
 
     print(f"move {direction} speed={speed} seconds={seconds:g}")
-    try:
-        getattr(agv, method_name)(speed, seconds)
-    finally:
-        agv.stop()
+
+    def move():
+        try:
+            getattr(agv, method_name)(speed, seconds)
+        except Exception as exc:
+            print(f"error: {exc}")
+        finally:
+            agv.stop()
+
+    thread = threading.Thread(target=move, daemon=True)
+    thread.start()
+    return thread
+
+
+def stop_agv(state):
+    if state["agv"] is None:
+        return
+    state["agv"].stop()
+    thread = state["move_thread"]
+    if thread is not None and thread.is_alive():
+        thread.join(0.2)
+        state["agv"].stop()
 
 
 def run_speed(args, state):
@@ -313,9 +353,14 @@ def run_command(line, state):
     if command in {"h", "help", "?"}:
         print(HELP)
     elif command == "move":
-        run_move(get_agv(state), args, state["move_speed"], state["move_seconds"])
+        thread = state["move_thread"]
+        if thread is not None and thread.is_alive():
+            raise ValueError("chassis already moving; type stop")
+        state["move_thread"] = run_move(
+            get_agv(state), args, state["move_speed"], state["move_seconds"]
+        )
     elif command == "stop":
-        get_agv(state).stop()
+        stop_agv(state)
         print("stopped")
     elif command == "go":
         raise NotImplementedError("go is reserved for navigation")
@@ -336,8 +381,9 @@ def run_command(line, state):
     elif command == "where":
         print_coords(get_arm(state))
     elif command == "zero":
-        arm = get_arm(state)
-        arm.go_zero()
+        arm = get_arm(state, home=False)
+        run_zero(arm)
+        state["arm_homed"] = True
         time.sleep(0.5)
         print("zeroed")
     elif command == "speed":
@@ -359,8 +405,8 @@ def run_command(line, state):
         joint_id = parse_int(args[0], "id")
         degree = parse_float(args[1], "degree")
         move_speed = parse_int(args[2], "speed") if len(args) == 3 else reach_speed
-        if joint_id < 1 or joint_id > 4:
-            raise ValueError("id must be 1..4")
+        if joint_id < 1 or joint_id > 3:
+            raise ValueError("id must be 1..3")
         check_reach_speed(move_speed)
         arm = get_arm(state)
         arm.set_angle(joint_id, degree, move_speed)
@@ -424,7 +470,7 @@ def main():
     parser.add_argument("--move-speed", type=int, default=MOVE_SPEED)
     parser.add_argument("--go-speed", type=float, default=GO_SPEED)
     parser.add_argument("--move-seconds", type=float, default=MOVE_SECONDS)
-    parser.add_argument("--no-zero", action="store_true", help="skip P340 startup go_zero()")
+    parser.add_argument("--no-zero", action="store_true", help="skip first P340 command go_zero()")
     parser.add_argument("--wait", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-wait", action="store_true", help="return prompt before P340 coordinate movement ends")
     parser.add_argument("--no-range-check", action="store_true")
@@ -444,6 +490,7 @@ def main():
     state = {
         "arm": None,
         "agv": None,
+        "move_thread": None,
         "p340_port": args.p340_port,
         "p340_baud": args.p340_baud,
         "agv_port": args.agv_port,
@@ -454,6 +501,7 @@ def main():
         "go_speed": args.go_speed,
         "move_seconds": args.move_seconds,
         "no_zero": args.no_zero,
+        "arm_homed": False,
         "range_check": not args.no_range_check,
         "coord_mode": "abs",
         "wait": not args.no_wait,
@@ -462,17 +510,22 @@ def main():
     print("myAGV main command control")
     print("type help.")
 
-    while True:
-        try:
-            line = input("myagv> ")
-        except EOFError:
-            break
-
-        try:
-            if not run_command(line, state):
+    try:
+        while True:
+            try:
+                line = input("myagv> ")
+            except EOFError:
                 break
-        except Exception as exc:
-            print(f"error: {exc}")
+
+            try:
+                if not run_command(line, state):
+                    break
+            except Exception as exc:
+                print(f"error: {exc}")
+    except KeyboardInterrupt:
+        print()
+    finally:
+        stop_agv(state)
 
 
 if __name__ == "__main__":
