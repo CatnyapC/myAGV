@@ -114,6 +114,33 @@ class StationsTest(unittest.TestCase):
         self.assertEqual(arm.get_angles_info.call_count, 6)
         arm.is_moving_end.assert_not_called()
 
+    def test_target_pose_completes_without_motion_end_reply(self):
+        for feedback in (
+            [[10, 20, 30]] * 4,  # Already at transport pose: no movement event.
+            [[0, 20, 30], [5, 20, 30]] + [[10, 20, 30]] * 4,
+        ):
+            with self.subTest(feedback=feedback):
+                arm = Mock()
+                arm.get_angles_info.side_effect = feedback
+                arm.is_moving_end.side_effect = AssertionError("No completion reply")
+                with patch("navigation.time.sleep"):
+                    self.assertEqual(navigation.wait_arm(arm, [10, 20, 30]), [10, 20, 30])
+                self.assertEqual(arm.get_angles_info.call_count, len(feedback))
+                arm.is_moving_end.assert_not_called()
+
+    def test_target_pose_rejects_wrong_or_unstable_angles(self):
+        for feedback in (
+            [[0, 20, 30]] * 4,  # Stationary, but never reached target.
+            [[9.5, 20, 30], [10.5, 20, 30]] * 2,  # Near target, still moving.
+        ):
+            with self.subTest(feedback=feedback):
+                arm = Mock()
+                arm.get_angles_info.side_effect = feedback
+                with patch("navigation.time.sleep"), patch(
+                    "navigation.time.monotonic", side_effect=[0, 0, 0.2, 0.4, 0.6, 1.1]
+                ), self.assertRaisesRegex(TimeoutError, "requested pose"):
+                    navigation.wait_arm(arm, [10, 20, 30], timeout=1)
+
     def test_invalid_json_and_angles_refused(self):
         for value in (None, [], [1, 2], [0, 100, 0], [True, 0, 0], [0, 0, float("inf")]):
             with self.subTest(value=value), self.assertRaises(ValueError):

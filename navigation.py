@@ -108,7 +108,9 @@ def read_arm_angles(arm):
 
 
 def wait_arm(arm, target=None, timeout=30):
-    """Read a stable idle pose, or verify completion of a commanded target."""
+    """Require stable measured angles and, for moves, agreement with the target."""
+    if target is not None:
+        print("Waiting for measured arm target: %s" % target, flush=True)
     deadline = time.monotonic() + timeout
     previous = None
     stable_reads = 0
@@ -116,20 +118,19 @@ def wait_arm(arm, target=None, timeout=30):
         angles = read_arm_angles(arm)
         if target is not None and len(angles) != len(target):
             raise ValueError("P340 feedback and target joint counts differ")
-        # A stopped jog/idle arm need not emit the SDK's "Moving end" reply.
-        ended = 1
-        if target is not None:
-            with arm_deadline():
-                ended = arm.is_moving_end()
+        # "Moving end" is not reliable for idle/no-op commands. Use feedback
+        # for completion, as the original command controller does for XYZ moves.
         stable = previous is not None and len(previous) == len(angles) and all(
             abs(a - b) <= 0.2 for a, b in zip(angles, previous))
         reached = target is None or all(abs(a - b) <= 1 for a, b in zip(angles, target))
         stable_reads = stable_reads + 1 if stable else 0
-        if ended == 1 and stable_reads >= (3 if target is None else 1) and reached:
+        if stable_reads >= 3 and reached:
+            if target is not None:
+                print("Arm target reached: %s" % angles, flush=True)
             return angles
         previous = angles
         time.sleep(0.2)
-    raise TimeoutError("P340 did not stop at the requested pose")
+    raise TimeoutError("P340 did not stop at the requested pose; target=%s last_angles=%s" % (target, previous))
 
 
 class Navigation:
@@ -227,6 +228,7 @@ class Navigation:
         self.active = True
         try:
             self.client.send_goal(goal)
+            print("Navigation goal sent; waiting for move_base...", flush=True)
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if self.ros.is_shutdown():
