@@ -88,10 +88,12 @@ Hold/repeat motion keys to keep moving. By default, absence of motion keys for
 this timeout, not immediately. Adjust with `--key-timeout` (0.1–2 seconds);
 allow for your keyboard's initial repeat delay.
 
-Jog reads/commands have a 0.25-second deadline (shorter if the motion-key deadline
-is closer). A stalled SDK call exits the control loop and attempts an arm stop;
-the stop acknowledgement is also bounded to 0.25 seconds. Gripper calls and arm
-connection have 3-second deadlines; homing retains its 60-second deadline.
+Jog reads/commands and stop acknowledgements use `--arm-timeout` (default 0.4
+seconds), which must be below `--key-timeout`. Feedback polls are skipped when
+there isn't enough time before the motion-key deadline; that deadline still stops
+motion. A feedback timeout stops the jog and keeps teleop open for the next key.
+Command or stop-acknowledgement failures exit the controller. Gripper calls and
+arm connection have 3-second deadlines; homing retains its 60-second deadline.
 These bounds prevent a blocked serial read from freezing the software stop loop;
 they cannot force an unresponsive controller to stop physically.
 

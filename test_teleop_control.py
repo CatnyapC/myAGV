@@ -105,7 +105,9 @@ class TeleopTest(unittest.TestCase):
         self.assertEqual(self.events[-1], ("base", (0, 0, 0, 0, 0, 0)))
 
     def test_invalid_speed_and_timeout(self):
-        for option, value in [("--speed", "nan"), ("--key-timeout", "0"), ("--grip-speed", "1501")]:
+        for option, value in [("--speed", "nan"), ("--key-timeout", "0"),
+                              ("--grip-speed", "1501"), ("--arm-timeout", "nan"),
+                              ("--arm-timeout", "0.6")]:
             with self.subTest(option=option), patch("sys.stderr"), self.assertRaises(SystemExit):
                 parse_args(["--p340-port", "unused", option, value])
 
@@ -117,6 +119,7 @@ class TeleopTest(unittest.TestCase):
         c = self.controller
         c.mode = "ARM"
         c.args.key_timeout = 0.1
+        c.args.arm_timeout = 0.05
         for operation in ("get_coords_info", "set_jog_coord"):
             with self.subTest(operation=operation):
                 self.arm.reset_mock(side_effect=True)
@@ -129,12 +132,40 @@ class TeleopTest(unittest.TestCase):
                 getattr(self.arm, operation).side_effect = blocked
                 c.last_poll = 0
                 started = time.monotonic()
-                with self.assertRaises(TimeoutError):
-                    keyboard_loop(c, lambda _: key, lambda: False)
+                if operation == "get_coords_info":
+                    c.tick(time.monotonic())  # Recoverable poll timeout stops jogging.
+                else:
+                    with self.assertRaises(TimeoutError):
+                        keyboard_loop(c, lambda _: key, lambda: False)
                 self.assertLess(time.monotonic() - started, 0.4)
                 self.arm.set_jog_stop.assert_called_once()
                 self.assertIsNone(c.active_move)
                 self.publisher.update.assert_called_with(0, 0, 0, 0, 0, 0)
+
+    def test_near_key_expiry_skips_read_then_stops_on_time(self):
+        c = self.controller
+        c.mode = "ARM"
+        c.handle("w", 10)
+        self.arm.get_coords_info.reset_mock()
+        c.tick(10.59)
+        self.arm.get_coords_info.assert_not_called()
+        self.assertIsNotNone(c.active_move)
+        c.tick(10.61)
+        self.assertIsNone(c.active_move)
+        self.arm.set_jog_stop.assert_called_once()
+
+    def test_feedback_slower_than_old_limit_is_accepted(self):
+        c = self.controller
+        c.mode = "ARM"
+        c.handle("w", time.monotonic())
+        def delayed_feedback():
+            time.sleep(0.3)
+            return [180, 0, 80]
+        self.arm.get_coords_info.side_effect = delayed_feedback
+        c.tick(time.monotonic())
+        self.assertIsNotNone(c.active_move)
+        self.arm.set_jog_stop.assert_not_called()
+        c.stop()
 
     def test_blocked_stop_acknowledgement_is_also_bounded(self):
         c = self.controller

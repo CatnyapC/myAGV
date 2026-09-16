@@ -67,6 +67,10 @@ Terminal 3: keyboard control. Use the P340's port, which may differ from `/dev/t
 /usr/bin/python3 teleop_control.py --p340-port /dev/ttyUSB0
 ```
 
+Arm feedback gets 0.4 seconds; polls near key expiry are skipped. A feedback
+timeout stops the arm without closing teleop. If needed, add `--arm-timeout 0.5`;
+it must remain below `--key-timeout` (default 0.6 seconds).
+
 | Key | Action |
 | --- | --- |
 | Tab | Switch BASE / ARM mode |

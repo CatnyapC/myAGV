@@ -42,7 +42,7 @@ class Controller:
         self.publisher.update(0, 0, 0, 0, 0, 0)
         self.base_moving = False
         if self.active_move:
-            with arm_deadline(0.25):
+            with arm_deadline(self.args.arm_timeout):
                 self.arm.set_jog_stop()
             self.active_move = None
 
@@ -113,7 +113,7 @@ class Controller:
             if move != self.active_move:
                 self.stop()
                 # Bound both the preflight read and the command acknowledgement.
-                with arm_deadline(min(0.25, self.args.key_timeout)):
+                with arm_deadline(self.args.arm_timeout):
                     if not self.arm_can_move(move):
                         print("Arm coordinate limit")
                         return True
@@ -129,11 +129,18 @@ class Controller:
         if (self.base_moving or self.active_move) and now - self.last_motion >= self.args.key_timeout:
             self.stop()
         if self.active_move and now - self.last_poll >= 0.25:
-            self.last_poll = now
             remaining = self.args.key_timeout - (now - self.last_motion)
-            # A stalled read must not outlive the current motion key's deadline.
-            with arm_deadline(min(0.25, remaining)):
-                can_move = self.arm_can_move(self.active_move)
+            # Leave the key watchdog running; don't start a read with a tiny budget.
+            if remaining < self.args.arm_timeout:
+                return
+            self.last_poll = now
+            try:
+                with arm_deadline(self.args.arm_timeout):
+                    can_move = self.arm_can_move(self.active_move)
+            except TimeoutError:
+                self.stop()
+                print("Arm feedback timed out; stopped. Press a motion key to retry.")
+                return
             if not can_move:
                 self.stop()
                 print("Arm coordinate limit")
@@ -178,14 +185,18 @@ def parse_args(argv=None):
     parser.add_argument("--clamp", type=int, default=0)
     parser.add_argument("--release", type=int, default=100)
     parser.add_argument("--key-timeout", type=float, default=0.6)
+    parser.add_argument("--arm-timeout", type=float, default=0.4,
+                        help="jog SDK timeout in seconds; must be below --key-timeout")
     args = parser.parse_args(argv)
     for name, low, high in [("speed", 0.01, 0.2), ("turn", 0.05, 1.0),
                             ("arm_speed", 1, 200), ("grip_speed", 1, 1500),
                             ("clamp", 0, 100), ("release", 0, 100),
-                            ("key_timeout", 0.1, 2.0)]:
+                            ("key_timeout", 0.1, 2.0), ("arm_timeout", 0.05, 2.0)]:
         value = getattr(args, name)
         if not math.isfinite(value) or not low <= value <= high:
             parser.error("%s must be in %s..%s" % (name, low, high))
+    if args.arm_timeout >= args.key_timeout:
+        parser.error("--arm-timeout must be below --key-timeout")
     return args
 
 
