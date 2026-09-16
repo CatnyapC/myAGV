@@ -33,9 +33,6 @@ class Controller:
         self.mode = "BASE"
         self.arm_homed = args.arm_homed
         self.active_move = None
-        self.blocked_move = None
-        self.progress_position = None
-        self.progress_at = 0.0
         self.last_motion = 0.0
         self.last_poll = 0.0
         self.base_moving = False
@@ -48,9 +45,8 @@ class Controller:
             with arm_deadline(self.args.arm_timeout):
                 self.arm.set_jog_stop()
             self.active_move = None
-        self.progress_position = None
 
-    def arm_can_move(self, move, now=None):
+    def arm_can_move(self, move):
         coords = self.arm.get_coords_info()
         if not coords or len(coords) < 3:
             raise RuntimeError("Cannot read arm coordinates; motion stopped")
@@ -60,13 +56,6 @@ class Controller:
         axis, sign = move
         low, high = arm_keys.LIMITS[axis]
         value = values["XYZ".index(axis)]
-        # Cartesian workspace limits can be reached inside the XYZ bounding box.
-        # As in command_control.wait_done, require actual coordinate progress.
-        if now is not None:
-            if self.progress_position is None or sign * (value - self.progress_position) >= 0.5:
-                self.progress_position, self.progress_at = value, now
-            elif now - self.progress_at >= 1.5:
-                return False
         return value < high - 5 if sign > 0 else value > low + 5
 
     def handle(self, key, now):
@@ -106,7 +95,6 @@ class Controller:
             with arm_deadline(60):
                 self.arm.go_zero()
             self.arm_homed = True
-            self.blocked_move = None
             print("Arm homed")
         elif self.mode == "BASE" and key in self.bindings and self.bindings[key][2] == 0:
             self.publisher.update(*self.bindings[key], self.args.speed, self.args.turn)
@@ -123,19 +111,16 @@ class Controller:
                 move = ("Y", move[1])
             elif move[0] == "Y":
                 move = ("X", -move[1])
-            if move == self.blocked_move:
-                return True
             if move != self.active_move:
                 self.stop()
                 # Bound both the preflight read and the command acknowledgement.
                 with arm_deadline(self.args.arm_timeout):
-                    if not self.arm_can_move(move, now):
+                    if not self.arm_can_move(move):
                         print("Arm coordinate limit")
                         return True
                     # Cleanup also stops a partially failed command.
                     self.active_move = move
                     arm_keys.start_jog(self.arm, None, move, self.args.arm_speed)
-                    self.blocked_move = None
             self.last_motion = now
         else:
             self.stop()
@@ -152,15 +137,14 @@ class Controller:
             self.last_poll = now
             try:
                 with arm_deadline(self.args.arm_timeout):
-                    can_move = self.arm_can_move(self.active_move, now)
+                    can_move = self.arm_can_move(self.active_move)
             except TimeoutError:
                 self.stop()
                 print("Arm feedback timed out; stopped. Press a motion key to retry.")
                 return
             if not can_move:
-                self.blocked_move = self.active_move
                 self.stop()
-                print("Arm limit or stalled jog; stopped. Choose another direction.")
+                print("Arm coordinate limit")
 
 
 def keyboard_loop(controller, read_key, is_shutdown):

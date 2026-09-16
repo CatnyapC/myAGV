@@ -81,38 +81,30 @@ class TeleopTest(unittest.TestCase):
         c.handle("j", 3)  # Moving away from upper Z limit is allowed.
         self.arm.set_jog_coord.assert_called_once_with(3, 1, 30)
 
-    def test_stalled_x_jog_stops_and_allows_reverse(self):
+    def test_xy_hold_and_same_direction_restart_with_unchanged_feedback(self):
         c = self.controller
         c.mode = "ARM"
-        c.handle("a", 10)  # X- can stall before the rectangular XYZ limit.
-        self.arm.get_coords_info.return_value = [175, 0, 80]
-        for now in (10.3, 10.6, 10.9, 11.2, 11.5, 11.9):
-            c.handle("a", now)
-            c.tick(now)
-        self.assertIsNone(c.active_move)
-        self.arm.set_jog_stop.assert_called_once()
-        # Key repeat must not restart the stalled command or query it again.
-        self.arm.get_coords_info.reset_mock()
-        c.handle("a", 12)
-        self.arm.get_coords_info.assert_not_called()
-        self.arm.set_jog_coord.assert_called_once_with(1, 0, 30)
-        c.handle("d", 12.1)
-        self.assertEqual(c.active_move, ("X", 1))
-        self.arm.set_jog_coord.assert_called_with(1, 1, 30)
-        c.handle("\t", 12.2)
-        self.assertEqual(c.mode, "BASE")
-
-    def test_slow_progress_does_not_trigger_stall(self):
-        c = self.controller
-        c.mode = "ARM"
-        c.handle("a", 10)
-        for step in range(1, 13):
-            now = 10 + step * 0.3
-            self.arm.get_coords_info.return_value = [180 - step * 0.2, 0, 80]
-            c.handle("a", now)
-            c.tick(now)
-        self.assertEqual(c.active_move, ("X", -1))
-        self.arm.set_jog_stop.assert_not_called()
+        for key, move in (("a", ("X", -1)), ("d", ("X", 1)),
+                          ("w", ("Y", -1)), ("s", ("Y", 1))):
+            with self.subTest(key=key):
+                c.stop()
+                self.arm.reset_mock()
+                c.handle(key, 10)
+                # Firmware may return unchanged coordinates during a jog.
+                for step in range(1, 21):
+                    now = 10 + step * 0.3
+                    c.handle(key, now)
+                    c.tick(now)
+                self.assertEqual(c.active_move, move)
+                self.arm.set_jog_stop.assert_not_called()
+                self.arm.set_jog_coord.assert_called_once()
+                # Releasing the key still stops; the same key can restart.
+                c.tick(16.61)
+                self.assertIsNone(c.active_move)
+                self.arm.set_jog_stop.assert_called_once()
+                c.handle(key, 17)
+                self.assertEqual(c.active_move, move)
+                self.assertEqual(self.arm.set_jog_coord.call_count, 2)
 
     def test_reached_x_limit_blocks_repeat_but_not_reverse(self):
         c = self.controller
