@@ -38,16 +38,21 @@ For command-line operation, first close `myAGV_UI` and stop its launched ROS
 terminals. Do not run two copies of the chassis driver or keyboard controller.
 The UI resets GPIO when it closes, so close it **before** the command below.
 
-On this myAGV PI, the UI's **Open LiDAR** button sets BCM GPIO 20 HIGH before
-starting the driver. Run the same sequence on the AGV:
+On this myAGV PI, opening the UI sets BCM GPIO 21 HIGH. Its **Open LiDAR**
+button then sets BCM GPIO 20 HIGH before starting the driver. Both steps are
+needed to reproduce the UI initialization; setting only GPIO 20 omits startup.
+Run the same GPIO sequence on the AGV:
 
 ```bash
-/usr/bin/python3 -c 'import RPi.GPIO as GPIO; GPIO.setmode(GPIO.BCM); GPIO.setup(20, GPIO.OUT); GPIO.output(20, GPIO.HIGH)'
+/usr/bin/python3 -c 'import RPi.GPIO as GPIO; GPIO.setmode(GPIO.BCM); GPIO.setup(21, GPIO.OUT); GPIO.output(21, GPIO.HIGH); GPIO.setup(20, GPIO.OUT); GPIO.output(20, GPIO.HIGH)'
 roslaunch myagv_odometry myagv_active.launch
 ```
 
 Leave this terminal running. Skip starting another copy if this sequence is already running.
-Verified against `/home/er/AGV_UI/operations.py`, `radar_open()` on the robot.
+Verified against `/home/er/AGV_UI/operations.py`, `myAGV_windows.__init__()` and
+`radar_open()` on the robot. An "already in use, continuing anyway" GPIO warning
+does not abort the command; a pin may retain its output configuration from a
+previous run. Keep the UI closed so it cannot reset the pins afterward.
 
 ## 4. Build or load a map (terminal 2)
 

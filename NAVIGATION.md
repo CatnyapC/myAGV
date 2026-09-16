@@ -5,8 +5,8 @@ Run with the AGV's ROS1 system Python. Follow [QUICKSTART.md](QUICKSTART.md) for
 
 ## 1. Map and localization
 
-Start chassis/LiDAR using [QUICKSTART.md](QUICKSTART.md), including the BCM GPIO 20
-enable step on this myAGV PI. In another prepared terminal, start the UI's mapping
+Start chassis/LiDAR using [QUICKSTART.md](QUICKSTART.md), including the BCM GPIO 21
+then GPIO 20 enable sequence on this myAGV PI. In another prepared terminal, start the UI's mapping
 launch: `roslaunch myagv_navigation myagv_slam_laser.launch`.
 
 Save the LiDAR map displayed in RViz first. A `.rviz` file contains display settings. Keep SLAM running and execute in a terminal with the ROS environment loaded:
