@@ -103,6 +103,11 @@ Options: `--speed`, `--turn`, `--arm-speed`, `--grip-speed`, `--clamp`, `--relea
 
 Arm coordinate limits reuse the existing P340 limits with a 5 mm margin and
 polling every 0.25 seconds. These are software checks, not collision avoidance.
+If feedback shows less than 0.5 mm of progress in the commanded direction for
+1.5 seconds, teleop stops the jog. This also catches workspace limits inside the
+XYZ bounds. Held-key repeats in that direction are then ignored; choose another
+direction to move away (for X-, press `d` for X+). Successful movement-command
+submission in another direction or homing clears the blocked direction.
 Gripper keys send a chassis stop and stop arm jogging before sending the grip command;
 they do not verify physical standstill or successful grasping.
 

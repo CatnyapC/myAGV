@@ -81,6 +81,51 @@ class TeleopTest(unittest.TestCase):
         c.handle("j", 3)  # Moving away from upper Z limit is allowed.
         self.arm.set_jog_coord.assert_called_once_with(3, 1, 30)
 
+    def test_stalled_x_jog_stops_and_allows_reverse(self):
+        c = self.controller
+        c.mode = "ARM"
+        c.handle("a", 10)  # X- can stall before the rectangular XYZ limit.
+        self.arm.get_coords_info.return_value = [175, 0, 80]
+        for now in (10.3, 10.6, 10.9, 11.2, 11.5, 11.9):
+            c.handle("a", now)
+            c.tick(now)
+        self.assertIsNone(c.active_move)
+        self.arm.set_jog_stop.assert_called_once()
+        # Key repeat must not restart the stalled command or query it again.
+        self.arm.get_coords_info.reset_mock()
+        c.handle("a", 12)
+        self.arm.get_coords_info.assert_not_called()
+        self.arm.set_jog_coord.assert_called_once_with(1, 0, 30)
+        c.handle("d", 12.1)
+        self.assertEqual(c.active_move, ("X", 1))
+        self.arm.set_jog_coord.assert_called_with(1, 1, 30)
+        c.handle("\t", 12.2)
+        self.assertEqual(c.mode, "BASE")
+
+    def test_slow_progress_does_not_trigger_stall(self):
+        c = self.controller
+        c.mode = "ARM"
+        c.handle("a", 10)
+        for step in range(1, 13):
+            now = 10 + step * 0.3
+            self.arm.get_coords_info.return_value = [180 - step * 0.2, 0, 80]
+            c.handle("a", now)
+            c.tick(now)
+        self.assertEqual(c.active_move, ("X", -1))
+        self.arm.set_jog_stop.assert_not_called()
+
+    def test_reached_x_limit_blocks_repeat_but_not_reverse(self):
+        c = self.controller
+        c.mode = "ARM"
+        c.handle("a", 10)
+        self.arm.get_coords_info.return_value = [-356, 0, 80]
+        c.tick(10.1)
+        self.assertIsNone(c.active_move)
+        c.handle("a", 10.2)
+        self.arm.set_jog_coord.assert_called_once_with(1, 0, 30)
+        c.handle("d", 10.3)
+        self.assertEqual(c.active_move, ("X", 1))
+
     def test_feedback_failure_stops_motion_and_propagates(self):
         c = self.controller
         c.handle("\t", 0)
