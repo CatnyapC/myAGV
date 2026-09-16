@@ -78,6 +78,14 @@ to acknowledge that state. Homing is a blocking SDK operation, not keyboard jog.
 It has a 60-second software timeout; timeout does not prove physical homing stopped.
 
 Recording also requires homing, current map localization and fresh `odom` feedback.
+Press lowercase `p` without Enter. It immediately prints `Recording station`,
+then reports each check: ROS connection, base standstill, map position, arm angles.
+Wait for `Item name`, type a name, and press Enter. An empty name cancels.
+If recording fails, `Not saved` shows the reason; the JSON stays unchanged.
+Idle arm snapshots use four stable angle samples spanning about 0.6 seconds,
+without requiring a `Moving end` reply after jogging. The arm settling timeout
+is 5 seconds; individual SDK reads retain their own 3-second deadline.
+Map recording requires SLAM or AMCL localization, not just the chassis driver.
 Same-name saves overwrite that item in `stations.json`; `--stations PATH` changes
 the file. See [NAVIGATION.md](NAVIGATION.md) for map setup and automatic fetching
 back to the base and arm pose captured at demo startup. Exit teleop before running

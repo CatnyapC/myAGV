@@ -108,19 +108,24 @@ def read_arm_angles(arm):
 
 
 def wait_arm(arm, target=None, timeout=30):
-    """Require completed motion and two stable angle samples, not a fixed sleep."""
+    """Read a stable idle pose, or verify completion of a commanded target."""
     deadline = time.monotonic() + timeout
     previous = None
+    stable_reads = 0
     while time.monotonic() < deadline:
         angles = read_arm_angles(arm)
         if target is not None and len(angles) != len(target):
             raise ValueError("P340 feedback and target joint counts differ")
-        with arm_deadline():
-            ended = arm.is_moving_end()
+        # A stopped jog/idle arm need not emit the SDK's "Moving end" reply.
+        ended = 1
+        if target is not None:
+            with arm_deadline():
+                ended = arm.is_moving_end()
         stable = previous is not None and len(previous) == len(angles) and all(
             abs(a - b) <= 0.2 for a, b in zip(angles, previous))
         reached = target is None or all(abs(a - b) <= 1 for a, b in zip(angles, target))
-        if ended == 1 and stable and reached:
+        stable_reads = stable_reads + 1 if stable else 0
+        if ended == 1 and stable_reads >= (3 if target is None else 1) and reached:
             return angles
         previous = angles
         time.sleep(0.2)

@@ -73,6 +73,7 @@ class Controller:
         if key == "\x03":
             return False
         if key == "p":
+            print("Recording station: stopping motion...", flush=True)
             self.stop()
             if not self.arm_homed:
                 print("Home arm before recording (h in ARM mode)")
@@ -179,14 +180,20 @@ def record_station(controller, nav, ask_name):
     """Capture measured poses while stopped; only then prompt for the item name."""
     if not controller.arm_homed:
         raise RuntimeError("Home arm before recording")
+    print("Recording: waiting for stationary base / odom (up to 5s)...", flush=True)
     nav.wait_stopped()
-    angles = wait_arm(controller.arm)
-    station = {"base": nav.get_pose(), "arm_angles_deg": angles}
+    print("Recording: reading map position (up to 3s)...", flush=True)
+    pose = nav.get_pose()
+    print("Recording: waiting for stable arm angles...", flush=True)
+    angles = wait_arm(controller.arm, timeout=5)
+    station = {"base": pose, "arm_angles_deg": angles}
     print("Measured pose: %s" % station)
     name = ask_name().strip()
     if name:
         save_station(name, station, controller.args.stations)
         print("Saved %s: %s" % (name, station))
+    else:
+        print("Recording cancelled")
 
 
 def parse_args(argv=None):
@@ -259,6 +266,7 @@ def main():
             nonlocal nav
             try:
                 if nav is None:
+                    print("Recording: connecting to ROS pose feedback...", flush=True)
                     nav = Navigation()
                 record_station(controller, nav, ask_name)
             except (ValueError, RuntimeError, OSError) as exc:

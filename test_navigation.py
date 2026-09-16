@@ -82,6 +82,38 @@ class StationsTest(unittest.TestCase):
             self.assertEqual(path.read_bytes(), before)
             self.assertEqual(list(Path(folder).iterdir()), [path])
 
+    def test_record_checks_map_before_arm_and_reports_progress(self):
+        args = parse_args(["--p340-port", "unused", "--arm-homed"])
+        c = Controller(Mock(), Mock(), {}, args)
+        nav, ask_name = Mock(), Mock(return_value="")
+        c.record = lambda: record_station(c, nav, ask_name)
+        nav.get_pose.side_effect = RuntimeError("No map transform")
+        with patch("teleop_control.print") as output, patch("teleop_control.wait_arm") as wait:
+            with self.assertRaisesRegex(RuntimeError, "No map transform"):
+                c.handle("p", 1)
+            output.assert_any_call("Recording station: stopping motion...", flush=True)
+            wait.assert_not_called()
+            ask_name.assert_not_called()
+            nav.get_pose.side_effect = None
+            nav.get_pose.return_value = dict(POSE)
+            wait.return_value = [10, 20, 30]
+            c.handle("p", 2)
+            wait.assert_called_once_with(c.arm, timeout=5)
+            ask_name.assert_called_once()
+            output.assert_any_call("Recording cancelled")
+
+    def test_idle_pose_needs_stable_angles_not_motion_end_reply(self):
+        arm = Mock()
+        arm.get_angles_info.side_effect = [
+            [0, 10, 20], [5, 10, 20], [10, 10, 20],
+            [10, 10, 20], [10, 10, 20], [10, 10, 20],
+        ]
+        arm.is_moving_end.side_effect = AssertionError("Idle jog has no completion reply")
+        with patch("navigation.time.sleep"):
+            self.assertEqual(navigation.wait_arm(arm, timeout=5), [10, 10, 20])
+        self.assertEqual(arm.get_angles_info.call_count, 6)
+        arm.is_moving_end.assert_not_called()
+
     def test_invalid_json_and_angles_refused(self):
         for value in (None, [], [1, 2], [0, 100, 0], [True, 0, 0], [0, 0, float("inf")]):
             with self.subTest(value=value), self.assertRaises(ValueError):
