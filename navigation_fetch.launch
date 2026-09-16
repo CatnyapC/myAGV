@@ -1,0 +1,13 @@
+<launch>
+  <arg name="map_file" />
+  <include file="$(find myagv_navigation)/launch/navigation_active.launch">
+    <arg name="map_file" value="$(arg map_file)" />
+  </include>
+
+  <!-- Load after the upstream defaults, before move_base starts.
+       Leave margin inside navigation.py's 5 cm / 5 degree arrival check. -->
+  <param name="/move_base/TrajectoryPlannerROS/xy_goal_tolerance" value="0.03" />
+  <param name="/move_base/TrajectoryPlannerROS/yaw_goal_tolerance" value="0.05" />
+  <param name="/move_base/TrajectoryPlannerROS/trans_stopped_vel" value="0.005" />
+  <param name="/move_base/TrajectoryPlannerROS/theta_stopped_vel" value="0.01" />
+</launch>

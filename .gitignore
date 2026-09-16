@@ -182,3 +182,7 @@ cython_debug/
 
 # Local agent instructions
 AGENTS.md
+
+# Downloaded upstream reference/runtime repositories (setup in TELEOP.md)
+/vendor/pymycobot/
+/vendor/teleop_twist_keyboard/
