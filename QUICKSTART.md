@@ -32,28 +32,59 @@ export ROS_PACKAGE_PATH="$HOME/myAGV/vendor:$ROS_PACKAGE_PATH"
 
 The last line fixes `ResourceNotFound: teleop_twist_keyboard`. Use system Python below, not `uv run`.
 
-### Save the map shown in RViz, if needed
+## 3. Start chassis and LiDAR (terminal 1)
 
-Keep SLAM running. In a prepared terminal:
+For command-line operation, first close `myAGV_UI` and stop its launched ROS
+terminals. Do not run two copies of the chassis driver or keyboard controller.
+The UI resets GPIO when it closes, so close it **before** the command below.
+
+On this myAGV PI, the UI's **Open LiDAR** button sets BCM GPIO 20 HIGH before
+starting the driver. Run the same sequence on the AGV:
+
+```bash
+/usr/bin/python3 -c 'import RPi.GPIO as GPIO; GPIO.setmode(GPIO.BCM); GPIO.setup(20, GPIO.OUT); GPIO.output(20, GPIO.HIGH)'
+roslaunch myagv_odometry myagv_active.launch
+```
+
+Leave this terminal running. Skip starting another copy if this sequence is already running.
+Verified against `/home/er/AGV_UI/operations.py`, `radar_open()` on the robot.
+
+## 4. Build or load a map (terminal 2)
+
+### Build and save a map, if needed
+
+In another prepared terminal, start the same mapping launch as the UI's
+**Build Map** button:
+
+```bash
+roslaunch myagv_navigation myagv_slam_laser.launch
+```
+
+This also opens RViz; use a terminal in the AGV's remote desktop for the display.
+Use teleop (section 5) to explore. Keep mapping running while saving from another
+prepared terminal:
 
 ```bash
 mkdir -p ~/maps
 rosrun map_server map_saver -f ~/maps/room
 ```
 
-Keep both `room.pgm` (map image) and `room.yaml` (map parameters). A `.rviz` file stores display settings, not the map. [Official map-saving guide](https://docs.elephantrobotics.com/docs/myagv_pi23_en/6-SDKDevelopment/6.2-ApplicationBaseROS1/6.2.5-Real-time_Mapping_with_Gmapping.html).
+Keep both `room.pgm` (map image) and `room.yaml` (map parameters). A `.rviz` file
+stores display settings, not the map. [Official map-saving guide](https://docs.elephantrobotics.com/docs/myagv_pi23_en/6-SDKDevelopment/6.2-ApplicationBaseROS1/6.2.5-Real-time_Mapping_with_Gmapping.html).
 
-If it stays at `Waiting for the map`, check that SLAM is running; LiDAR scan points alone do not provide `/map`. Once saved, stop SLAM before starting navigation.
+If saving remains at this message, `/map` has not arrived:
 
-## 3. Start three terminals
-
-Terminal 1: chassis and LiDAR. Skip if already running.
-
-```bash
-roslaunch myagv_odometry myagv_active.launch
+```text
+[ INFO] [1789557607.777167610]: Waiting for the map
 ```
 
-Terminal 2: load the map. Optional for manual driving; required for recording stations with `p`.
+Check `rostopic hz /scan` for live scans and keep the mapping launch running.
+Once saved, stop **only the mapping launch** with Ctrl-C before loading the map.
+Keep terminal 1 running.
+
+### Load the saved map for fetching
+
+In terminal 2, after stopping SLAM:
 
 ```bash
 roslaunch ./navigation_fetch.launch map_file:=$HOME/maps/room.yaml
@@ -61,7 +92,13 @@ roslaunch ./navigation_fetch.launch map_file:=$HOME/maps/room.yaml
 
 In RViz, use **2D Pose Estimate** to set the robot's actual position and heading. Check that the scan aligns with the map.
 
-Terminal 3: keyboard control. Use the P340's port, which may differ from `/dev/ttyUSB0`.
+Manual driving needs no map. Recording with `p` needs either SLAM or saved-map
+localization. Fetching needs this navigation launch; building a map alone does
+not start `move_base`.
+
+## 5. Keyboard control (terminal 3)
+
+Use the P340's port, which may differ from `/dev/ttyUSB0`.
 
 ```bash
 /usr/bin/python3 teleop_control.py --p340-port /dev/ttyUSB0
@@ -82,7 +119,7 @@ it must remain below `--key-timeout` (default 0.6 seconds).
 | `p` | Stop, show pose, enter item name to save; Enter cancels |
 | Space / Ctrl-C | Stop / stop and exit |
 
-## 4. Record an item and calibrate once
+## 6. Record an item and calibrate once
 
 Arm keys account for the 90-degree counterclockwise mounting. JSON stores native arm joint angles.
 
@@ -91,7 +128,7 @@ Arm keys account for the 90-degree counterclockwise mounting. JSON stores native
 - To edit item records manually: `nano stations.json`.
 - When restarting teleop after homing without power loss, append `--arm-homed`.
 
-## 5. Fetch and return
+## 7. Fetch and return
 
 Drive to the desired placement position, set the arm to the placement pose, and leave the gripper empty. **Exit teleop with Ctrl-C.** Keep terminals 1 and 2 running.
 
