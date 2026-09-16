@@ -14,7 +14,8 @@ For the standard Noetic image:
 source /opt/ros/noetic/setup.bash
 source ~/myagv_ros/devel/setup.bash
 sudo apt install ros-noetic-teleop-twist-keyboard python3-pip
-/usr/bin/python3 -m pip install --user pymycobot
+/usr/bin/python3 -m pip install --user --upgrade 'pymycobot==4.0.5'
+/usr/bin/python3 -c "from pymycobot.ultraArmP340 import ultraArmP340; print('P340 SDK OK')"
 ```
 
 From this project's root, clone the source dependency if it is absent:
@@ -59,8 +60,8 @@ a `cmd_vel` subscriber. Use `cmd_vel:=/your/topic` if the chassis topic differs.
 | BASE | `j` / `l` | Turn left / right |
 | BASE | `J` / `L` (Shift) | Strafe left / right |
 | BASE | `u o m .` | Forward/reverse arcs |
-| ARM | `w` / `s` or up/down arrows | X- / X+ |
-| ARM | `a` / `d` or left/right arrows | Y+ / Y- |
+| ARM | `w` / `s` or up/down arrows | Y- / Y+ (vehicle forward/back) |
+| ARM | `a` / `d` or left/right arrows | X- / X+ (vehicle left/right) |
 | ARM | `k` / `j` | Z+ / Z- |
 | ARM | `h` | Home arm; wait until completion |
 | Both | `g` / `r` | Close / open gripper |
@@ -68,6 +69,9 @@ a `cmd_vel` subscriber. Use `cmd_vel:=/your/topic` if the chassis topic differs.
 | Both | Space | Stop chassis and arm jogging; retain gripper position |
 | Both | Ctrl-C | Stop motion and exit; retain gripper position |
 | Both | `p` | Stop, read map pose + arm angles, save named item; Enter cancels |
+
+The arm XY mapping accounts for the P340 mounted 90 degrees counterclockwise
+relative to the base. Recorded joint angles stay in the arm's native coordinates.
 
 Jogging requires homing. If already homed without power loss, pass `--arm-homed`
 to acknowledge that state. Homing is a blocking SDK operation, not keyboard jog.

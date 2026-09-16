@@ -2,6 +2,8 @@
 
 Language: [English](#english) | [日本語](#日本語)
 
+Minimal robot setup commands: [QUICKSTART.md](QUICKSTART.md).
+
 Combined ROS keyboard control for **AGV + P340 arm + gripper**:
 see [TELEOP.md](TELEOP.md). Use `teleop_control.py` in the system ROS Python
 environment; `command_control.py` below remains the direct-serial command console.
@@ -10,7 +12,7 @@ AGV・P340アーム・グリッパーの統合キーボード操作は [TELEOP.m
 `teleop_control.py` は ROS のシステム Python 環境で実行します。
 
 Record item poses with `p`, then fetch back to the demo's startup base and arm pose:
-[NAVIGATION.md](NAVIGATION.md)（中文操作说明；无需 dropoff 配置）。
+[NAVIGATION.md](NAVIGATION.md). No dropoff configuration is needed.
 
 ## English
 

@@ -18,7 +18,7 @@ HELP = """
 p: stop and record item station + arm angles (map localization required)
 Tab: switch BASE / ARM (stops motion first)
 BASE: i/, forward/back; j/l turn; J/L strafe; u/o/m/. arcs
-ARM:  w/s X-/X+; a/d Y+/Y-; k/j Z+/Z-; arrows = XY
+ARM:  w/s Y-/Y+; a/d X-/X+; k/j Z+/Z-; arrows = XY (90 deg CCW mount)
 ARM:  h home (required before jogging unless --arm-homed)
 Both: g close gripper; r open; +/- adjust active mode speed
 Space: stop chassis + arm motion, keep gripper holding
@@ -105,6 +105,11 @@ class Controller:
                 print("Press h to home the arm first")
                 return True
             move = arm_keys.key_move(key)
+            # P340 is mounted 90 degrees counterclockwise relative to the base.
+            if move[0] == "X":
+                move = ("Y", move[1])
+            elif move[0] == "Y":
+                move = ("X", -move[1])
             if move != self.active_move:
                 self.stop()
                 # Bound both the preflight read and the command acknowledgement.

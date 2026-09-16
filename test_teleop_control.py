@@ -45,6 +45,29 @@ class TeleopTest(unittest.TestCase):
         self.assertIsNone(c.active_move)
         self.assertEqual(self.arm.set_jog_stop.call_count, 2)
 
+    def test_sideways_mount_keys_arrows_and_joint_limits(self):
+        c = self.controller
+        c.mode = "ARM"
+        # Vehicle forward/back/left/right for the 90-degree CCW arm mounting.
+        for keys, axis, direction in ((["w", "\x1b[A"], 2, 0),
+                                      (["s", "\x1b[B"], 2, 1),
+                                      (["a", "\x1b[D"], 1, 0),
+                                      (["d", "\x1b[C"], 1, 1),
+                                      (["k"], 3, 0), (["j"], 3, 1)):
+            for key in keys:
+                with self.subTest(key=key):
+                    c.stop()
+                    self.arm.set_jog_coord.reset_mock()
+                    c.handle(key, 1)
+                    self.arm.set_jog_coord.assert_called_once_with(axis, direction, 30)
+        c.stop()
+        self.arm.set_jog_coord.reset_mock()
+        self.arm.get_coords_info.return_value = [180, -365, 80]
+        c.handle("w", 2)  # Forward now checks the arm's lower Y limit.
+        self.arm.set_jog_coord.assert_not_called()
+        c.handle("s", 3)  # Reverse moves away from that limit.
+        self.arm.set_jog_coord.assert_called_once_with(2, 1, 30)
+
     def test_unhomed_and_outward_limit_motion_refused(self):
         c = self.controller
         c.handle("\t", 0)
