@@ -13,9 +13,9 @@
 
   <!-- Keep final alignment and trajectory sampling turn limits consistent.
        The upstream 0.6 rad/s in-place minimum is too coarse for a 0.05 rad goal. -->
-  <param name="/move_base/TrajectoryPlannerROS/max_rotational_vel" value="0.3" />
-  <param name="/move_base/TrajectoryPlannerROS/max_vel_theta" value="0.3" />
-  <param name="/move_base/TrajectoryPlannerROS/min_vel_theta" value="-0.3" />
-  <param name="/move_base/TrajectoryPlannerROS/min_in_place_vel_theta" value="0.1" />
+  <param name="/move_base/TrajectoryPlannerROS/max_rotational_vel" value="0.1" />
+  <param name="/move_base/TrajectoryPlannerROS/max_vel_theta" value="0.1" />
+  <param name="/move_base/TrajectoryPlannerROS/min_vel_theta" value="-0.1" />
+  <param name="/move_base/TrajectoryPlannerROS/min_in_place_vel_theta" value="0.03" />
   <param name="/move_base/TrajectoryPlannerROS/latch_xy_goal_tolerance" value="true" />
 </launch>
