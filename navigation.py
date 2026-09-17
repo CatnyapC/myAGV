@@ -13,7 +13,8 @@ import time
 
 STATIONS = Path(__file__).with_name("stations.json")
 # Conservative P340 product limits; J4 is the optional end-effector servo.
-JOINT_LIMITS = [(-150, 170), (-20, 90), (-5, 70), (-179, 179)]
+# Matches pymycobot 4.0.5 RobotLimit.robot_limit["ultraArmP340"].
+JOINT_LIMITS = [(-150, 170), (-20, 90), (-5, 110), (-179, 179)]
 
 
 def number(value):
@@ -33,9 +34,9 @@ def validate_pose(pose):
 def validate_angles(angles):
     if not isinstance(angles, (list, tuple)) or len(angles) not in (3, 4):
         raise ValueError("Expected 3 or 4 P340 joint angles")
-    for angle, (low, high) in zip(angles, JOINT_LIMITS):
+    for joint, (angle, (low, high)) in enumerate(zip(angles, JOINT_LIMITS), start=1):
         if not number(angle) or not low <= angle <= high:
-            raise ValueError("Invalid P340 angle; expected %s..%s degrees" % (low, high))
+            raise ValueError("Invalid P340 J%s angle %r; expected %s..%s degrees" % (joint, angle, low, high))
     return list(angles)
 
 

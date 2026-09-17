@@ -48,7 +48,7 @@ class StationsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch("navigation.time.sleep"):
             path = Path(folder) / "stations.json"
             args = parse_args(["--p340-port", "unused", "--arm-homed", "--stations", str(path)])
-            arm = FakeArm([], [10, 20, 30, 40])
+            arm = FakeArm([], [10, 20, 95, 40])
             c = Controller(Mock(), arm, {"i": (1, 0, 0, 0)}, args)
             nav = Mock()
             nav.get_pose.return_value = dict(POSE)
@@ -140,6 +140,20 @@ class StationsTest(unittest.TestCase):
                     "navigation.time.monotonic", side_effect=[0, 0, 0.2, 0.4, 0.6, 1.1]
                 ), self.assertRaisesRegex(TimeoutError, "requested pose"):
                     navigation.wait_arm(arm, [10, 20, 30], timeout=1)
+
+    def test_joint_three_uses_p340_sdk_range(self):
+        from pymycobot.error import RobotLimit
+        limits = RobotLimit.robot_limit["ultraArmP340"]
+        self.assertEqual(navigation.JOINT_LIMITS,
+                         list(zip(limits["angles_min"], limits["angles_max"])))
+        for angle in (-5, 70.1, 95, 110):
+            with self.subTest(angle=angle):
+                self.assertEqual(navigation.validate_angles([0, 20, angle]), [0, 20, angle])
+        for angle in (-5.1, 110.1):
+            with self.subTest(angle=angle), self.assertRaisesRegex(
+                ValueError, "J3 angle .*expected -5..110 degrees"
+            ):
+                navigation.validate_angles([0, 20, angle])
 
     def test_invalid_json_and_angles_refused(self):
         for value in (None, [], [1, 2], [0, 100, 0], [True, 0, 0], [0, 0, float("inf")]):
