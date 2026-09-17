@@ -18,4 +18,7 @@
   <param name="/move_base/TrajectoryPlannerROS/min_vel_theta" value="-0.1" />
   <param name="/move_base/TrajectoryPlannerROS/min_in_place_vel_theta" value="0.03" />
   <param name="/move_base/TrajectoryPlannerROS/latch_xy_goal_tolerance" value="true" />
+  <!-- Side-pickup alignment requires fresh full obstacle grids. -->
+  <param name="/move_base/local_costmap/always_send_full_costmap" value="true" />
+  <param name="/move_base/local_costmap/publish_frequency" value="5.0" />
 </launch>

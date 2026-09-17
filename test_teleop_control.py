@@ -68,6 +68,42 @@ class TeleopTest(unittest.TestCase):
         c.handle("s", 3)  # Reverse moves away from that limit.
         self.arm.set_jog_coord.assert_called_once_with(2, 1, 30)
 
+    def test_pickup_axes_stop_other_motion_and_keep_fixed_base_speed(self):
+        c = self.controller
+        c.handle("v", 0)
+        self.assertEqual(c.mode, "PICKUP")
+        for key, expected in (("a", (1, 1, 30)), ("d", (1, 0, 30)),
+                              ("k", (3, 0, 30)), ("j", (3, 1, 30))):
+            c.handle(key, 1)
+            self.arm.set_jog_coord.assert_called_with(*expected)
+        c.handle("w", 2)
+        self.assertIsNone(c.active_move)
+        self.publisher.update.assert_called_with(1, 0, 0, 0, 0.03, 0.05)
+        c.handle("s", 3)
+        self.publisher.update.assert_called_with(-1, 0, 0, 0, 0.03, 0.05)
+        c.handle("q", 4)
+        self.publisher.update.assert_called_with(0, 0, 0, 1, 0.03, 0.05)
+        c.handle("a", 5)
+        self.assertFalse(c.base_moving)
+        c.tick(5.61)
+        self.assertIsNone(c.active_move)
+        c.handle("v", 6)
+        self.assertEqual(c.mode, "BASE")
+
+    def test_pickup_rejects_rotated_arm_and_crossing_radial_origin(self):
+        c = self.controller
+        c.handle("v", 0)
+        self.arm.get_coords_info.return_value = [180, 20, 80]
+        with patch('teleop_control.print') as output:
+            c.handle("a", 1)
+            output.assert_any_call("Pickup arm must face left at J1=0; home before teaching")
+        self.arm.set_jog_coord.assert_not_called()
+        self.arm.get_coords_info.return_value = [4, 0, 80]
+        c.handle("d", 2)
+        self.arm.set_jog_coord.assert_not_called()
+        c.handle("a", 3)
+        self.arm.set_jog_coord.assert_called_once_with(1, 1, 30)
+
     def test_unhomed_and_outward_limit_motion_refused(self):
         c = self.controller
         c.handle("\t", 0)

@@ -15,7 +15,7 @@ from teleop_control import Controller, parse_args, record_station
 
 
 POSE = {"x_m": 1.2, "y_m": 0.5, "yaw_deg": 90}
-STATION = {"base": POSE, "arm_angles_deg": [10, 20, 30]}
+STATION = {"base": POSE, "arm_angles_deg": [0, 20, 30]}
 
 
 class FakeArm:
@@ -48,7 +48,7 @@ class StationsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch("navigation.time.sleep"):
             path = Path(folder) / "stations.json"
             args = parse_args(["--p340-port", "unused", "--arm-homed", "--stations", str(path)])
-            arm = FakeArm([], [10, 20, 95, 40])
+            arm = FakeArm([], [0, 20, 95, 40])
             c = Controller(Mock(), arm, {"i": (1, 0, 0, 0)}, args)
             nav = Mock()
             nav.get_pose.return_value = dict(POSE)
@@ -58,11 +58,11 @@ class StationsTest(unittest.TestCase):
             self.assertFalse(c.base_moving)
             self.assertEqual(navigation.load_stations(path)["cup"]["arm_angles_deg"], arm.angles)
             navigation.save_station("other", STATION, path)
-            arm.angles[0] = 15
+            arm.angles[1] = 15
             c.mode = "ARM"
             c.handle("p", 3)
             self.assertIn("other", navigation.load_stations(path))
-            self.assertEqual(navigation.load_stations(path)["cup"]["arm_angles_deg"][0], 15)
+            self.assertEqual(navigation.load_stations(path)["cup"]["arm_angles_deg"][1], 15)
             original = path.read_bytes()
             arm.angles[0] = float("nan")
             with self.assertRaises(ValueError):
@@ -81,6 +81,17 @@ class StationsTest(unittest.TestCase):
                 navigation.save_station("new", STATION, path)
             self.assertEqual(path.read_bytes(), before)
             self.assertEqual(list(Path(folder).iterdir()), [path])
+
+    def test_pickup_axis_required_but_old_records_can_be_replaced(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "stations.json"
+            old = dict(STATION, arm_angles_deg=[75, 20, 30])
+            path.write_text(json.dumps({"cup": old, "other": old}))
+            with self.assertRaisesRegex(ValueError, "J1"):
+                navigation.save_station("cup", old, path)
+            navigation.save_station("cup", STATION, path)
+            self.assertEqual(navigation.load_stations(path)["other"], old)
+            self.assertEqual(navigation.pickup_angles([0.5, 20, 30]), [0, 20, 30])
 
     def test_record_checks_map_before_arm_and_reports_progress(self):
         args = parse_args(["--p340-port", "unused", "--arm-homed"])
@@ -332,6 +343,7 @@ class FetchTest(unittest.TestCase):
             if len(trips) == fail_trip:
                 raise TimeoutError("blocked")
         nav.go_to.side_effect = go
+        nav.go_to_pickup.side_effect = go
         args = NS(arm_speed=30, grip_speed=500, grip_wait=1.5, clamp=0, release=100, nav_timeout=120)
         station = copy.deepcopy(STATION)
         if len(angles) == 4:
@@ -370,6 +382,15 @@ class FetchTest(unittest.TestCase):
             with patch("sys.stderr"), self.assertRaises(SystemExit):
                 fetch_demo.parse_args(["cup", "--p340-port", "unused"] + extra)
 
+    def test_nonzero_pickup_or_transport_axis_refused_before_motion(self):
+        for station, transport in ((dict(STATION, arm_angles_deg=[75, 20, 30]), [0, 10, 10]),
+                                   (STATION, [75, 10, 10])):
+            nav, arm = Mock(), Mock()
+            with self.assertRaisesRegex(ValueError, "J1"):
+                fetch_demo.fetch(nav, arm, station, transport, NS())
+            self.assertEqual(arm.mock_calls, [])
+            self.assertEqual(nav.mock_calls, [])
+
     def test_snapshot_failure_and_joint_mismatch_do_not_move(self):
         for angles in ([0, 10, 20, 30], [float("nan"), 10, 20]):
             events = []
@@ -397,7 +418,8 @@ class FetchTest(unittest.TestCase):
         with patch("navigation.time.sleep"), self.assertRaises(ValueError):
             fetch_demo.fetch(nav, arm, STATION, [0, 10, 10], args)
         self.assertEqual([e for e in events if e[0] == "grip"], [("grip", 100)])
-        nav.go_to.assert_called_once()
+        nav.go_to_pickup.assert_called_once()
+        nav.go_to.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -40,6 +40,15 @@ def validate_angles(angles):
     return list(angles)
 
 
+def pickup_angles(angles):
+    """Accept measured home-axis tolerance; command the pickup axis at zero."""
+    angles = validate_angles(angles)
+    if abs(angles[0]) > 1:
+        raise ValueError("Side pickup needs J1 within 1 degree of 0; home and re-teach this pose")
+    angles[0] = 0.0
+    return angles
+
+
 def validate_station(station):
     if not isinstance(station, dict) or set(station) != {"base", "arm_angles_deg"}:
         raise ValueError("Station requires base and arm_angles_deg")
@@ -64,6 +73,7 @@ def save_station(name, station, path=STATIONS):
     if not name:
         raise ValueError("Station name is empty")
     station = validate_station(station)
+    pickup_angles(station["arm_angles_deg"])
     path = Path(path)
     data = load_stations(path) if path.exists() else {}
     data[name] = station
@@ -135,7 +145,7 @@ def wait_arm(arm, target=None, timeout=30):
 
 
 class Navigation:
-    def __init__(self):
+    def __init__(self, approach_distance=0.3, approach_speed=0.03, approach_clearance=0.25):
         import actionlib
         import rospy
         import tf2_ros
@@ -152,12 +162,14 @@ class Navigation:
         self.odom = None
         self.subscriber = rospy.Subscriber("odom", Odometry, self._odom, queue_size=1)
         self.publisher = rospy.Publisher("cmd_vel", Twist, queue_size=1)
+        self.approach_settings = (approach_distance, approach_speed, approach_clearance)
+        self.aligner = None
 
     def _odom(self, message):
         self.odom = (time.monotonic(), message)
 
-    def get_pose(self):
-        deadline = time.monotonic() + 3
+    def get_pose(self, timeout=3):
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             try:
                 transform = self.tf.lookup_transform("map", "base_footprint", self.ros.Time(0))
@@ -252,6 +264,12 @@ class Navigation:
         finally:
             self.cancel()
 
+    def go_to_pickup(self, pose, timeout=120):
+        if self.aligner is None:
+            from pickup_alignment import PickupAlignment
+            self.aligner = PickupAlignment(self, *self.approach_settings)
+        self.aligner.approach(validate_pose(pose), timeout)
+
 
 def install_interrupts():
     def interrupt(_signum, _frame):
@@ -265,22 +283,28 @@ def main():
     parser.add_argument("command", choices=("pose", "go", "roundtrip"))
     parser.add_argument("station", nargs="?")
     parser.add_argument("--stations", type=Path, default=STATIONS)
+    from pickup_alignment import add_pickup_args
+    add_pickup_args(parser)
     # Parse first so --help also works without ROS installed.
     args = parser.parse_args()
     if args.command != "pose" and not args.station:
         parser.error("station name required")
-    target = load_stations(args.stations)[args.station]["base"] if args.station else None
+    target = None
+    if args.station:
+        station = load_stations(args.stations)[args.station]
+        pickup_angles(station["arm_angles_deg"])
+        target = station["base"]
     import rospy
     rospy.init_node("myagv_navigation_client", disable_signals=True)
     install_interrupts()
-    nav = Navigation()
+    nav = Navigation(args.approach_distance, args.approach_speed, args.approach_clearance)
     try:
         nav.wait_stopped()
         start = nav.get_pose()
         if args.command == "pose":
             print(json.dumps(start, indent=2))
         else:
-            nav.go_to(target)
+            nav.go_to_pickup(target)
             if args.command == "roundtrip":
                 nav.go_to(start)
     finally:

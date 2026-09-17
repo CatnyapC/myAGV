@@ -49,10 +49,12 @@ Use the actual P340 serial port; it may differ from the example:
 ```
 
 - In ARM mode, press `h` to home. If already homed without power loss, use `--arm-homed`.
-- Park beside the item and move the arm to its grasp pose.
+- Park with the item on the left. Press `v` for PICKUP teaching. Home with `h` if needed: J1 must be near zero.
+- Use `w/s` to move the base forward/backward at 3 cm/s, `a/d` to extend/retract the arm, and `k/j` for height. `q/e` turns the base slowly.
+- Align the item with the arm base along the vehicle's forward/back axis. Arm reach handles lateral distance; height handles vertical distance.
 - Press `p`: stop, wait for standstill, read the map pose and all arm joint angles, and display the measurements.
 - Enter an item name, such as `red_cup`, to save. The same name overwrites that item; an empty name cancels.
-- Recording works in either mode. Missing localization or invalid arm feedback prevents saving.
+- Recording works in all modes, but named pickup records require J1 within 1 degree of zero. Missing localization or invalid arm feedback prevents saving.
 
 Records go into `stations.json` beside the scripts. The initial file is empty so example coordinates cannot be used accidentally. Manual edits use the same format:
 
@@ -66,11 +68,11 @@ Records go into `stations.json` beside the scripts. The initial file is empty so
 ```
 
 These numbers only illustrate the format. Base coordinates use meters in the map frame; heading uses degrees (-180..180). Arm joint angles use degrees. Include the fourth value when a fourth axis is present; all poses must have the same joint count.
-Record again after changing maps. The file stores items only, with no dropoff or startup pose.
+Re-teach old stations with nonzero J1; changing only that JSON number is not a valid conversion. Record again after changing maps. The file stores items only, with no dropoff or startup pose.
 
 ## 3. Set one transport pose
 
-Move the empty arm into a folded pose suitable for driving. Press `p` to see `arm_angles_deg`, then leave the name blank to avoid creating a station.
+Move the empty arm into a folded pose suitable for driving, keeping J1 at zero. Re-measure any old transport pose that used nonzero J1. Press `p` to see `arm_angles_deg`, then leave the name blank to avoid creating a station.
 Set `TRANSPORT_ANGLES` near the top of `fetch_demo.py` to these measured angles. This is one shared transport pose; the default `None` prevents execution.
 
 Alternatively, pass measured values using `--transport-angles J1 J2 J3 [J4]`. No extra configuration file is needed.
@@ -87,12 +89,13 @@ Use teleop to park at the desired placement location and set the arm to the plac
 Before any movement, the script captures this run's base and arm poses:
 
 ```text
-Capture startup poses -> transport pose -> navigate to item -> open gripper
+Capture startup poses -> transport pose -> travel to staging -> align beside item -> open gripper
 -> grasp pose -> close gripper -> transport pose -> return to startup base pose
 -> restore startup arm pose -> open gripper
 ```
 
 The script does not home automatically. Each run captures its own placement position and arm pose without writing them into JSON.
+Pickup and transport commands use J1=0. The startup placement pose can use any valid J1 and is restored unchanged.
 Options: `--arm-speed` (default 30), `--grip-speed` (500), `--grip-wait` (1.5 seconds), `--clamp` (0), `--release` (100), and `--nav-timeout` (120 seconds per leg).
 
 ## Checks and limits
@@ -105,8 +108,32 @@ For chassis-only checks, exit teleop first:
 /usr/bin/python3 navigation.py roundtrip red_cup
 ```
 
-`roundtrip` returns to that command's starting position and heading without moving the arm. Driving speed comes from the official navigation configuration, not the teleop speed setting.
-After navigation reports success, the client checks standstill and measured arrival error (at most 5 cm / 5 degrees). This coarse gate does not guarantee grasp alignment; test repeated docking on the robot.
+`roundtrip` returns to that command's starting position and heading without moving the arm. Travel speed comes from the navigation configuration. Final pickup alignment defaults to 3 cm/s; teleop speed settings do not affect it.
+The closest staging candidate is 30 cm ahead of or behind the taught base pose,
+with the same heading. After move_base finishes there, final alignment moves
+forward or backward along that heading. Small overshoots can reverse. Heading
+errors get in-place corrections at 0.03–0.05 rad/s before translation resumes.
+More than 2 cm lateral error or 15 degrees heading error stops the approach;
+the controller does not search around the object or issue large recovery turns.
+The arm stays folded during all automatic base movement.
+
+Options shared by `navigation.py` and `fetch_demo.py`:
+
+- `--approach-distance`: 0.3 m by default (allowed 0.1–0.6).
+- `--approach-speed`: 0.03 m/s by default (allowed 0.01–0.05).
+- `--approach-clearance`: 0.25 m clear radius around the folded robot/load (allowed 0.15–1.0). Measure the actual envelope; this circle also protects small rotations.
+
+Unknown or occupied costmap cells inside the checked envelope stop motion.
+Fresh full local costmaps, LiDAR and odometry are required. Restart the updated
+navigation launch to enable full costmap publication at 5 Hz. Close teleop and
+do not send other action goals while the demo controls the base.
+
+Final control settles within 1 cm longitudinal / 1 degree heading error, then
+checks standstill within 2 cm / 2 degrees. No measured improvement for 3 seconds
+or exceeding the bounded approach duration stops the attempt. These values need
+hardware validation; map accuracy still limits actual grasp accuracy.
+The arm replays taught reach/height; it does not sense or compensate for a moved
+object. Re-teach moved objects. Task list: [PICKUP_TASKS.md](PICKUP_TASKS.md).
 
 Timeouts, failures and interruptions cancel the current navigation goal and stop subsequent grasp/place steps. Unconfirmed cancellation is reported. The fetch demo bounds P340 calls to 3 seconds and arm movement waits to 30 seconds. Stop commands are best effort and may not interrupt firmware-queued moves; keep the hardware stop accessible.
 Gripper completion uses a configurable delay and does not detect whether an object was grasped. Software checks do not replace hardware testing.
@@ -114,5 +141,5 @@ Gripper completion uses a configurable delay and does not detect whether an obje
 Local tests without hardware:
 
 ```bash
-.venv/bin/python -m unittest test_navigation test_teleop_control test_command_control
+.venv/bin/python -m unittest test_pickup_alignment test_navigation test_teleop_control test_command_control
 ```

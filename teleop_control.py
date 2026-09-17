@@ -17,8 +17,11 @@ from navigation import Navigation, STATIONS, arm_deadline, save_station, wait_ar
 HELP = """
 p: stop and record item station + arm angles (map localization required)
 Tab: switch BASE / ARM (stops motion first)
+v: enter/leave PICKUP teaching mode (J1 near zero, arm reaches left)
+PICKUP: w/s base forward/back at 3 cm/s; a/d arm extend/retract; k/j height
+PICKUP: q/e base turn left/right at 0.05 rad/s; h home
 BASE: i/, forward/back; j/l turn; J/L strafe; u/o/m/. arcs
-ARM:  w/s Y-/Y+; a/d X-/X+; k/j Z+/Z-; arrows = XY (90 deg CCW mount)
+ARM:  w/s Y-/Y+; a/d X-/X+; k/j Z+/Z-; arrows = XY (unrestricted)
 ARM:  h home (required before jogging unless --arm-homed)
 Both: g close gripper; r open; +/- adjust active mode speed
 Space: stop chassis + arm motion, keep gripper holding
@@ -55,6 +58,13 @@ class Controller:
             raise RuntimeError("Invalid arm coordinates; motion stopped")
         axis, sign = move
         low, high = arm_keys.LIMITS[axis]
+        if self.mode == "PICKUP":
+            # Native X is radial reach when J1=0. Never jog native Y here.
+            if values[0] <= 0 or abs(math.degrees(math.atan2(values[1], values[0]))) > 1:
+                print("Pickup arm must face left at J1=0; home before teaching")
+                return False
+            if axis == "X":
+                low = 0  # Do not retract through the arm's rotation axis.
         value = values["XYZ".index(axis)]
         return value < high - 5 if sign > 0 else value > low + 5
 
@@ -68,6 +78,10 @@ class Controller:
                 print("Home arm before recording (h in ARM mode)")
             elif self.record is not None:
                 self.record()
+        elif key == "v":
+            self.stop()
+            self.mode = "BASE" if self.mode == "PICKUP" else "PICKUP"
+            print("mode=" + self.mode)
         elif key == "\t":
             self.stop()
             self.mode = "ARM" if self.mode == "BASE" else "BASE"
@@ -88,7 +102,7 @@ class Controller:
             else:
                 self.args.arm_speed = min(200, max(1, self.args.arm_speed + (5 if key == "+" else -5)))
                 print("arm speed=" + str(self.args.arm_speed))
-        elif self.mode == "ARM" and key == "h":
+        elif self.mode in {"ARM", "PICKUP"} and key == "h":
             self.stop()
             self.arm_homed = False
             print("Homing arm; wait for completion")
@@ -96,18 +110,32 @@ class Controller:
                 self.arm.go_zero()
             self.arm_homed = True
             print("Arm homed")
+        elif self.mode == "PICKUP" and key in {"w", "s", "q", "e"}:
+            if self.active_move:
+                self.stop()
+            x = {"w": 1, "s": -1}.get(key, 0)
+            turn = {"q": 1, "e": -1}.get(key, 0)
+            self.publisher.update(x, 0, 0, turn, 0.03, 0.05)
+            self.base_moving = True
+            self.last_motion = now
         elif self.mode == "BASE" and key in self.bindings and self.bindings[key][2] == 0:
             self.publisher.update(*self.bindings[key], self.args.speed, self.args.turn)
             self.base_moving = True
             self.last_motion = now
-        elif self.mode == "ARM" and arm_keys.key_move(key):
+        elif self.mode in {"ARM", "PICKUP"} and arm_keys.key_move(key):
             if not self.arm_homed:
                 self.stop()
                 print("Press h to home the arm first")
                 return True
             move = arm_keys.key_move(key)
-            # P340 is mounted 90 degrees counterclockwise relative to the base.
-            if move[0] == "X":
+            if self.mode == "PICKUP":
+                move = {"a": ("X", 1), "d": ("X", -1),
+                        "k": ("Z", 1), "j": ("Z", -1)}.get(key)
+                if move is None:
+                    self.stop()
+                    return True
+            # Keep the existing unrestricted ARM keys for placement poses.
+            elif move[0] == "X":
                 move = ("Y", move[1])
             elif move[0] == "Y":
                 move = ("X", -move[1])

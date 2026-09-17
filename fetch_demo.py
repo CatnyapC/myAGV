@@ -6,7 +6,7 @@ import sys
 import time
 
 from navigation import (Navigation, STATIONS, arm_deadline, install_interrupts,
-                        load_stations, number, validate_angles,
+                        load_stations, number, pickup_angles, validate_angles,
                         validate_station, wait_arm)
 
 
@@ -30,7 +30,8 @@ def grip(arm, value, args):
 
 def fetch(nav, arm, station, transport, args):
     station = validate_station(station)
-    transport = validate_angles(transport)
+    transport = pickup_angles(transport)
+    station["arm_angles_deg"] = pickup_angles(station["arm_angles_deg"])
     try:
         nav.wait_stopped()
         start_arm = wait_arm(arm)
@@ -43,7 +44,7 @@ def fetch(nav, arm, station, transport, args):
             arm.set_mode(0)
         print("Transport pose; going to item")
         move_arm(arm, transport, args.arm_speed)
-        nav.go_to(station["base"], args.nav_timeout)
+        nav.go_to_pickup(station["base"], args.nav_timeout)
         print("At item; grasping")
         grip(arm, args.release, args)
         move_arm(arm, station["arm_angles_deg"], args.arm_speed)
@@ -82,9 +83,11 @@ def parse_args(argv=None):
     parser.add_argument("--clamp", type=int, default=0)
     parser.add_argument("--release", type=int, default=100)
     parser.add_argument("--nav-timeout", type=float, default=120)
+    from pickup_alignment import add_pickup_args
+    add_pickup_args(parser)
     args = parser.parse_args(argv)
     try:
-        validate_angles(args.transport_angles)
+        pickup_angles(args.transport_angles)
     except ValueError as exc:
         parser.error("Set calibrated TRANSPORT_ANGLES or --transport-angles: %s" % exc)
     for key, low, high in (("arm_speed", 1, 200), ("grip_speed", 1, 1500),
@@ -101,12 +104,13 @@ def parse_args(argv=None):
 def main():
     args = parse_args()
     station = load_stations(args.stations)[args.station]
+    pickup_angles(station["arm_angles_deg"])
     import rospy
     from pymycobot.ultraArmP340 import ultraArmP340
 
     rospy.init_node("myagv_fetch", disable_signals=True)
     install_interrupts()
-    nav = Navigation()
+    nav = Navigation(args.approach_distance, args.approach_speed, args.approach_clearance)
     with arm_deadline():
         arm = ultraArmP340(args.p340_port, 115200)
     try:

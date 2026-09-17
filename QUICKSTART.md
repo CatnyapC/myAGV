@@ -116,8 +116,12 @@ it must remain below `--key-timeout` (default 0.6 seconds).
 | Key | Action |
 | --- | --- |
 | Tab | Switch BASE / ARM mode |
+| `v` | Enter/leave PICKUP teaching mode |
+| PICKUP: `w` / `s` | Base forward/back at 3 cm/s |
+| PICKUP: `a` / `d`, `k` / `j` | Arm extend/retract, raise/lower; J1 near zero |
+| PICKUP: `q` / `e` | Base turn left/right at 0.05 rad/s |
 | BASE: `i` / `,`, `j` / `l`, `J` / `L` | Forward/back, turn, strafe |
-| ARM: `w` / `s`, `a` / `d` | Vehicle forward/back (Y-/Y+), left/right (X-/X+); arrows match |
+| ARM: `w` / `s`, `a` / `d` | Unrestricted arm Y-/Y+, X-/X+; arrows match |
 | ARM: `k` / `j` | Raise/lower |
 | ARM: `h` | Home before the first arm movement |
 | `g` / `r` | Close/open gripper |
@@ -126,10 +130,11 @@ it must remain below `--key-timeout` (default 0.6 seconds).
 
 ## 6. Record an item and calibrate once
 
-Arm keys account for the 90-degree counterclockwise mounting. JSON stores native arm joint angles.
+With J1 at zero, the arm extends to the robot's **left**. Use `v` for PICKUP teaching. JSON still stores native arm joint angles.
 
-- Drive to the pickup position and align the arm for grasping. Press `p`, enter `red_cup`, and save to `stations.json`.
-- Once: move the empty arm into a folded transport pose. Press `p`, copy `arm_angles_deg`, and leave the name blank. Replace `TRANSPORT_ANGLES = None` in `fetch_demo.py` with those measured angles.
+- Park with the item on the left. In PICKUP mode, home the empty arm with `h` if needed, then use `w/s` for base alignment, `a/d` for reach, and `k/j` for height. Press `p`, enter `red_cup`, and save to `stations.json`.
+- Re-teach old stations whose J1 was not near zero. Do not just edit their J1 value: their taught geometry differs.
+- Once: move the empty arm into a folded transport pose with J1 at zero. Press `p`, copy `arm_angles_deg`, and leave the name blank. Replace `TRANSPORT_ANGLES = None` in `fetch_demo.py` with those measured angles.
 - To edit item records manually: `nano stations.json`.
 - When restarting teleop after homing without power loss, append `--arm-homed`.
 
@@ -141,12 +146,18 @@ Drive to the desired placement position, set the arm to the placement pose, and 
 /usr/bin/python3 fetch_demo.py red_cup --p340-port /dev/ttyUSB0 --arm-homed
 ```
 
-The robot fetches the item, returns to **the base position, heading and arm pose captured at this demo's startup**, then opens the gripper. No dropoff record is needed.
+The robot travels to staging 30 cm ahead of or behind the saved pickup pose, then aligns forward/backward at 3 cm/s with small heading corrections. The object stays to its left. The arm uses the taught reach/height, folds, and the robot returns to **the base position, heading and arm pose captured at this demo's startup**, then opens the gripper. No dropoff record is needed.
 
 For a chassis-only round trip, keep the arm in its transport pose, exit teleop, then run:
 
 ```bash
 /usr/bin/python3 navigation.py roundtrip red_cup
 ```
+
+Restart terminal 2 after pulling: the launch now publishes full local costmaps at 5 Hz.
+Final alignment needs live LiDAR, odometry and costmap feedback. Its default
+clearance radius is 25 cm around the folded robot/load; measure this envelope
+and set `--approach-clearance METERS` if needed. Both staging candidates and
+the approach corridor need free space. Do not send RViz goals during the demo.
 
 Check paths without an object first. Full guide: [NAVIGATION.md](NAVIGATION.md).

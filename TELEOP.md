@@ -2,7 +2,7 @@
 
 `teleop_control.py` reuses the publisher and chassis key mappings from
 `ros-teleop/teleop_twist_keyboard`, plus the existing P340 jog helpers.
-Tab selects chassis or arm mode. Gripper keys work in either mode.
+Tab selects chassis or unrestricted arm mode. `v` enters/leaves PICKUP teaching. Gripper keys work in all modes.
 
 ## Setup on the AGV
 
@@ -55,23 +55,33 @@ a `cmd_vel` subscriber. Use `cmd_vel:=/your/topic` if the chassis topic differs.
 
 | Mode | Keys | Action |
 | --- | --- | --- |
-| Both | Tab | Stop motion, switch BASE / ARM |
+| All | Tab | Stop motion, switch BASE / ARM (PICKUP exits to BASE) |
+| All | `v` | Stop motion, enter/leave PICKUP teaching |
+| PICKUP | `w` / `s` | Base forward/back at 0.03 m/s |
+| PICKUP | `q` / `e` | Base turn left/right at 0.05 rad/s |
+| PICKUP | `a` / `d` | Arm extend/retract along native X, with J1 near zero |
+| PICKUP | `k` / `j`, `h` | Raise/lower, home |
 | BASE | `i` / `,` | Forward / backward |
 | BASE | `j` / `l` | Turn left / right |
 | BASE | `J` / `L` (Shift) | Strafe left / right |
 | BASE | `u o m .` | Forward/reverse arcs |
-| ARM | `w` / `s` or up/down arrows | Y- / Y+ (vehicle forward/back) |
-| ARM | `a` / `d` or left/right arrows | X- / X+ (vehicle left/right) |
+| ARM | `w` / `s` or up/down arrows | Y- / Y+ |
+| ARM | `a` / `d` or left/right arrows | X- / X+ |
 | ARM | `k` / `j` | Z+ / Z- |
 | ARM | `h` | Home arm; wait until completion |
-| Both | `g` / `r` | Close / open gripper |
-| Both | `+` / `-` | Stop motion, adjust active mode speed |
-| Both | Space | Stop chassis and arm jogging; retain gripper position |
-| Both | Ctrl-C | Stop motion and exit; retain gripper position |
-| Both | `p` | Stop, read map pose + arm angles, save named item; Enter cancels |
+| All | `g` / `r` | Close / open gripper |
+| All | `+` / `-` | Stop motion, adjust active mode speed |
+| All | Space | Stop chassis and arm jogging; retain gripper position |
+| All | Ctrl-C | Stop motion and exit; retain gripper position |
+| All | `p` | Stop, read map pose + arm angles, save named item; Enter cancels |
 
-The arm XY mapping accounts for the P340 mounted 90 degrees counterclockwise
-relative to the base. Recorded joint angles stay in the arm's native coordinates.
+With J1 at zero, the arm extends to the robot's left. PICKUP mode uses only
+native X/Z arm jogging; base forward/back motion handles longitudinal alignment.
+It rejects arm jogging outside the zero-axis plane and prevents retraction
+through the rotation axis. `+/-` changes arm speed in PICKUP mode; base speeds
+stay fixed. Arrows are disabled there. Unrestricted ARM mode retains its existing
+native-axis keys for startup placement poses. Recorded angles remain native.
+Named pickup records require J1 within 1 degree of zero in every mode.
 
 Jogging requires homing. If already homed without power loss, pass `--arm-homed`
 to acknowledge that state. Homing is a blocking SDK operation, not keyboard jog.
