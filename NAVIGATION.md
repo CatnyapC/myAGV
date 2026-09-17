@@ -29,6 +29,14 @@ roslaunch ./navigation_fetch.launch map_file:=$HOME/maps/room.yaml
 
 `navigation_fetch.launch` includes the official launch file and tightens planner tolerances to **3 cm / 0.05 rad (about 2.9 degrees)**, inside the client's 5 cm / 5-degree arrival check. It also tightens stopped-velocity thresholds. Do not start a second navigation instance.
 
+Turn speeds are capped at 0.3 rad/s with a 0.1 rad/s minimum for final heading
+alignment, replacing the installed 0.6 rad/s minimum. The planner keeps the
+position accepted while aligning heading; the client still checks final position
+and heading before grasping. These starting values need hardware verification.
+After updating this launch file, stop and restart only the navigation launch;
+keep chassis/LiDAR running, then set **2D Pose Estimate** again. Updating ROS
+parameters alone does not reload all final-alignment settings in this planner.
+
 Use the robot's existing chassis/LiDAR startup procedure without duplicating drivers. In RViz, use **2D Pose Estimate** to set the actual starting position and heading, then check scan alignment.
 The scripts use `map -> base_footprint` TF, `odom`, `move_base`, and `cmd_vel`. Do not send simultaneous navigation goals from RViz or another client.
 

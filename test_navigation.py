@@ -220,7 +220,8 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(launch[1].get("file"),
                          "$(find myagv_navigation)/launch/navigation_active.launch")
         self.assertTrue(all(node.tag == "param" for node in list(launch)[2:]))
-        params = {node.get("name"): float(node.get("value")) for node in launch.findall("param")}
+        params = {node.get("name"): float(node.get("value")) for node in launch.findall("param")
+                  if node.get("value") not in ("true", "false")}
         prefix = "/move_base/TrajectoryPlannerROS/"
         # Simulate move_base stopping at its configured acceptance boundary.
         self.nav.client.get_state.return_value = 3
@@ -230,6 +231,16 @@ class NavigationTest(unittest.TestCase):
         self.nav.go_to(POSE)
         self.assertLessEqual(params[prefix + "trans_stopped_vel"], 0.01)
         self.assertLessEqual(params[prefix + "theta_stopped_vel"], 0.02)
+        # Final alignment and sampled trajectories must share compatible speeds.
+        turn_max = params[prefix + "max_rotational_vel"]
+        turn_min = params[prefix + "min_in_place_vel_theta"]
+        self.assertGreater(turn_min, 0)
+        self.assertLessEqual(turn_min, turn_max)
+        self.assertEqual(params[prefix + "max_vel_theta"], turn_max)
+        self.assertEqual(params[prefix + "min_vel_theta"], -turn_max)
+        # At the installed 5 Hz controller rate, the minimum turn step must not
+        # jump across the entire heading acceptance window.
+        self.assertLess(turn_min / 5, 2 * params[prefix + "yaw_goal_tolerance"])
 
     def test_timeout_cancels_and_waits_for_ack(self):
         self.nav.client.get_state.return_value = 1
