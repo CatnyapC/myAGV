@@ -77,6 +77,27 @@ Carry forward the supplied October 2 reference rules and October 5 additions:
 - Cyan keyboard focus remains visible. State always has a text/icon label as
   well as color. Verify text contrast and control boundaries in the actual theme.
 
+### Core information only
+
+Show only information needed to understand the robot's current state or choose
+the next action. This rule governs default visibility throughout the plan;
+available data does not automatically deserve permanent space on the page.
+
+- Keep connection/control ownership, STOP, active mode/target, relevant controls,
+  map, camera views and the current task phase visible. Show blocking errors where
+  the affected action lives, with a short reason.
+- Use short labels and compact values. Avoid introductory paragraphs, repeated
+  panel descriptions, decorative slogans, redundant status badges and permanent
+  instructions explaining obvious controls.
+- Put full coordinates, map/stream IDs, timestamps, calibration metadata, task
+  history and diagnostic logs in Details, tooltips or an optional EVENTS panel
+  hidden by default. Expose measured values when teaching or aligning needs them.
+- Show freshness problems and unconfirmed outcomes when relevant; do not repeat
+  healthy-state explanations across panels. Essential feedback must remain visible
+  and must not depend on a tooltip.
+- Before adding text, ask whether it changes the operator's next decision. If
+  not, remove it from the default view or move it into on-demand details.
+
 ### Theme tokens
 
 Use semantic aliases over Radix dark scales, following the official
@@ -307,6 +328,8 @@ remote motion until freshness can be established.
 
 Acceptance checklist for implementation:
 
+- [ ] Default views contain only core state, actions and relevant feedback;
+  explanations, repeated labels and diagnostics appear only on demand.
 - [ ] Match 8px radii, fine borders, uppercase bold titles, yellow subsection labels,
   single-line actions and hidden navigation; no nested-card styling.
 - [ ] Resize each panel in both dimensions; drag by handle; maximize/restore;
