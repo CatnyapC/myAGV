@@ -251,6 +251,11 @@ service in the ROS-compatible Python environment. Separate source/build and API
 contracts; a reverse proxy may expose both under one HTTPS origin. This avoids
 browser access to serial ports, ROS topics or executable shell commands.
 
+Serve the built frontend files from the robot; the UI itself executes in the
+remote operator's browser. The robot also runs the API and calls the LLM provider.
+Only the robot backend reads the provider API key. Never include it in the
+frontend build, browser storage, API responses or logs.
+
 ```text
 Browser: panels + presentation + operator input
        | HTTPS snapshots/requests, WSS state + manual input, separate video
@@ -263,6 +268,42 @@ The service must own a single robot controller. Existing terminal teleop and fet
 cannot run alongside it. Reuse tested control helpers behind an adapter; do not
 spawn a process per keypress or scrape CLI output as the long-term state contract.
 Blocking arm operations must not block the service watchdog or STOP handling.
+
+### LLM key storage: existing system tools
+
+Use one encrypted credential and the OS tool that supports the robot's installed
+Ubuntu/systemd version. Confirm that version on the robot before implementation;
+the ROS Noetic documentation alone does not confirm the installed Ubuntu release.
+Do not add a secrets server or a custom encryption format.
+
+| Installed system | Minimal encrypted storage/read path |
+| --- | --- |
+| Ubuntu 24.04 default systemd (255), or a verified systemd >=250 | Encrypt with `systemd-creds --name=llm_api_key`; a system service uses `LoadCredentialEncrypted=llm_api_key:/etc/credstore.encrypted/myagv-llm.cred`. Backend reads the `llm_api_key` file inside `$CREDENTIALS_DIRECTORY`. |
+| Ubuntu 20.04/22.04 default systemd (245/249) | Use GPG symmetric encryption with a separate passphrase; unlock explicitly at backend startup and pass decrypted bytes directly into backend memory. Restart requires unlocking again; do not store the passphrase alongside the ciphertext. |
+
+The version boundary and encrypted credential flow are documented in the
+[Ubuntu systemd-creds manual](https://manpages.ubuntu.com/manpages/noble/man1/systemd-creds.1.html).
+Default older package versions are documented for
+[20.04](https://launchpad.net/ubuntu/focal/+package/systemd) and
+[22.04](https://packages.ubuntu.com/jammy/systemd).
+The [Ubuntu GPG manual](https://manpages.ubuntu.com/manpages/focal/man1/gpg.1.html)
+documents symmetric encryption and decryption.
+
+Provision and rotate the key locally on the robot, outside the repository; do not
+place real keys in command-line arguments or shell history. Protect stored files
+and their parent directory with restrictive permissions. Permissions such as
+`chmod 600` provide access control, not encryption.
+
+For systemd credentials, TPM-backed encryption is available when the hardware
+supports it. Host-key mode supports unattended startup without a TPM, but the
+host decryption key lives on the same filesystem: it does not protect a stolen
+disk image containing both files, or prevent a privileged local process reading
+the running service's key. Do not assume the robot has a TPM.
+
+Without a usable unlocked credential, mark LLM Unavailable and keep manual robot
+operation independent. Settings show only configured/locked/error state and key
+replacement guidance, never the key value. LLM network waits must not block motion
+watchdogs or STOP handling. This is a storage design, not credential provisioning.
 
 ### Minimum proposed contract (not existing endpoints)
 
