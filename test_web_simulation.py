@@ -7,10 +7,47 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from web_backend.map_data import demo_map, local_to_world, world_to_local
 from web_backend.server import create_app
-from web_backend.simulation import Simulation, cell_index, global_costmap, navigation_grid, plan_path
+from web_backend.simulation import Simulation, cell_index, global_costmap, navigation_grid, plan_path, segment_clear
 
 
 class SimulationTest(unittest.TestCase):
+    def test_direct_route_has_no_grid_heading_changes(self):
+        grid = dict(map_id='test', frame='map', width=60, height=40, resolution_m=.1,
+                    origin=dict(x_m=-2, y_m=4, yaw_rad=.29), cells=[0]*2400)
+        def pose(x, y):
+            wx, wy = local_to_world([x, y], grid['origin'])
+            return dict(x_m=wx, y_m=wy, yaw_rad=.29)
+        start, goal = pose(.83, .92), pose(4.37, 2.16)
+        heading = math.atan2(goal['y_m']-start['y_m'], goal['x_m']-start['x_m'])
+        start['yaw_rad'] = goal['yaw_rad'] = heading
+        sim = Simulation(grid, dict(revision=0, zones=[]))
+        path = plan_path(sim.costmap, start, goal)
+        self.assertEqual(path, [[start['x_m'], start['y_m']], [goal['x_m'], goal['y_m']]])
+        sim.pose = dict(start)
+        sim.start(goal, path)
+        for _ in range(100):
+            sim.advance(.1)
+            self.assertAlmostEqual(sim.pose['yaw_rad'], heading)
+            if sim.phase == 'idle':
+                break
+        self.assertEqual(sim.status, 'Arrived')
+        # Same-cell goals must not visit the cell center first.
+        nearby = pose(.84, .93)
+        self.assertEqual(plan_path(sim.costmap, start, nearby),
+                         [[start['x_m'], start['y_m']], [nearby['x_m'], nearby['y_m']]])
+        # A valid detour exists, but the direct diagonal touches an occupied corner.
+        tiny = {**grid, 'width': 3, 'height': 3, 'cells': [0,100,0,0,0,0,0,0,0]}
+        a, b = pose(.05, .05), pose(.25, .25)
+        route = plan_path(tiny, a, b)
+        self.assertFalse(segment_clear(tiny, route[0], route[-1]))
+        self.assertGreater(len(route), 2)
+        self.assertTrue(all(segment_clear(tiny, p, q) for p, q in zip(route, route[1:])))
+        # Edge grazing and unknown cells must also reject shortcuts.
+        edge = [local_to_world(p, grid['origin']) for p in [(.1, .02), (.1, .08)]]
+        self.assertFalse(segment_clear(tiny, *edge))
+        unknown = {**tiny, 'cells': [0,-1,0,0,0,0,0,0,0]}
+        self.assertFalse(segment_clear(unknown, route[0], route[-1]))
+
     def test_costmap_detour_delete_and_simulated_arrival(self):
         grid = dict(map_id='test', frame='map', revision=1, width=40, height=30, resolution_m=.1,
                     origin=dict(x_m=-2, y_m=4, yaw_rad=.29), cells=[0]*1200)
@@ -27,13 +64,18 @@ class SimulationTest(unittest.TestCase):
         route = plan_path(costmap, start, goal)
         for point in route:
             cell_index(costmap, dict(x_m=point[0], y_m=point[1]))
-        projected = [world_to_local(p, grid['origin']) for p in route]
+        samples = [[p[0]+(q[0]-p[0])*t/100, p[1]+(q[1]-p[1])*t/100]
+                   for p, q in zip(route, route[1:]) for t in range(101)]
+        for point in samples:
+            cell_index(costmap, dict(x_m=point[0], y_m=point[1]))
+        projected = [world_to_local(p, grid['origin']) for p in samples]
         self.assertTrue(any(1.8 < x < 2.2 and (y < .6 or y > 2.4) for x, y in projected))
         with self.assertRaisesRegex(ValueError, 'blocked'):
             plan_path(costmap, start, pose(2, 1.5))
         restored = navigation_grid(grid, [])
         self.assertEqual(restored['cells'], grid['cells'])
         direct = plan_path(global_costmap(restored), start, goal)
+        self.assertEqual(direct, [[start['x_m'], start['y_m']], [goal['x_m'], goal['y_m']]])
         self.assertLess(len(direct), len(route))
         barrier = [local_to_world(p, grid['origin']) for p in [(1.8,0), (2.2,0), (2.2,3), (1.8,3)]]
         with self.assertRaisesRegex(ValueError, 'No path'):

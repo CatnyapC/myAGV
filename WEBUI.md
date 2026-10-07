@@ -64,7 +64,9 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
    map-frame X/Y/yaw. MAP > More > **Fit robot** centers it without resetting zoom.
 8. Click free map space to preview a cyan goal, or enter X/Y/yaw in OPERATE.
    Click **Simulate** explicitly; the active goal turns orange.
-   The cyan line is the actual remaining A* route;
+   The cyan line is the actual remaining A* route, simplified into straight
+   segments checked against the inflated costmap (including touched cell corners).
+   The simulator turns at necessary bends instead of at every grid cell;
    the chassis moves/turns with a breathing glow. Arrival adopts the requested yaw
    and clears the line/glow. Reduced-motion settings disable breathing.
 9. While stopped, draw a no-go rectangle across the direct route. MAP > More >

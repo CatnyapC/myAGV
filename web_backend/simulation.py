@@ -83,6 +83,36 @@ def cell_index(grid, pose):
     return index
 
 
+def segment_clear(grid, start, end):
+    """Check the entire segment, including cells touched at edges/corners."""
+    segment = [world_to_local(p, grid['origin']) for p in (start, end)]
+    r, width, height = grid['resolution_m'], grid['width'], grid['height']
+    lo_x = max(0, math.floor(min(p[0] for p in segment) / r) - 1)
+    hi_x = min(width - 1, math.floor(max(p[0] for p in segment) / r) + 1)
+    lo_y = max(0, math.floor(min(p[1] for p in segment) / r) - 1)
+    hi_y = min(height - 1, math.floor(max(p[1] for p in segment) / r) + 1)
+    for y in range(lo_y, hi_y + 1):
+        for x in range(lo_x, hi_x + 1):
+            if grid['cells'][y * width + x] == 0:
+                continue
+            square = [(x*r, y*r), ((x+1)*r, y*r), ((x+1)*r, (y+1)*r), (x*r, (y+1)*r)]
+            if intersects(segment, square):
+                return False
+    return True
+
+
+def simplify_path(grid, points):
+    # ponytail: greedy bounding-box scans suit the demo; use grid ray traversal for larger maps.
+    route, index = [points[0]], 0
+    while index < len(points) - 1:
+        next_index = len(points) - 1
+        while next_index > index + 1 and not segment_clear(grid, points[index], points[next_index]):
+            next_index -= 1
+        route.append(points[next_index])
+        index = next_index
+    return route
+
+
 def plan_path(grid, start, goal):
     first, last = cell_index(grid, start), cell_index(grid, goal)
     width, height, cells = grid['width'], grid['height'], grid['cells']
@@ -100,7 +130,7 @@ def plan_path(grid, start, goal):
                 route.append(parents[route[-1]])
             r = grid['resolution_m']
             points = [local_to_world([((i % width) + .5)*r, ((i // width) + .5)*r], grid['origin']) for i in reversed(route)]
-            return [[start['x_m'], start['y_m']], *points, [goal['x_m'], goal['y_m']]]
+            return simplify_path(grid, [[start['x_m'], start['y_m']], *points, [goal['x_m'], goal['y_m']]])
         x, y = current % width, current // width
         for dx, dy in ((1,0), (-1,0), (0,1), (0,-1), (1,1), (1,-1), (-1,1), (-1,-1)):
             nx, ny = x + dx, y + dy
