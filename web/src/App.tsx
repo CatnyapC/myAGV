@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerE
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
-import { Camera, Crosshair, Expand, LayoutGrid, Menu, MoreHorizontal, RotateCcw, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
+import { Camera, Crosshair, Dice5, Expand, LayoutGrid, Menu, MoreHorizontal, RotateCcw, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
 import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
@@ -14,6 +14,24 @@ type State = { robot_id: string; demo: boolean; phase: string; navigation: Navig
 type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; settings_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v2';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
+const REQUEST_EXAMPLES = [
+  '塩の瓶を持ってきてください。',
+  '塩の瓶をこちらに運んでもらえますか。',
+  '塩の瓶を取ってきて。',
+  '塩の瓶をここまで届けてください。',
+  '醤油の瓶を持ってきてください。',
+  '醤油の瓶をこちらに運んでもらえますか。',
+  '醤油の瓶を取ってきて。',
+  '醤油の瓶をここまで届けてください。',
+  'コーヒーの瓶を持ってきてください。',
+  'コーヒーの瓶をこちらに運んでもらえますか。',
+  'コーヒーの瓶を取ってきて。',
+  'コーヒーの瓶をここまで届けてください。',
+  'お茶の瓶を持ってきてください。',
+  'お茶の瓶をこちらに運んでもらえますか。',
+  'お茶の瓶を取ってきて。',
+  'お茶の瓶をここまで届けてください。',
+];
 
 export function App() {
   const [state, setState] = useState<State | null>(null);
@@ -246,6 +264,7 @@ export function App() {
     setSelectedItemId(id);
     setSelectedPhotoId(photos?.photos.find(p => p.item_id === id && p.kind === 'observation' && p.map_matches && p.available)?.id ?? photos?.photos.find(p => p.item_id === id)?.id ?? null);
   }
+  function updateRequest(text: string) { setRequestText(text); setResolution(null); setGoalText(['', '', '0']); }
   async function resolveRequest() {
     if (!canEdit || busy || !photos || !packet || !requestText.trim() || state?.llm?.status !== 'configured' || settingsDirty || settingsSaving || saveError) return;
     const controller = new AbortController(); resolutionRequest.current = controller;
@@ -398,8 +417,10 @@ export function App() {
         <label className="subheading" htmlFor="item-request">REQUEST</label>
         <form className="request-row" onSubmit={event => { event.preventDefault(); void resolveRequest(); }}>
           <input id="item-request" value={requestText} maxLength={500} placeholder="Bring me the red cup" disabled={!canEdit || busy}
-            onChange={event => { setRequestText(event.target.value); setResolution(null); setGoalText(['', '', '0']); }} />
+            onChange={event => updateRequest(event.target.value)} />
           <Button type="submit" disabled={!canEdit || busy || !photos || !requestText.trim() || state?.llm?.status !== 'configured' || settingsDirty || settingsSaving || Boolean(saveError)}>{resolutionRequest.current ? 'Resolving…' : 'Resolve'}</Button>
+          <Button type="button" variant="ghost" className="icon" aria-label="Random Japanese request" title="Random Japanese request" disabled={!canEdit || busy}
+            onClick={() => updateRequest(REQUEST_EXAMPLES[Math.floor(Math.random() * REQUEST_EXAMPLES.length)])}><Dice5 size={16} /></Button>
         </form>
         {state?.llm?.status !== 'configured' && <span className="muted">LLM {state?.llm?.status === 'unavailable' ? 'unavailable' : 'not configured'}</span>}
         {resolution && <div role="status" className="resolution-result">
