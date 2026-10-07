@@ -10,8 +10,8 @@ import { api } from './api';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
-type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation; llm: { model: string; status: string } };
-type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string };
+type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation; llm: { model: string; status: string; reasoning_effort: string } };
+type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; settings_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v1';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
 
@@ -21,7 +21,7 @@ export function App() {
   const [packet, setPacket] = useState<{ info: MapInfo; image: string } | null>(null);
   const [zones, setZones] = useState<Zones | null>(null);
   const [savedSettings, setSavedSettings] = useState<Settings | null>(null);
-  const [settingsDraft, setSettingsDraft] = useState({ auto_align: true, manual_angle_deg: 0 });
+  const [settingsDraft, setSettingsDraft] = useState<Settings['values']>({ auto_align: true, manual_angle_deg: 0, llm_model: 'deepseek/deepseek-v4.1-flash', reasoning_effort: 'off' });
   const [angleText, setAngleText] = useState('0');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -59,7 +59,7 @@ export function App() {
   const editingSettings = useRef(false);
   const resolutionRequest = useRef<AbortController | null>(null);
   const resolutionContext = useRef('');
-  resolutionContext.current = `${packet?.info.map_id}:${photos?.revision}`;
+  resolutionContext.current = `${packet?.info.map_id}:${photos?.revision}:${savedSettings?.revision}`;
   const settingsDirty = savedSettings !== null && JSON.stringify(settingsDraft) !== JSON.stringify(savedSettings.values);
   const angleValid = angleText.trim() !== '' && Number.isFinite(Number(angleText)) && Math.abs(Number(angleText)) <= 180;
   editingSettings.current = settingsDirty || settingsSaving || !angleValid;
@@ -107,10 +107,10 @@ export function App() {
   useEffect(() => () => { if (packet) URL.revokeObjectURL(packet.image); }, [packet]);
   useEffect(() => () => resolutionRequest.current?.abort(), []);
   useEffect(() => {
-    if (resolution && `${resolution.map_id}:${resolution.index_revision}` !== resolutionContext.current) {
+    if (resolution && `${resolution.map_id}:${resolution.index_revision}:${resolution.settings_revision}` !== resolutionContext.current) {
       setResolution(null); setGoalText(['', '', '0']);
     }
-  }, [resolution, photos?.revision, packet?.info.map_id]);
+  }, [resolution, photos?.revision, packet?.info.map_id, savedSettings?.revision]);
   useEffect(() => {
     if (selectedPhotoId && photos && !photos.photos.some(p => p.id === selectedPhotoId)) { setSelectedPhotoId(null); if (photoMode === 'edit') setPhotoMode(null); }
     if (selectedItemId && photos && !photos.items.some(i => i.id === selectedItemId)) setSelectedItemId('');
@@ -247,13 +247,13 @@ export function App() {
     setSelectedPhotoId(photos?.photos.find(p => p.item_id === id && p.kind === 'observation' && p.map_matches && p.available)?.id ?? photos?.photos.find(p => p.item_id === id)?.id ?? null);
   }
   async function resolveRequest() {
-    if (!canEdit || busy || !photos || !packet || !requestText.trim() || state?.llm?.status !== 'configured') return;
+    if (!canEdit || busy || !photos || !packet || !requestText.trim() || state?.llm?.status !== 'configured' || settingsDirty || settingsSaving || saveError) return;
     const controller = new AbortController(); resolutionRequest.current = controller;
     setBusy(true); setError(''); setResolution(null); setGoalText(['', '', '0']); setSelectedItemId(''); setSelectedPhotoId(null);
     try {
       const result = await api<Resolution>('/api/resolve', { method: 'POST', signal: controller.signal,
         body: JSON.stringify({ text: requestText.trim(), map_id: packet.info.map_id, expected_revision: photos.revision }) });
-      if (controller.signal.aborted || `${result.map_id}:${result.index_revision}` !== resolutionContext.current) return;
+      if (controller.signal.aborted || `${result.map_id}:${result.index_revision}:${result.settings_revision}` !== resolutionContext.current) return;
       setResolution(result); setSelected(null);
       const id = result.status === 'matched' ? result.item_ids[0] : '';
       setSelectedItemId(id); setSelectedPhotoId(result.photo_id ?? photos.photos.find(p => p.item_id === id)?.id ?? null);
@@ -400,7 +400,7 @@ export function App() {
         <form className="request-row" onSubmit={event => { event.preventDefault(); void resolveRequest(); }}>
           <input id="item-request" value={requestText} maxLength={500} placeholder="Bring me the red cup" disabled={!canEdit || busy}
             onChange={event => { setRequestText(event.target.value); setResolution(null); setGoalText(['', '', '0']); }} />
-          <Button type="submit" disabled={!canEdit || busy || !photos || !requestText.trim() || state?.llm?.status !== 'configured'}>{resolutionRequest.current ? 'Resolving…' : 'Resolve'}</Button>
+          <Button type="submit" disabled={!canEdit || busy || !photos || !requestText.trim() || state?.llm?.status !== 'configured' || settingsDirty || settingsSaving || Boolean(saveError)}>{resolutionRequest.current ? 'Resolving…' : 'Resolve'}</Button>
         </form>
         {state?.llm?.status !== 'configured' && <span className="muted">LLM {state?.llm?.status === 'unavailable' ? 'unavailable' : 'not configured'}</span>}
         {resolution && <div role="status" className="resolution-result">
@@ -479,7 +479,14 @@ export function App() {
         <Dialog.Description className="sr-only">Map display and workspace settings</Dialog.Description>
         <div className="settings-body">
           <span className="subheading">LLM</span><span className="muted">OpenRouter · {state?.llm?.status ?? 'Loading…'}</span>
-          <span className="muted">{state?.llm?.model ?? '—'}</span><div className="section-divider" />
+          <label className="setting-row">Model<select value={settingsDraft.llm_model} disabled={!canEdit || !savedSettings || busy} onChange={event => {
+            const model = savedSettings?.llm_models.find(m => m.id === event.target.value);
+            if (model) updateSetting({ ...settingsDraft, llm_model: model.id, reasoning_effort: model.efforts.includes(settingsDraft.reasoning_effort) ? settingsDraft.reasoning_effort : model.efforts[0] });
+          }}>{savedSettings?.llm_models.map(model => <option value={model.id} key={model.id}>{model.name}</option>)}</select></label>
+          <label className="setting-row">Thinking<select value={settingsDraft.reasoning_effort} disabled={!canEdit || !savedSettings || busy}
+            onChange={event => updateSetting({ ...settingsDraft, reasoning_effort: event.target.value })}>
+            {savedSettings?.llm_models.find(model => model.id === settingsDraft.llm_model)?.efforts.map(effort => <option value={effort} key={effort}>{effort === 'off' ? 'Off' : effort[0].toUpperCase() + effort.slice(1)}</option>)}
+          </select></label><div className="section-divider" />
           <span className="subheading">MAP DISPLAY</span>
           <label className="setting-row">Auto-align walls<input type="checkbox" checked={settingsDraft.auto_align} disabled={!canEdit}
             onChange={e => updateSetting({ ...settingsDraft, auto_align: e.target.checked })} /></label>

@@ -7,7 +7,8 @@ import unittest
 
 from aiohttp.test_utils import TestClient, TestServer
 from web_backend.map_data import demo_map, dominant_angle, local_to_world, render_map, world_to_local
-from web_backend.server import create_app
+from web_backend.server import DEFAULT_SETTINGS, create_app
+from web_backend.resolve import MODELS
 
 
 class MapGeometryTest(unittest.TestCase):
@@ -47,7 +48,7 @@ class EditorAPITest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.post('/api/commands', json={**command, 'id': 'stale'})).status, 409)
                 bad = {**command, 'id': 'bad', 'expected_revision': 1, 'corners': [[999, 999]] * 4}
                 self.assertEqual((await client.post('/api/commands', json=bad)).status, 400)
-                values = dict(auto_align=False, manual_angle_deg=-26)
+                values = {**DEFAULT_SETTINGS, 'auto_align': False, 'manual_angle_deg': -26}
                 async with client.ws_connect('/api/events') as socket:
                     await socket.receive_json()
                     response = await client.put('/api/settings', json=dict(expected_revision=0, values=values))
@@ -66,6 +67,38 @@ class EditorAPITest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status, 200)
                 self.assertEqual((await response.json())['zones']['zones'], [])
                 self.assertEqual(json.loads((Path(directory) / 'no_go_zones.json').read_text())['zones'], [])
+
+    async def test_llm_settings_migration_validation_and_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'settings.json'
+            path.write_text(json.dumps(dict(revision=3, values=dict(auto_align=False, manual_angle_deg=12))))
+            async with TestClient(TestServer(create_app(directory))) as client:
+                preferences = await (await client.get('/api/settings')).json()
+                self.assertEqual(preferences['values']['reasoning_effort'], 'off')
+                self.assertEqual(preferences['values']['manual_angle_deg'], 12)
+                before_map = await (await client.get('/api/map')).json()
+                for model in MODELS:
+                    for effort in ('off', 'low', 'high', 'max'):
+                        values = {**preferences['values'], 'llm_model': model, 'reasoning_effort': effort}
+                        response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values=values))
+                        self.assertEqual(response.status, 200, await response.text())
+                        preferences = await response.json()
+                        self.assertEqual(json.loads(path.read_text())['values'], values)
+                        state = await (await client.get('/api/state')).json()
+                        self.assertEqual((state['llm']['model'], state['llm']['reasoning_effort']), (model, effort))
+                self.assertEqual(await (await client.get('/api/map')).json(), before_map)
+                self.assertEqual((await client.get(before_map['png_url'])).status, 200)
+                self.assertEqual((await client.get(f"/api/global-costmap.png?view_revision={before_map['display']['view_revision']}&zone_revision=0")).status, 200)
+                saved = path.read_text()
+                for invalid in ({'reasoning_effort': 'medium'}, {'reasoning_effort': []}, {'llm_model': 'invented/model'}):
+                    response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values={**values, **invalid}))
+                    self.assertEqual(response.status, 400)
+                    self.assertEqual(path.read_text(), saved)
+                self.assertEqual((await client.put('/api/settings', json=dict(expected_revision=3, values=values))).status, 409)
+            async with TestClient(TestServer(create_app(directory))) as client:
+                restored = await (await client.get('/api/settings')).json()
+                self.assertEqual(restored['values'], values)
+                self.assertEqual(restored['revision'], preferences['revision'])
 
 
 if __name__ == '__main__':

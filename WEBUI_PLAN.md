@@ -437,20 +437,27 @@ and [GPG manual](https://manpages.ubuntu.com/manpages/focal/man1/gpg.1.html).
 ### Local natural-language item selection
 
 Implement before simulated Fetch. OPERATE adds one request input and Resolve action;
-Settings shows OpenRouter model/configuration status. `POST /api/resolve` accepts
+Settings shows OpenRouter configuration status and persisted Model/Thinking selectors.
+`POST /api/resolve` accepts
 `text` (1–500 characters), current `map_id` and photo index `expected_revision`.
 Use the existing aiohttp dependency, a fixed official OpenRouter chat-completions
-endpoint and `deepseek/deepseek-v4.1-flash`. Send only registered item IDs,
+endpoint. Allow `deepseek/deepseek-v4.1-flash` and `deepseek/deepseek-v4-pro-0813`;
+default to Flash with thinking Off. Send only registered item IDs,
 names/appearance and request text. This text workflow does not extract photo features
 or establish VLM observation associations.
 
 Require JSON-schema output with `matched`, `ambiguous` or `not_found` and up to
 eight existing item IDs. Prefer latency routing with `require_parameters=true`,
-disable reasoning, bound output to 384 tokens and apply a 15-second timeout.
+support Off / Low / High / Max thinking, and exclude reasoning text from responses.
+The official model catalog checked on 2026-10-08 lists `low`, `high`, `max` for
+both selected models with reasoning optional; do not offer unsupported generic
+efforts such as medium. Bounds for completion tokens (thinking plus final JSON)
+and request timeout are Off: 384/15s, Low: 2048/30s, High: 4096/60s,
+Max: 8192/120s. Reject incomplete output rather than inventing a match.
 Validate IDs, uniqueness, cardinality and exact fields locally; no model-generated
 coordinates, code, routes or joint values. No automatic retry or fallback model.
 Allow one in-flight request for this single-user UI; concurrent requests get 429.
-Discard results after STOP, disconnect, navigation, map/index/no-go changes.
+Discard results after STOP, disconnect, navigation, map/index/no-go/settings changes.
 An outbound request may finish after cancellation; its result cannot select a target.
 
 A unique match selects the item and its confirmed current-map observation. Preview
@@ -461,9 +468,20 @@ navigation or grasp. Current costmap validation still runs on explicit Simulate;
 Fetch remains disabled until the task/gate milestone. Manual item selection stays usable
 without a key. Necessary checks use a local mock provider, not a paid live request.
 
+Persist `llm_model` and `reasoning_effort` in the existing backend `settings.json`
+using its revision checks, atomic writer and 400ms autosave UI. Validate model/effort
+allowlists, retain settings across restart, and expose selector options through
+`GET /api/settings`. Existing display-only saved settings gain Flash/Off defaults;
+unknown/malformed settings still fail validation. LLM-only changes preserve the
+display raster/view revision, map pan and costmap overlay. Block Resolve while
+settings are unsaved/failed; freeze configuration for each request and discard
+its result if the saved revision changes. Keys stay outside these settings.
+
 References: [model](https://openrouter.ai/deepseek/deepseek-v4.1-flash),
 [structured outputs](https://openrouter.ai/docs/guides/features/structured-outputs),
 [provider routing](https://openrouter.ai/docs/guides/routing/provider-selection).
+Reasoning options: [public model catalog](https://openrouter.ai/api/v1/models),
+[reasoning controls and token budgets](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
 
 ## 5. Local alignment and fetch sequence
 

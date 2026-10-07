@@ -9,6 +9,11 @@ from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from .photos import digest_station
 
 MODEL = 'deepseek/deepseek-v4.1-flash'
+MODELS = {MODEL: 'DeepSeek V4.1 Flash', 'deepseek/deepseek-v4-pro-0813': 'DeepSeek V4 Pro 0813'}
+# Verified against OpenRouter's public model catalog on 2026-10-08.
+# Shared completion budget includes thinking; leave room for the final JSON.
+EFFORT_BUDGETS = {'off': (384, 1), 'low': (2048, 2), 'high': (4096, 4), 'max': (8192, 8)}
+MODEL_OPTIONS = [dict(id=model, name=name, efforts=list(EFFORT_BUDGETS)) for model, name in MODELS.items()]
 API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 TIMEOUT_S = 15
 PROMPT = '''Resolve one requested physical item from the supplied catalog.
@@ -50,7 +55,14 @@ def validate_result(result, allowed):
     return result
 
 
-async def resolve_items(text, items, key):
+def validate_llm(model, effort):
+    if not isinstance(model, str) or model not in MODELS or not isinstance(effort, str) or effort not in EFFORT_BUDGETS:
+        raise ValueError('Unsupported DeepSeek model or thinking level')
+
+
+async def resolve_items(text, items, key, model, effort):
+    validate_llm(model, effort)
+    tokens, timeout_multiplier = EFFORT_BUDGETS[effort]
     catalog = [{k: item[k] for k in ('id', 'name', 'appearance')} for item in items]
     allowed = {item['id'] for item in catalog}
     if not allowed:
@@ -59,13 +71,14 @@ async def resolve_items(text, items, key):
         'status': dict(type='string', enum=['matched', 'ambiguous', 'not_found']),
         'item_ids': dict(type='array', items=dict(type='string', enum=list(allowed)), maxItems=8),
     }, required=['status', 'item_ids'], additionalProperties=False)
-    body = dict(model=MODEL, messages=[dict(role='system', content=PROMPT),
+    body = dict(model=model, messages=[dict(role='system', content=PROMPT),
                 dict(role='user', content=json.dumps(dict(instruction=text, items=catalog), ensure_ascii=False))],
                 response_format=dict(type='json_schema', json_schema=dict(name='item_resolution', strict=True, schema=schema)),
-                provider=dict(sort='latency', require_parameters=True), reasoning=dict(enabled=False),
-                temperature=0, max_tokens=384, stream=False)
+                provider=dict(sort='latency', require_parameters=True),
+                reasoning=dict(enabled=False) if effort == 'off' else dict(effort=effort, exclude=True),
+                temperature=0, max_tokens=tokens, stream=False)
     try:
-        async with ClientSession(timeout=ClientTimeout(total=TIMEOUT_S)) as session:
+        async with ClientSession(timeout=ClientTimeout(total=TIMEOUT_S * timeout_multiplier)) as session:
             async with session.post(API_URL, headers={'Authorization': f'Bearer {key}'}, json=body, allow_redirects=False) as response:
                 if response.status != 200:
                     # Never return provider error bodies (may echo credentials or prompts).

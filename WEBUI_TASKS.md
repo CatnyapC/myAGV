@@ -32,6 +32,11 @@ before each task. Manage running services with PM2. Do not open a browser for QA
   candidates/no match, backend-only credentials and compact REQUEST UI. Timeout,
   provider errors, stale/cancelled results and one-request limit checked using a
   local mock. No paid live request or browser QA; Fetch remains disabled.
+- [x] Persisted DeepSeek model/thinking settings — section 4. Verified Flash/Pro
+  effort metadata; Model and Off/Low/High/Max selectors, atomic backend autosave,
+  legacy display-settings migration, validated choices and bounded thinking tokens/
+  timeout. LLM-only updates preserve the raster/costmap view. Mock requests honor
+  saved choices and reject results after configuration changes; restart checks pass.
 
 Implementation checks passed. UI checkboxes below remain for the user; no browser
 was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
@@ -61,6 +66,8 @@ was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
 - [ ] REQUEST resolves a unique item; preview uses the validated station, not capture pose.
 - [ ] Ambiguous/no-match requests show candidates/empty selection; Resolve never moves.
 - [ ] STOP or close the UI while resolving; no late selection appears after reconnect.
+- [ ] Settings > Model/Thinking: switch choices, check Saved, reload/restart and restore.
+- [ ] Changing only Model/Thinking preserves map pan/zoom and Global costmap overlay.
 
 ## Deferred robot integration
 

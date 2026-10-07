@@ -11,7 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from web_backend.map_data import demo_map
 from web_backend.photos import PhotoIndex, demo_frame
-from web_backend.resolve import MODEL, load_key, validate_result
+from web_backend.resolve import MODEL, MODELS, load_key, validate_result
 from web_backend.server import create_app
 
 
@@ -57,16 +57,18 @@ class ResolverAPITest(unittest.IsolatedAsyncioTestCase):
             index.edit(other['id'], dict(expected_revision=5, item_id='new', name='Other red cup', appearance='Red', confirmed=True), demo_map()['map_id'])
             other_id = index.value['items'][1]['id']
             mode, entered, release = 'matched', asyncio.Event(), asyncio.Event()
+            expected_model, expected_effort = MODEL, 'off'
             calls = []
 
             async def provider(request):
                 body = await request.json()
                 calls.append(body)
                 self.assertEqual(request.headers['Authorization'], 'Bearer fake-server-key')
-                self.assertEqual(body['model'], MODEL)
+                self.assertEqual(body['model'], expected_model)
                 self.assertEqual(body['provider'], dict(sort='latency', require_parameters=True))
                 self.assertEqual(body['response_format']['type'], 'json_schema')
-                self.assertFalse(body['reasoning']['enabled'])
+                self.assertEqual(body['reasoning'], dict(enabled=False) if expected_effort == 'off' else dict(effort=expected_effort, exclude=True))
+                self.assertEqual(body['max_tokens'], {'off': 384, 'low': 2048, 'high': 4096, 'max': 8192}[expected_effort])
                 catalog = json.loads(body['messages'][1]['content'])['items']
                 self.assertTrue(all(set(i) == {'id', 'name', 'appearance'} for i in catalog))
                 if mode == 'stall':
@@ -110,6 +112,18 @@ class ResolverAPITest(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual((await client.post('/api/resolve', json={**payload, 'expected_revision': 5})).status, 409)
                         self.assertEqual((await client.post('/api/resolve', json={**payload, 'text': 'x'*501})).status, 400)
                         self.assertEqual(len(calls), call_count)
+                        mode = 'matched'
+                        preferences = await (await client.get('/api/settings')).json()
+                        for expected_model in MODELS:
+                            for expected_effort in ('off', 'low', 'high', 'max'):
+                                values = {**preferences['values'], 'llm_model': expected_model, 'reasoning_effort': expected_effort}
+                                response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values=values))
+                                self.assertEqual(response.status, 200)
+                                preferences = await response.json()
+                                result = await (await client.post('/api/resolve', json=payload)).json()
+                                self.assertEqual(result['status'], 'matched')
+                                self.assertEqual(result['settings_revision'], preferences['revision'])
+                        call_count = len(calls)
                         mode = 'stall'
                         pending = asyncio.create_task(client.post('/api/resolve', json=payload))
                         try:
@@ -120,6 +134,17 @@ class ResolverAPITest(unittest.IsolatedAsyncioTestCase):
                         finally:
                             release.set()
                         self.assertEqual((await pending).status, 409)
+                        entered.clear(); release.clear()
+                        pending = asyncio.create_task(client.post('/api/resolve', json=payload))
+                        try:
+                            await asyncio.wait_for(entered.wait(), 1)
+                            values = {**preferences['values'], 'reasoning_effort': 'low'}
+                            response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values=values))
+                            self.assertEqual(response.status, 200)
+                        finally:
+                            release.set()
+                        self.assertEqual((await pending).status, 409)
+                        expected_effort = 'low'
                         entered.clear(); release.clear()
                         pending = asyncio.create_task(client.post('/api/resolve', json=payload))
                         try:

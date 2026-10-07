@@ -13,10 +13,11 @@ from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame
 from .storage import atomic_json
-from .resolve import MODEL, load_key, resolve_items, target_preview
+from .resolve import MODEL, MODEL_OPTIONS, load_key, resolve_items, target_preview, validate_llm
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0)
+DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off')
+DISPLAY_FIELDS = ('auto_align', 'manual_angle_deg')
 
 
 def load_json(path, fallback):
@@ -29,6 +30,7 @@ def validate_settings(value):
     angle = value['manual_angle_deg']
     if type(value['auto_align']) is not bool or isinstance(angle, bool) or not isinstance(angle, (int, float)) or not math.isfinite(angle) or not -180 <= angle <= 180:
         raise ValueError('Invalid display settings')
+    validate_llm(value['llm_model'], value['reasoning_effort'])
     return value
 
 
@@ -37,6 +39,8 @@ class Editor:
         self.directory = Path(directory)
         self.grid = demo_map()
         self.settings = load_json(self.directory / 'settings.json', dict(revision=0, values=DEFAULT_SETTINGS.copy()))
+        if isinstance(self.settings['values'], dict) and set(self.settings['values']) == set(DISPLAY_FIELDS):
+            self.settings['values'] = {**DEFAULT_SETTINGS, **self.settings['values']}
         validate_settings(self.settings['values'])
         self.zones = load_json(self.directory / 'no_go_zones.json', dict(map_id=self.grid['map_id'], revision=0, zones=[]))
         if self.zones['map_id'] != self.grid['map_id']:
@@ -50,13 +54,14 @@ class Editor:
         self.replies = {}  # Bounded retry cache; duplicate command IDs never add another zone.
         self.sim = Simulation(self.grid, self.zones)
         self.cost_png = None
-        self.llm = dict(model=MODEL, status='not_configured')
+        self.llm = dict(status='not_configured')
 
     def state(self):
         return dict(robot_id='local-demo', demo=True, phase=self.sim.phase, motion_available=False,
                     simulation_available=True, cameras_available=False, localization_available=False,
                     zone_enforcement='simulated-global',
-                    navigation=self.sim.telemetry(), llm=self.llm)
+                    navigation=self.sim.telemetry(), llm={**self.llm, 'model': self.settings['values']['llm_model'],
+                                                        'reasoning_effort': self.settings['values']['reasoning_effort']})
 
     async def emit(self, kind):
         for socket in tuple(self.sockets):
@@ -130,13 +135,14 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         if resolve_lock.locked():
             raise web.HTTPTooManyRequests(text='An item resolution is already running')
         async with resolve_lock:
-            generation, zone_revision = editor.sim.generation, editor.zones['revision']
+            generation, zone_revision, settings_revision = editor.sim.generation, editor.zones['revision'], editor.settings['revision']
+            config = dict(editor.settings['values'])
             def check_current():
-                if editor.sim.generation != generation or editor.sim.phase != 'idle' or editor.zones['revision'] != zone_revision or data['map_id'] != editor.grid['map_id'] or data['expected_revision'] != photos.value['revision']:
+                if editor.sim.generation != generation or editor.sim.phase != 'idle' or editor.zones['revision'] != zone_revision or editor.settings['revision'] != settings_revision or data['map_id'] != editor.grid['map_id'] or data['expected_revision'] != photos.value['revision']:
                     raise web.HTTPConflict(text='Resolution cancelled or records changed; retry explicitly')
             index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
             check_current()
-            result = await resolve_items(data['text'].strip(), index['items'], llm_key)
+            result = await resolve_items(data['text'].strip(), index['items'], llm_key, config['llm_model'], config['reasoning_effort'])
             check_current()
             if result['status'] == 'matched':
                 index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
@@ -148,7 +154,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             check_current()
             if result['status'] == 'matched':
                 result.update(target_preview(index, records, result['item_ids'][0]))
-            return web.json_response({**result, 'index_revision': data['expected_revision'], 'map_id': data['map_id']})
+            return web.json_response({**result, 'index_revision': data['expected_revision'], 'map_id': data['map_id'], 'settings_revision': settings_revision})
 
     async def stations(request):
         try:
@@ -222,31 +228,33 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         return web.json_response({**grid, 'zone_revision': editor.sim.revision, 'source': 'simulation'})
 
     async def costmap_image(request):
-        view, zone = editor.settings['revision'], editor.sim.revision
+        view, zone = editor.metadata['display']['view_revision'], editor.sim.revision
         if request.query.get('view_revision') != str(view) or request.query.get('zone_revision') != str(zone):
             raise web.HTTPConflict(text='Costmap revision changed; reload')
         if not editor.cost_png or editor.cost_png[0] != (view, zone):
             _, png = await asyncio.to_thread(render_map, editor.sim.costmap, editor.settings['values'], view, editor.detected,
                                              {-1: b'\x00\x00\x00\x00', 0: b'\x00\x00\x00\x00', 100: b'\xe5\x48\x4d\x60'})
-            if (view, zone) != (editor.settings['revision'], editor.sim.revision):
+            if (view, zone) != (editor.metadata['display']['view_revision'], editor.sim.revision):
                 raise web.HTTPConflict(text='Costmap revision changed; reload')
             editor.cost_png = ((view, zone), png)
         return web.Response(body=editor.cost_png[1], content_type='image/png')
 
     async def settings(request):
         if request.method == 'GET':
-            return web.json_response(editor.settings)
+            return web.json_response({**editor.settings, 'llm_models': MODEL_OPTIONS})
         data = await request.json()
         async with editor.lock:
             if data['expected_revision'] != editor.settings['revision']:
                 raise web.HTTPConflict(text='Settings changed; reload before editing')
             values = validate_settings(data['values'])
             saved = dict(revision=editor.settings['revision'] + 1, values=values)
-            metadata, png = await asyncio.to_thread(render_map, editor.grid, values, saved['revision'], editor.detected)
+            metadata, png = editor.metadata, editor.png
+            if any(values[k] != editor.settings['values'][k] for k in DISPLAY_FIELDS):
+                metadata, png = await asyncio.to_thread(render_map, editor.grid, values, saved['revision'], editor.detected)
             atomic_json(editor.directory / 'settings.json', saved)
             editor.settings, editor.metadata, editor.png = saved, metadata, png
         await editor.emit('settings')
-        return web.json_response(saved)
+        return web.json_response({**saved, 'llm_models': MODEL_OPTIONS})
 
     async def commands(request):
         data = await request.json()

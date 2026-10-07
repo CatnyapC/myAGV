@@ -133,9 +133,30 @@ instead of silently replacing it. The UI does not store credentials.
 
 ## OpenRouter configuration
 
-Fixed model: `deepseek/deepseek-v4.1-flash`; official `/api/v1/chat/completions`
-endpoint. Latency routing, schema-support requirement, reasoning disabled, 384-token
-output cap and 15-second timeout. Only request text and registered names/appearance/IDs
+Settings > **Model** selects DeepSeek V4.1 Flash or V4 Pro 0813. **Thinking** selects
+Off / Low / High / Max. Flash + Off is the default. Both choices auto-save after
+400 ms to backend `settings.json`; Saved requires acknowledgement. They survive
+reload/restart and work without a configured key. Display-only legacy settings gain
+the defaults when loaded. Changing only LLM options preserves map pan/zoom and the
+costmap overlay. Resolve waits for successfully saved settings and rejects late
+results if configuration changes during inference.
+
+Official `/api/v1/chat/completions` endpoint; latency routing and schema-support
+requirement. Thinking responses are excluded. Total completion caps/timeouts:
+
+| Thinking | Tokens (including reasoning) | Timeout |
+| --- | --- | --- |
+| Off | 384 | 15 s |
+| Low | 2048 | 30 s |
+| High | 4096 | 60 s |
+| Max | 8192 | 120 s |
+
+The [model catalog](https://openrouter.ai/api/v1/models) was checked on 2026-10-08:
+both selected models allow `low`, `high`, `max` and optional reasoning. Generic
+gateway effort names are not necessarily supported by each model. Thinking counts
+toward the completion budget; incomplete results are rejected. See the
+[reasoning documentation](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens).
+Only request text and registered names/appearance/IDs
 are sent. Photo analysis/association and Fetch are separate milestones.
 
 Ubuntu: the backend reads `llm_api_key` from `$CREDENTIALS_DIRECTORY` supplied by
@@ -185,5 +206,8 @@ pose binding, confirmed item/station links, storage failure cleanup and frontend
 The resolver mock checks its outbound contract, ID/schema boundaries, unique/ambiguous/
 no-match behavior, goal prerequisites, credential isolation, provider failure/timeout,
 concurrency and STOP result rejection. No live OpenRouter inference was performed.
+Model/thinking checks cover all offered choices, outgoing reasoning/token arguments,
+legacy migration, persistence/restart, invalid/stale saves, unchanged raster/overlay
+and cancellation on settings changes.
 HTTP, PNG, static asset and WebSocket smoke checks passed for both
 PM2 services. Browser visual/interaction checks are deliberately left to the user.
