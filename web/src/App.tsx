@@ -12,7 +12,7 @@ import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout
 
 type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation; llm: { model: string; status: string; reasoning_effort: string } };
 type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; settings_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string };
-const LAYOUT_KEY = 'myagv:local-demo:layout:v1';
+const LAYOUT_KEY = 'myagv:local-demo:layout:v2';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
 
 export function App() {
@@ -353,7 +353,6 @@ export function App() {
         </Dropdown.Content></Dropdown.Portal>
       </Dropdown.Root>
       <strong className="brand">MYAGV CONTROL</strong><span className="demo-tag">DEMO</span>
-      <Button variant="ghost" className="icon" aria-label="Restore default layout" title="Restore default layout" disabled={!canLayout} onClick={resetLayout}><RotateCcw size={16} /></Button>
       <span className={`connection ${connected ? 'online' : ''}`}>{connected ? 'Connected' : 'Offline'}</span>
       <Button variant="danger" onClick={() => void stop()} className="stop">STOP</Button>
     </header>

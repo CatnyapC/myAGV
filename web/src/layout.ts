@@ -1,10 +1,10 @@
 import type { GridStackWidget } from 'gridstack';
 
 export const DEFAULT_LAYOUT: GridStackWidget[] = [
-  { id: 'map', x: 0, y: 0, w: 12, h: 12, minW: 1, minH: 1 },
-  { id: 'front', x: 12, y: 0, w: 6, h: 6, minW: 1, minH: 1 },
-  { id: 'arm', x: 12, y: 6, w: 6, h: 6, minW: 1, minH: 1 },
-  { id: 'operate', x: 18, y: 0, w: 6, h: 12, minW: 1, minH: 1 },
+  { id: 'operate', x: 0, y: 0, w: 6, h: 12, minW: 1, minH: 1 },
+  { id: 'front', x: 6, y: 0, w: 6, h: 6, minW: 1, minH: 1 },
+  { id: 'arm', x: 6, y: 6, w: 6, h: 6, minW: 1, minH: 1 },
+  { id: 'map', x: 12, y: 0, w: 12, h: 12, minW: 1, minH: 1 },
 ];
 const MINIMUM: Record<string, [number, number]> = { map: [368, 366], front: [288, 226], arm: [288, 226], operate: [288, 406] };
 export type Tile = GridStackWidget & { id: string; x: number; y: number; w: number; h: number };

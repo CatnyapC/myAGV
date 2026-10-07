@@ -4,23 +4,27 @@ import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout
 
 test('viewport fill, coupled divider resizing, minimums and reset', () => {
   const original = validatedLayout(DEFAULT_LAYOUT);
+  assert.equal(original.find(t => t.id === 'operate')!.x, 0);
+  assert.equal(original.find(t => t.id === 'map')!.x, 12);
   const height = viewportCellHeight(original, 840);
   assert.equal(height * 12, 840);
   const seams = dividers(original);
   assert.equal(seams.length, 3);
   const mapEdge = seams.find(s => s.axis === 'x' && s.position === 12)!;
-  assert.deepEqual(mapEdge.after, ['arm', 'front']);
+  assert.deepEqual(mapEdge.before, ['arm', 'front']);
+  assert.deepEqual(mapEdge.after, ['map']);
   const moved = moveDivider(original, mapEdge, 2, 80, height);
-  assert.equal(moved.find(t => t.id === 'map')!.w, 14);
-  assert.equal(moved.find(t => t.id === 'operate')!.x, 18);
-  for (const id of ['front', 'arm']) { const tile = moved.find(t => t.id === id)!; assert.equal(tile.x, 14); assert.equal(tile.w, 4); }
+  assert.equal(moved.find(t => t.id === 'map')!.x, 14);
+  assert.equal(moved.find(t => t.id === 'map')!.w, 10);
+  assert.equal(moved.find(t => t.id === 'operate')!.x, 0);
+  for (const id of ['front', 'arm']) { const tile = moved.find(t => t.id === id)!; assert.equal(tile.x, 6); assert.equal(tile.w, 8); }
   const cameraEdge = seams.find(s => s.axis === 'y')!;
   const taller = moveDivider(original, cameraEdge, 1, 80, height);
   assert.equal(taller.find(t => t.id === 'front')!.h, 7);
   assert.equal(taller.find(t => t.id === 'arm')!.y, 7);
   assert.equal(taller.find(t => t.id === 'arm')!.h, 5);
   const clamped = moveDivider(original, mapEdge, 100, 80, height);
-  assert.ok(clamped.find(t => t.id === 'front')!.w * 80 >= 288);
+  assert.ok(clamped.find(t => t.id === 'map')!.w * 80 >= 368);
   assert.equal(clamped.reduce((area, t) => area + t.w * t.h, 0), 24 * 12);
   assert.deepEqual(validatedLayout(JSON.parse(JSON.stringify(moved))), moved);
   assert.deepEqual(validatedLayout([{ id: 'unknown' }]), original);
