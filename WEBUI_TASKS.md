@@ -15,6 +15,9 @@ before each task. Manage running services with PM2. Do not open a browser for QA
   panel layout. Restore after reload/restart; show failures without false Saved state.
 - [x] Necessary checks only — section 6. TypeScript/build, coordinate and API
   persistence/validation checks; PM2 process/HTTP smoke check. Commit and push.
+- [x] Reference workspace layout — section 3. Fill the current window height,
+  paired divider handles with pointer/keyboard resizing, minimum content sizes,
+  top-toolbar default restore and automatic browser persistence. Build and geometry check.
 
 Implementation checks passed. UI checkboxes below remain for the user; no browser
 was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
@@ -23,7 +26,10 @@ was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
 
 - [ ] Load the Demo map; toggle auto-align and adjust manual display angle.
 - [ ] Add/delete a rectangle before and after rotation; reload to confirm persistence.
-- [ ] Resize, move, maximize and reset panels; check Settings restore after restart.
+- [ ] Unlock Edit layout; drag the shared vertical/horizontal handles and use arrow keys.
+- [ ] Resize the window; panels fill available height or scroll at minimum sizes.
+- [ ] Move/maximize panels, then use the top-toolbar default restore; reload to confirm.
+- [ ] Check Settings restore after restart.
 - [ ] Check compact layout on desktop/mobile; STOP stays visible.
 
 ## Deferred robot integration

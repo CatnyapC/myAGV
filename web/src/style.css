@@ -17,7 +17,8 @@ button svg { flex-shrink: 0; }
 input { border: 1px solid var(--gray-7); border-radius: 5px; background: var(--gray-3); color: var(--gray-12); height: 32px; padding: 0 9px; min-width: 0; }
 input:disabled { opacity: .5; }
 input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9); }
-.topbar { display: flex; gap: 10px; align-items: center; height: 56px; padding: 0 14px; border-bottom: 1px solid var(--gray-6); background: var(--gray-2); position: sticky; top: 0; z-index: 1000; }
+.app { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+.topbar { display: flex; flex-shrink: 0; gap: 10px; align-items: center; height: 56px; padding: 0 14px; border-bottom: 1px solid var(--gray-6); background: var(--gray-2); position: sticky; top: 0; z-index: 1000; }
 .brand { font-size: 12px; letter-spacing: .075em; white-space: nowrap; }
 .demo-tag { padding: 3px 6px; font-size: 10px; color: var(--yellow-11); border: 1px solid var(--gray-7); border-radius: 4px; letter-spacing: .08em; }
 .connection { display: flex; align-items: center; gap: 6px; color: var(--gray-11); margin-left: auto; font-size: 12px; }
@@ -25,7 +26,18 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .connection.online::before { background: var(--cyan-9); }
 .ownership { color: var(--gray-11); font-size: 12px; }
 .stop { height: 36px; min-width: 64px; }
-.grid-stack { margin: 8px; }
+.workspace { flex: 1; min-height: 0; position: relative; padding: 8px; overflow: auto; }
+.grid-stack { margin: 0; }
+.panel-dividers { position: absolute; inset: 8px; pointer-events: none; }
+.panel-divider { position: absolute; z-index: 15; pointer-events: auto; padding: 0; border: 0; border-radius: 2px; background: transparent; touch-action: none; }
+.panel-divider.vertical { width: 8px; cursor: col-resize; }
+.panel-divider.horizontal { height: 8px; cursor: row-resize; }
+.panel-divider::after { content: ''; position: absolute; border-radius: 2px; background: var(--gray-8); }
+.panel-divider.vertical::after { top: calc(50% - 16px); left: 50%; width: 3px; height: 32px; transform: translateX(-50%); }
+.panel-divider.horizontal::after { left: calc(50% - 16px); top: 50%; height: 3px; width: 32px; transform: translateY(-50%); }
+.panel-divider:hover:enabled, .panel-divider:focus-visible { background: var(--cyan-5); }
+.panel-divider:active:enabled::after { background: var(--cyan-11); }
+.panel-divider:disabled { opacity: .5; cursor: default; }
 .panel { display: flex; flex-direction: column; border: 1px solid var(--gray-6); background: var(--gray-2); border-radius: 8px; overflow: hidden !important; }
 .panel-header { display: flex; align-items: center; justify-content: space-between; height: 38px; flex-shrink: 0; padding: 0 7px 0 12px; border-bottom: 1px solid var(--gray-6); }
 .panel-title { font-size: 11px; letter-spacing: .08em; font-weight: 750; display: flex; flex: 1; align-items: center; height: 100%; user-select: none; }
@@ -58,7 +70,7 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .zone-row.selected { color: var(--cyan-11); background: var(--cyan-3); }
 .row-end { margin-left: auto; font-size: 10px; }
 .enforcement { font-size: 11px; }
-.error-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 12px 0; color: var(--red-11); padding: 4px 8px; border: 1px solid var(--red-6); border-radius: 6px; }
+.error-bar { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 12px 0; color: var(--red-11); padding: 4px 8px; border: 1px solid var(--red-6); border-radius: 6px; }
 .maximized { position: fixed !important; top: 68px !important; left: 12px !important; width: calc(100vw - 24px) !important; height: calc(100dvh - 80px) !important; transform: none !important; z-index: 900; }
 .maximized > .grid-stack-item-content { inset: 0 !important; }
 .menu { z-index: 1400; min-width: 170px; border: 1px solid var(--gray-7); background: var(--gray-2); border-radius: 8px; padding: 4px; }
@@ -86,11 +98,10 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 @media (max-width: 640px) {
   .topbar { gap: 6px; padding: 0 8px; }
-  .brand { font-size: 10px; letter-spacing: .02em; }
+  .brand { font-size: 10px; letter-spacing: .02em; max-width: 86px; overflow: hidden; }
   .demo-tag { font-size: 9px; padding: 3px; }
   .ownership { display: none; }
   .connection { width: 8px; font-size: 0; }
   .connection::before { flex-shrink: 0; }
-  .grid-stack { margin: 4px; }
   .topbar .icon, .stop { height: 40px; }
 }

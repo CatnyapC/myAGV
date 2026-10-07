@@ -1,36 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
-import { GridStack, type GridStackWidget } from 'gridstack';
+import { GridStack } from 'gridstack';
 import { Camera, Crosshair, Expand, LayoutGrid, Menu, MoreHorizontal, RotateCcw, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
 import { type MapInfo, type Point, type Settings, type Zones } from './mapGeometry';
 import { Button } from './ui';
+import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
 type State = { robot_id: string; demo: boolean; phase: string; operator_active: boolean };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v1';
-const DEFAULT_LAYOUT: GridStackWidget[] = [
-  { id: 'map', x: 0, y: 0, w: 12, h: 12, minW: 8, minH: 9 },
-  { id: 'front', x: 12, y: 0, w: 6, h: 6, minW: 6, minH: 6 },
-  { id: 'arm', x: 12, y: 6, w: 6, h: 6, minW: 6, minH: 6 },
-  { id: 'operate', x: 18, y: 0, w: 6, h: 12, minW: 6, minH: 11 },
-];
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
-
-function validatedLayout(value: unknown): GridStackWidget[] {
-  if (!Array.isArray(value) || value.length !== 4) return DEFAULT_LAYOUT;
-  const ids = new Set();
-  const clean: GridStackWidget[] = [];
-  for (const item of value) {
-    const defaults = DEFAULT_LAYOUT.find(w => w.id === item?.id);
-    if (!defaults || ids.has(item.id)) return DEFAULT_LAYOUT;
-    ids.add(item.id);
-    const { x, y, w, h } = item;
-    if (![x, y, w, h].every(Number.isInteger) || x < 0 || y < 0 || w < 1 || h < (defaults.minH ?? 1) || x + w > 24 || y > 100 || h > 40) return DEFAULT_LAYOUT;
-    clean.push({ ...defaults, x, y, w, h });
-  }
-  return clean;
-}
 
 async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
@@ -60,10 +40,15 @@ export function App() {
   const [layoutEditing, setLayoutEditing] = useState(false);
   const [layoutError, setLayoutError] = useState('');
   const [maximized, setMaximized] = useState<string | null>(null);
-  const [layout, setLayout] = useState<GridStackWidget[]>(DEFAULT_LAYOUT);
+  const [layout, setLayout] = useState<Tile[]>(validatedLayout(DEFAULT_LAYOUT));
+  const [gridSize, setGridSize] = useState({ columns: 24, cellHeight: 40 });
   const [keyboardCorners, setKeyboardCorners] = useState(['1', '1', '3', '3']);
   const gridHost = useRef<HTMLDivElement>(null);
+  const workspaceHost = useRef<HTMLDivElement>(null);
   const grid = useRef<GridStack | null>(null);
+  const fittingLayout = useRef(false);
+  const fitViewport = useRef<() => void>(() => {});
+  const draggingDivider = useRef<{ seam: Divider; tiles: Tile[]; start: number; cellWidth: number; cellHeight: number } | null>(null);
   const generation = useRef(0);
   const previousMap = useRef('');
   const editingSettings = useRef(false);
@@ -71,6 +56,8 @@ export function App() {
   const angleValid = angleText.trim() !== '' && Number.isFinite(Number(angleText)) && Math.abs(Number(angleText)) <= 180;
   editingSettings.current = settingsDirty || settingsSaving || !angleValid;
   const canEdit = Boolean(lease && connected && state?.phase === 'idle');
+  const canLayout = connected && state?.phase === 'idle';
+  const canResize = canLayout && layoutEditing && !maximized;
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -133,8 +120,9 @@ export function App() {
   }, [lease, connected]);
 
   useEffect(() => {
-    if (!canEdit) { setDrawing(false); setDraft([]); setLayoutEditing(false); }
+    if (!canEdit) { setDrawing(false); setDraft([]); }
   }, [canEdit]);
+  useEffect(() => { if (!canLayout) setLayoutEditing(false); if (!canResize) draggingDivider.current = null; }, [canLayout, canResize]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { setDrawing(false); setDraft([]); setMaximized(null); } };
     window.addEventListener('keydown', key);
@@ -142,29 +130,42 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!gridHost.current) return;
+    if (!gridHost.current || !workspaceHost.current) return;
     const instance = GridStack.init({ column: 24, cellHeight: 40, margin: 4, animate: false,
       handle: '.panel-title', disableDrag: true, disableResize: true,
-      columnOpts: { columnMax: 24, breakpoints: [{ w: 640, c: 1 }, { w: 1120, c: 12 }] },
-      resizable: { handles: 'e,se,s,sw,w' } }, gridHost.current);
+      columnOpts: { columnMax: 24, breakpoints: [{ w: 640, c: 1 }, { w: 1168, c: 12, layout: 'move' }] },
+      resizable: { handles: 'e,s' } }, gridHost.current);
     if (!instance) return;
     grid.current = instance;
+    const columns = instance.getColumn();
+    instance.column(24);
     try { instance.load(validatedLayout(JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? 'null')), false); }
     catch { instance.load(DEFAULT_LAYOUT, false); setLayoutError('Layout storage unavailable'); }
-    setLayout(validatedLayout(instance.save(false, false, undefined, 24)));
+    instance.column(columns, columns === 12 ? 'move' : 'moveScale');
+    const fit = () => {
+      if (!workspaceHost.current) return;
+      const current = validatedLayout(instance.save(false, false, undefined, instance.getColumn()), instance.getColumn());
+      const cellHeight = viewportCellHeight(current, workspaceHost.current.clientHeight - 16);
+      instance.cellHeight(cellHeight);
+      setLayout(current); setGridSize({ columns: instance.getColumn(), cellHeight });
+    };
+    fitViewport.current = fit;
+    fit();
     const save = () => {
       const value = validatedLayout(instance.save(false, false, undefined, 24));
-      setLayout(value);
+      fit();
+      if (fittingLayout.current) return;
       try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(value)); setLayoutError(''); }
       catch { setLayoutError('Layout not saved'); }
     };
     instance.on('change', save);
-    return () => { instance.off('change'); instance.destroy(false); grid.current = null; };
+    const observer = new ResizeObserver(fit);
+    observer.observe(workspaceHost.current);
+    return () => { observer.disconnect(); instance.off('change'); instance.destroy(false); grid.current = null; fitViewport.current = () => {}; };
   }, []);
   useEffect(() => {
-    const enabled = canEdit && layoutEditing && !maximized;
-    grid.current?.enableMove(enabled).enableResize(enabled);
-  }, [canEdit, layoutEditing, maximized]);
+    grid.current?.enableMove(Boolean(canResize)).enableResize(false);
+  }, [canResize]);
 
   useEffect(() => {
     if (!settingsDirty || !savedSettings || !canEdit || settingsSaving || saveError || !angleValid) return;
@@ -208,12 +209,50 @@ export function App() {
     catch (failure) { setError((failure as Error).message); }
   }
   function startDrawing() { setSelected(null); setDraft([]); setDrawing(true); setLayoutEditing(false); }
-  function resetLayout() { grid.current?.load(DEFAULT_LAYOUT, false); }
+  function resetLayout() {
+    if (!canLayout || !grid.current) return;
+    setMaximized(null); draggingDivider.current = null;
+    const columns = grid.current.getColumn();
+    fittingLayout.current = true;
+    try { grid.current.column(24).load(DEFAULT_LAYOUT, false).column(columns, columns === 12 ? 'move' : 'moveScale'); }
+    finally { fittingLayout.current = false; }
+    fitViewport.current();
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(validatedLayout(DEFAULT_LAYOUT))); setLayoutError(''); }
+    catch { setLayoutError('Layout not saved'); }
+  }
   function updateSetting(values: Settings['values']) { setSaveError(''); setSettingsDraft(values); }
+  function applyDivider(tiles: Tile[], seam: Divider, delta: number, cellWidth: number, cellHeight: number) {
+    const instance = grid.current;
+    if (!instance) return;
+    const columns = instance.getColumn();
+    const previous = validatedLayout(instance.save(false, false, undefined, columns), columns);
+    const next = moveDivider(tiles, seam, delta, cellWidth, cellHeight);
+    const canonical = canonicalLayout(validatedLayout(instance.save(false, false, undefined, 24)), previous, next, columns);
+    instance.load(next, false);
+    // load() suppresses responsive cache updates; keep the desktop geometry in sync.
+    if (columns < 24) instance.engine.cacheLayout(canonical, 24, true);
+    fitViewport.current();
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(canonical)); setLayoutError(''); }
+    catch { setLayoutError('Layout not saved'); }
+  }
   function resizePanel(id: string, dimension: 'w' | 'h', value: number) {
-    if (!canEdit || !layoutEditing || !grid.current || !Number.isInteger(value)) return;
-    const widget = gridHost.current?.querySelector(`[gs-id="${id}"]`) as HTMLElement | null;
-    if (widget) grid.current.update(widget, { [dimension]: value });
+    if (!canResize || !grid.current || !Number.isInteger(value)) return;
+    const tile = layout.find(t => t.id === id)!;
+    const seam = dividers(layout).find(s => s.axis === (dimension === 'w' ? 'x' : 'y') && (s.before.includes(id) || s.after.includes(id)));
+    if (seam && gridHost.current) applyDivider(layout, seam, (value - tile[dimension]) * (seam.before.includes(id) ? 1 : -1),
+      gridHost.current.clientWidth / gridSize.columns, gridSize.cellHeight);
+  }
+  function beginDivider(event: PointerEvent<HTMLButtonElement>, seam: Divider) {
+    if (!canResize || event.button !== 0 || !gridHost.current) return;
+    event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId);
+    draggingDivider.current = { seam, tiles: layout, start: seam.axis === 'x' ? event.clientX : event.clientY,
+      cellWidth: gridHost.current.clientWidth / gridSize.columns, cellHeight: gridSize.cellHeight };
+  }
+  function dragDivider(event: PointerEvent<HTMLButtonElement>) {
+    const drag = draggingDivider.current;
+    if (!drag || !canResize) return;
+    const distance = (drag.seam.axis === 'x' ? event.clientX : event.clientY) - drag.start;
+    applyDivider(drag.tiles, drag.seam, distance / (drag.seam.axis === 'x' ? drag.cellWidth : drag.cellHeight), drag.cellWidth, drag.cellHeight);
   }
   function panel(id: string, content: ReactNode, tools?: ReactNode) {
     const defaults = DEFAULT_LAYOUT.find(item => item.id === id)!;
@@ -233,17 +272,19 @@ export function App() {
       <Dropdown.Root><Dropdown.Trigger asChild><Button variant="ghost" className="icon" aria-label="Open navigation"><Menu size={18} /></Button></Dropdown.Trigger>
         <Dropdown.Portal><Dropdown.Content className="menu" align="start" sideOffset={6}>
           <Dropdown.Item className="menu-item" onSelect={() => { setSettingsOpen(true); }}><Settings2 size={16} /> Settings</Dropdown.Item>
-          <Dropdown.Item className="menu-item" disabled={!canEdit} onSelect={() => setLayoutEditing(v => !v)}><LayoutGrid size={16} /> {layoutEditing ? 'Lock layout' : 'Edit layout'}</Dropdown.Item>
-          <Dropdown.Item className="menu-item" disabled={!canEdit} onSelect={resetLayout}><RotateCcw size={16} /> Reset layout</Dropdown.Item>
+          <Dropdown.Item className="menu-item" disabled={!canLayout} onSelect={() => setLayoutEditing(v => !v)}><LayoutGrid size={16} /> {layoutEditing ? 'Lock layout' : 'Edit layout'}</Dropdown.Item>
+          <Dropdown.Item className="menu-item" disabled={!canLayout} onSelect={resetLayout}><RotateCcw size={16} /> Restore default layout</Dropdown.Item>
         </Dropdown.Content></Dropdown.Portal>
       </Dropdown.Root>
       <strong className="brand">MYAGV CONTROL</strong><span className="demo-tag">DEMO</span>
+      <Button variant="ghost" className="icon" aria-label="Restore default layout" title="Restore default layout" disabled={!canLayout} onClick={resetLayout}><RotateCcw size={16} /></Button>
       <span className={`connection ${connected ? 'online' : ''}`}>{connected ? 'Connected' : 'Offline'}</span>
       <span className="ownership">{lease ? 'Operator' : 'Observer'}</span>
       <Button onClick={() => void ownership()} disabled={!connected || busy || (!lease && Boolean(state?.operator_active))}>{lease ? 'Release' : 'Take'}</Button>
       <Button variant="danger" onClick={() => void stop()} className="stop">STOP</Button>
     </header>
     {error && <div role="alert" className="error-bar"><span>{error}</span><Button variant="ghost" className="icon" aria-label="Dismiss error" onClick={() => setError('')}><X size={15} /></Button></div>}
+    <div className="workspace" ref={workspaceHost}>
     <main className={`grid-stack ${layoutEditing ? 'layout-editing' : ''}`} ref={gridHost}>
       {panel('map', <>
         <div className="map-tools">
@@ -287,6 +328,32 @@ export function App() {
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted">Hardware unavailable</span>
       </div>)}
     </main>
+    <div className="panel-dividers">
+      {!maximized && dividers(layout).map(seam => {
+        const vertical = seam.axis === 'x';
+        return <button key={`${seam.axis}:${seam.before.join(',')}:${seam.after.join(',')}`}
+          className={`panel-divider ${vertical ? 'vertical' : 'horizontal'}`} role="separator"
+          aria-orientation={vertical ? 'vertical' : 'horizontal'}
+          aria-label={`Resize ${seam.before.map(id => names[id]).join(' / ')} and ${seam.after.map(id => names[id]).join(' / ')}`}
+          aria-valuenow={seam.position} aria-valuemin={0} aria-valuemax={vertical ? gridSize.columns : Math.max(...layout.map(t => t.y + t.h))}
+          disabled={!canResize} title={canResize ? 'Drag to resize adjacent panels' : 'Unlock Edit layout to resize'}
+          style={vertical ? { left: `calc(${seam.position / gridSize.columns * 100}% - 4px)`, top: seam.start * gridSize.cellHeight + 4,
+            height: (seam.end - seam.start) * gridSize.cellHeight - 8 } :
+            { top: seam.position * gridSize.cellHeight - 4, left: `calc(${seam.start / gridSize.columns * 100}% + 4px)`,
+              width: `calc(${(seam.end - seam.start) / gridSize.columns * 100}% - 8px)` }}
+          onPointerDown={event => beginDivider(event, seam)} onPointerMove={dragDivider}
+          onPointerUp={event => { draggingDivider.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
+          onLostPointerCapture={() => { draggingDivider.current = null; }}
+          onKeyDown={event => {
+            const delta = (vertical ? { ArrowLeft: -1, ArrowRight: 1 } : { ArrowUp: -1, ArrowDown: 1 })[event.key as 'ArrowLeft'];
+            if (delta && canResize && gridHost.current) {
+              event.preventDefault(); applyDivider(layout, seam, delta * (event.shiftKey ? 2 : 1),
+                gridHost.current.clientWidth / gridSize.columns, gridSize.cellHeight);
+            }
+          }} />;
+      })}
+    </div>
+    </div>
     <Dialog.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
       <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="settings-dialog">
         <header className="dialog-header"><Dialog.Title>SETTINGS</Dialog.Title><Dialog.Close asChild><Button variant="ghost" className="icon" aria-label="Close settings"><X size={18} /></Button></Dialog.Close></header>
@@ -304,13 +371,13 @@ export function App() {
           <div className="save-state" role="status">{!angleValid ? 'Angle must be −180…180°' : saveError || (settingsSaving ? 'Saving…' : settingsDirty ? 'Unsaved' : savedSettings ? 'Saved' : 'Loading…')}
             {saveError && <Button onClick={() => setSaveError('')} disabled={!canEdit}>Retry</Button>}</div>
           <div className="section-divider" /><span className="subheading">WORKSPACE</span>
-          <label className="setting-row">Edit layout<input type="checkbox" checked={layoutEditing} disabled={!canEdit} onChange={e => setLayoutEditing(e.target.checked)} /></label>
+          <label className="setting-row">Edit layout<input type="checkbox" checked={layoutEditing} disabled={!canLayout} onChange={e => setLayoutEditing(e.target.checked)} /></label>
           {layout.map(widget => <div className="size-row" key={widget.id}><span>{names[widget.id!]}</span>
-            <label>W<input type="number" min="1" max={grid.current?.getColumn() ?? 24} value={widget.w} disabled={!canEdit || !layoutEditing}
+            <label>W<input type="number" min="1" max={grid.current?.getColumn() ?? 24} value={widget.w} disabled={!canResize || !dividers(layout).some(s => s.axis === 'x' && (s.before.includes(widget.id) || s.after.includes(widget.id)))}
               onChange={e => resizePanel(widget.id!, 'w', Number(e.target.value))} /></label>
-            <label>H<input type="number" min={widget.minH} max="40" value={widget.h} disabled={!canEdit || !layoutEditing}
+            <label>H<input type="number" min={widget.minH} max="40" value={widget.h} disabled={!canResize || !dividers(layout).some(s => s.axis === 'y' && (s.before.includes(widget.id) || s.after.includes(widget.id)))}
               onChange={e => resizePanel(widget.id!, 'h', Number(e.target.value))} /></label></div>)}
-          <Button onClick={resetLayout} disabled={!canEdit}>Reset layout</Button>{layoutError && <span role="alert" className="muted">{layoutError}</span>}
+          <Button onClick={resetLayout} disabled={!canLayout}>Restore default layout</Button>{layoutError && <span role="alert" className="muted">{layoutError}</span>}
         </div>
         <footer className="dialog-footer"><span className="muted">{canEdit ? 'Auto-save' : 'Take control to edit'}</span><Button variant="danger" onClick={() => void stop()}>STOP</Button></footer>
       </Dialog.Content></Dialog.Portal>

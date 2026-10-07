@@ -115,10 +115,22 @@ state framework.
 Native fetch/WebSocket and component state cover the minimum UI.
 
 Start with a 24-column grid: MAP 12, cameras 6, OPERATE 6; map/operation 12 rows,
-each camera 6 rows, 40px row units. Both cameras remain independent widgets.
-Resize width/height, drag by title handle, maximize/restore and reset layout.
-Layout editing is locked during operation; unlock only while stopped. Provide
-keyboard width/height inputs. Camera/map gestures never drag a panel.
+each camera 6 rows. Both cameras remain independent widgets. Initialize at 40px
+row units, then divide the available workspace height by the occupied rows.
+ResizeObserver refits the workspace when the window or toolbar bounds change.
+Keep minimum panel content heights; short windows scroll instead of crushing panels.
+Use 12 columns below 1168px and one column below 640px.
+
+Show slim divider handles between adjacent panels, matching the memory-live
+workspace: centered gray bars, cyan hover/focus, horizontal and vertical cursors.
+Dragging a divider resizes both sides while preserving the outer boundary and
+minimum sizes. Arrow keys move the focused divider; Shift moves two grid units.
+Settings W/H inputs adjust the same shared boundaries. Drag panels by title;
+camera/map gestures never drag a panel. Maximize/restore reuses existing panels.
+The top toolbar provides Restore default layout, also available in Menu/Settings.
+Reset exits maximization, restores default proportions at the current breakpoint
+and overwrites the saved browser layout. Layout editing is locked during operation;
+unlock only while stopped. Browser-local layout changes do not require robot ownership.
 
 Save validated geometry and visibility in browser localStorage, scoped to robot
 identity and layout version; never store robot state, credentials or panel HTML.

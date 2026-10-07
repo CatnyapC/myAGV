@@ -44,9 +44,15 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
    bounds and be at least one map cell wide/high.
 4. Select a saved zone on the map or in OPERATE, then **Delete**. Rotate the map,
    reload the page and restart `myagv-api`; saved zones should stay in place.
-5. Menu > **Edit layout** unlocks panel dragging by title and resizing handles.
-   Settings provides keyboard W/H inputs. Maximize/restore and Reset layout use
-   the same four panels. Verify desktop/mobile layout and visible STOP yourself.
+5. Menu > **Edit layout** unlocks panel dragging by title and shared divider handles.
+   Drag a divider to resize adjacent panels together, or focus it and use arrow keys
+   (Shift moves two grid units). Settings W/H inputs adjust the same boundaries.
+   Browser layout editing does not require Take. Resize the window: panels fill
+   the available height; short/narrow windows scroll at minimum content sizes.
+6. The top-toolbar circular-arrow button **Restore default layout** exits maximization
+   and restores the four default panels. It also appears in Menu and Settings.
+   Reload to confirm automatic layout persistence. Verify desktop/mobile layout
+   and visible STOP yourself.
 
 The camera panes are unavailable; Go/Fetch/Cancel are disabled. STOP reports
 that hardware is unavailable. No-go zones are persisted editor annotations;
