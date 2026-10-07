@@ -1,6 +1,6 @@
 # Minimal Remote Robot UI and Service Plan
 
-Date: 2026-10-06. Status: implementation plan; this revision changes documentation
+Updated: 2026-10-07. Status: implementation plan; this revision changes documentation
 only. The repository has robot control/navigation code, but no web UI, web API,
 photo index or calibrated visual alignment implementation yet.
 
@@ -12,7 +12,8 @@ and small alignment steps. Start with taught grasp height and operator confirmat
 
 | Responsibility | Minimum implementation |
 | --- | --- |
-| Mapping and localization | Existing LiDAR/ROS 2D map, localization and obstacle handling |
+| Mapping and localization | Existing ROS1 GMapping map, AMCL localization and move_base obstacle handling |
+| Map preview | Leaflet planar image map with robot, path, goal and item markers |
 | Item memory | Photos, capture poses and a small JSON index linked to taught stations |
 | Scene interpretation | Optional VLM skill labels photos; operator can label them manually |
 | Command interpretation | Optional LLM skill resolves text to an existing item ID |
@@ -98,8 +99,9 @@ for the workspace, [Tabler Admin](https://tabler.io/admin-template) for density,
 - Accessible icon names, visible focus, text/icon state cues; desktop hit areas
   at least 32px, touch motion controls at least 44px.
 
-Use React + TypeScript + Vite, selected shadcn controls, Radix colors and GridStack;
-no full admin starter, additional layout engine or global state framework.
+Use React + TypeScript + Vite, selected shadcn controls, Radix colors, GridStack
+and **Leaflet 1.9.4**; no full admin starter, additional layout engine or global
+state framework.
 Native fetch/WebSocket and component state cover the minimum UI.
 
 Start with a 24-column grid: MAP 12, cameras 6, OPERATE 6; map/operation 12 rows,
@@ -114,6 +116,55 @@ Unknown panel IDs/invalid dimensions restore defaults. ResizeObserver updates ma
 and video bounds without resetting camera sessions, selection or control state.
 Use two columns when space permits and one column/view tabs on phones; preserve
 camera aspect ratio, vertical scrolling and persistent STOP/ownership.
+
+### Leaflet map rendering
+
+Use [Leaflet](https://leafletjs.com/reference.html) with `L.CRS.Simple`, integrated
+directly into one React component; no React wrapper is required. Create the map
+once, update its layers in place and remove it on unmount. Bundle assets locally
+for offline use. The map needs no geographic tile provider, ROS2D.js, NAV2D.js,
+roslibjs, rosbridge or 3D renderer.
+
+- **Base layer:** backend-generated PNG from the active `/map` OccupancyGrid,
+  displayed with `L.imageOverlay`. Keep the ROS `.pgm + .yaml` files for navigation;
+  the browser consumes PNG plus normalized JSON metadata. Distinguish free,
+  occupied and unknown cells; disable image smoothing where possible.
+- **Overlays:** `L.polyline` for the actual planner path, default SVG rendering;
+  lightweight markers for robot/heading, proposed/active goal, taught stations
+  and photo observations. Use Cyan for selection/path and Orange for the active
+  execution goal. Observation markers remain distinct from measured item positions.
+- **Interaction:** pan/zoom, Fit map/robot, select a marker to load its item/photo,
+  click to preview a goal, then set heading through an input or directional drag.
+  Provide keyboard equivalents. Execute goes through the backend command/lease
+  checks; clicking or dragging never sends a navigation goal automatically.
+- **Resize:** call `map.invalidateSize({pan: false})` from ResizeObserver after
+  GridStack resizing, maximize/restore or revealing a hidden panel. Preserve the
+  view and selection; do not remount the map on every telemetry update.
+
+Use one reversible coordinate transform for all overlays and pointer input.
+API poses/path points stay in the ROS map frame, in meters and explicit angle units.
+For display, subtract the grid origin and apply its inverse yaw rotation to obtain
+grid-local meters `(u,v)`; pass Leaflet `[v,u]`. Image bounds are
+`[[0,0],[height * resolution,width * resolution]]`. Convert selected positions
+back through the origin rotation/translation before sending a goal. Heading
+overlays use world yaw minus origin yaw. Handle grid-to-image Y reversal exactly
+once in PNG generation and account for cell centers when plotting discrete cells.
+Do not assume zero origin yaw or use screen pixels as robot coordinates.
+
+The backend subscribes to `/map`, reuses `map -> base_footprint` TF for robot pose,
+and subscribes to the planner's `nav_msgs/Path`. The selected upstream launch uses
+`global_planner/GlobalPlanner`, normally `/move_base/GlobalPlanner/plan`; confirm
+the installed topic/remappings on the robot. Transform non-map paths into the map
+frame before publishing. Show unavailable/stale localization explicitly and clear
+obsolete paths when a task ends or the map changes; never fabricate a straight
+line as a planned route.
+
+Cache the raster until map content/geometry changes; send small pose/path updates
+over the shared API WebSocket. During SLAM, replace PNG and metadata as one revision,
+including changed bounds/origin. Keep map identity separate from update revision;
+a new active map invalidates pending goals and incompatible item/station links.
+Reference: [official GMapping configuration](https://github.com/elephantrobotics/myagv_ros/blob/myagv_ros_2023Pi/myagv_navigation/launch/gmapping.launch)
+and [navigation configuration](https://github.com/elephantrobotics/myagv_ros/blob/myagv_ros_2023Pi/myagv_navigation/launch/navigation_active.launch).
 
 ## 4. Minimum robot-side services and data
 
@@ -140,7 +191,8 @@ control helpers instead of spawning a process per keypress or parsing CLI stdout
 
 Minimum persistent data:
 
-- Existing 2D map and map identity/revision.
+- Existing GMapping 2D map (`.pgm + .yaml`) and map identity/revision; web PNG is
+  a derived preview, not a replacement navigation map.
 - Existing `stations.json`, unchanged: measured base pose and arm joint angles.
   Its validator rejects extra fields; do not insert photo/semantic fields there.
 - One `photo_index.json` plus an image directory, outside tracked source/runtime
@@ -168,11 +220,12 @@ model-generated code, joint targets or routes. Manual labels/selection work offl
 | Channel | Purpose |
 | --- | --- |
 | `GET /api/state` | Capabilities, limits, measured state, ownership, task phase, stream health and calibration readiness |
-| `GET /api/map`, `/api/items`, `/api/stations` | Active map metadata/data and compact index/taught records |
+| `GET /api/map` | Map identity/revision, frame, width/height, resolution in m/cell, origin x/y/yaw with explicit units, and authenticated PNG URL tied to that revision |
+| `GET /api/items`, `/api/stations` | Compact photo index and taught records |
 | `POST /api/control/claim`, `/release` | One expiring operator lease; observers cannot move the robot |
 | `POST /api/commands` | Typed commands: navigate/fetch, home/gripper, teach, photo capture/label, optional resolve, alignment measure/step/confirm |
 | `POST /api/stop` | Priority stop/cancel with confirmed or unconfirmed result |
-| `WSS /api/events` | State changes and ordered, expiring leased manual input |
+| `WSS /api/events` | State changes, map revision notifications, map-frame robot pose/planner path with timestamps, and ordered, expiring leased manual input |
 | Authenticated camera/image URLs | Two live streams and index photos; separate from control WebSocket |
 
 Commands carry an ID, lease and bounded typed arguments. Distinguish accepted,
@@ -266,6 +319,10 @@ Acceptance for implementation:
 - [ ] Each panel resizes in both dimensions; drag handles, keyboard sizing,
   maximize/reset and valid layout persistence work. Check desktop/tablet/phone;
   STOP stays reachable and map/camera gestures do not move panels.
+- [ ] Leaflet displays raster, real path and robot/goal/item overlays with matching
+  coordinates. Check nonzero origin/rotation, Y orientation, cell centers and
+  click-to-goal round trips. Resize preserves view; SLAM bounds/revision updates
+  remain aligned. Clicking previews only; a new map identity invalidates pending goals.
 - [ ] Item photo/map/station links survive restart; map mismatch/unknown item
   cannot trigger fetch. No observation pose displayed as a measured object pose.
 - [ ] Manual fallback works without a model key; skills cannot bypass validation.
