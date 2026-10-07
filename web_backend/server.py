@@ -13,6 +13,7 @@ from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame
 from .storage import atomic_json
+from .resolve import MODEL, load_key, resolve_items, target_preview
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0)
@@ -49,12 +50,13 @@ class Editor:
         self.replies = {}  # Bounded retry cache; duplicate command IDs never add another zone.
         self.sim = Simulation(self.grid, self.zones)
         self.cost_png = None
+        self.llm = dict(model=MODEL, status='not_configured')
 
     def state(self):
         return dict(robot_id='local-demo', demo=True, phase=self.sim.phase, motion_available=False,
                     simulation_available=True, cameras_available=False, localization_available=False,
                     zone_enforcement='simulated-global',
-                    navigation=self.sim.telemetry())
+                    navigation=self.sim.telemetry(), llm=self.llm)
 
     async def emit(self, kind):
         for socket in tuple(self.sockets):
@@ -106,6 +108,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app[EDITOR] = editor
     photos = PhotoIndex(directory, stations_path)
     photo_lock = asyncio.Lock()
+    editor.llm['status'], llm_key = load_key()
+    resolve_lock = asyncio.Lock()  # ponytail: one request; per-user locks if multi-user control is added.
 
     def photo_stopped():
         if editor.sim.phase != 'idle':
@@ -113,6 +117,38 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
     async def photo_index(request):
         return web.json_response(await asyncio.to_thread(photos.snapshot, editor.grid['map_id']))
+
+    async def resolve(request):
+        data = await request.json()
+        if not isinstance(data, dict) or not isinstance(data.get('text'), str) or not 1 <= len(data['text'].strip()) <= 500 or type(data.get('expected_revision')) is not int:
+            raise ValueError('Use a request of 1–500 characters and an index revision')
+        photo_stopped()
+        if data.get('map_id') != editor.grid['map_id'] or data['expected_revision'] != photos.value['revision']:
+            raise web.HTTPConflict(text='Map or photo index changed; retry explicitly')
+        if not llm_key:
+            raise web.HTTPServiceUnavailable(text='OpenRouter key not configured or unavailable')
+        if resolve_lock.locked():
+            raise web.HTTPTooManyRequests(text='An item resolution is already running')
+        async with resolve_lock:
+            generation, zone_revision = editor.sim.generation, editor.zones['revision']
+            def check_current():
+                if editor.sim.generation != generation or editor.sim.phase != 'idle' or editor.zones['revision'] != zone_revision or data['map_id'] != editor.grid['map_id'] or data['expected_revision'] != photos.value['revision']:
+                    raise web.HTTPConflict(text='Resolution cancelled or records changed; retry explicitly')
+            index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
+            check_current()
+            result = await resolve_items(data['text'].strip(), index['items'], llm_key)
+            check_current()
+            if result['status'] == 'matched':
+                index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
+                try:
+                    records = await asyncio.to_thread(photos.stations)
+                except (ValueError, OSError, TypeError):
+                    records = {}
+            # Storage/STOP can change while collecting the final station snapshot.
+            check_current()
+            if result['status'] == 'matched':
+                result.update(target_preview(index, records, result['item_ids'][0]))
+            return web.json_response({**result, 'index_revision': data['expected_revision'], 'map_id': data['map_id']})
 
     async def stations(request):
         try:
@@ -335,6 +371,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
     app.router.add_get('/api/state', state)
     app.router.add_get('/api/items', photo_index)
+    app.router.add_post('/api/resolve', resolve)
     app.router.add_get('/api/stations', stations)
     app.router.add_post('/api/photos/reference', reference_upload)
     app.router.add_post('/api/photos/capture', capture_photo)

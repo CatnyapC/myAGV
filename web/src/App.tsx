@@ -4,13 +4,14 @@ import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
 import { Camera, Crosshair, Expand, LayoutGrid, Menu, MoreHorizontal, RotateCcw, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
-import { type MapInfo, type Navigation, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
+import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
 import { api } from './api';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
-type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation };
+type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation; llm: { model: string; status: string } };
+type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v1';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
 
@@ -38,6 +39,8 @@ export function App() {
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState('');
   const [photoMode, setPhotoMode] = useState<'import' | 'edit' | null>(null);
+  const [requestText, setRequestText] = useState('');
+  const [resolution, setResolution] = useState<Resolution | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [layoutEditing, setLayoutEditing] = useState(false);
   const [layoutError, setLayoutError] = useState('');
@@ -54,6 +57,9 @@ export function App() {
   const generation = useRef(0);
   const previousMap = useRef('');
   const editingSettings = useRef(false);
+  const resolutionRequest = useRef<AbortController | null>(null);
+  const resolutionContext = useRef('');
+  resolutionContext.current = `${packet?.info.map_id}:${photos?.revision}`;
   const settingsDirty = savedSettings !== null && JSON.stringify(settingsDraft) !== JSON.stringify(savedSettings.values);
   const angleValid = angleText.trim() !== '' && Number.isFinite(Number(angleText)) && Math.abs(Number(angleText)) <= 180;
   editingSettings.current = settingsDirty || settingsSaving || !angleValid;
@@ -99,6 +105,12 @@ export function App() {
   }, []);
 
   useEffect(() => () => { if (packet) URL.revokeObjectURL(packet.image); }, [packet]);
+  useEffect(() => () => resolutionRequest.current?.abort(), []);
+  useEffect(() => {
+    if (resolution && `${resolution.map_id}:${resolution.index_revision}` !== resolutionContext.current) {
+      setResolution(null); setGoalText(['', '', '0']);
+    }
+  }, [resolution, photos?.revision, packet?.info.map_id]);
   useEffect(() => {
     if (selectedPhotoId && photos && !photos.photos.some(p => p.id === selectedPhotoId)) { setSelectedPhotoId(null); if (photoMode === 'edit') setPhotoMode(null); }
     if (selectedItemId && photos && !photos.items.some(i => i.id === selectedItemId)) setSelectedItemId('');
@@ -119,7 +131,7 @@ export function App() {
           } else void reload().catch(failure => { setError(failure.message); });
         };
         socket.onclose = () => {
-          if (!disposed) { setConnected(false); setDrawing(false); setDraft([]); timer = setTimeout(connect, 1500); }
+          if (!disposed) { resolutionRequest.current?.abort(); setResolution(null); setConnected(false); setDrawing(false); setDraft([]); timer = setTimeout(connect, 1500); }
         };
         socket.onerror = () => socket?.close();
       } catch (failure) {
@@ -131,7 +143,7 @@ export function App() {
   }, [reload]);
 
   useEffect(() => {
-    if (!canEdit) { setDrawing(false); setDraft([]); }
+    if (!canEdit) { resolutionRequest.current?.abort(); setDrawing(false); setDraft([]); }
   }, [canEdit]);
   useEffect(() => { if (!canLayout) setLayoutEditing(false); if (!canResize) draggingDivider.current = null; }, [canLayout, canResize]);
   useEffect(() => {
@@ -204,6 +216,7 @@ export function App() {
     finally { setBusy(false); }
   }
   async function stop() {
+    resolutionRequest.current?.abort(); setResolution(null);
     setDrawing(false); setDraft([]); setLayoutEditing(false);
     try { await api('/api/stop', { method: 'POST' }); setError(''); await reload(); }
     catch (failure) { setError((failure as Error).message); }
@@ -224,8 +237,29 @@ export function App() {
     setGoalText(old => [point[0].toFixed(2), point[1].toFixed(2), old[2]]);
   }
   function selectPhoto(id: string) {
+    resolutionRequest.current?.abort(); setResolution(null); setGoalText(['', '', '0']);
     setSelectedPhotoId(id); setSelected(null);
     setSelectedItemId(photos?.photos.find(p => p.id === id)?.item_id ?? '');
+  }
+  function selectItem(id: string) {
+    resolutionRequest.current?.abort(); setResolution(null); setGoalText(['', '', '0']);
+    setSelectedItemId(id);
+    setSelectedPhotoId(photos?.photos.find(p => p.item_id === id && p.kind === 'observation' && p.map_matches && p.available)?.id ?? photos?.photos.find(p => p.item_id === id)?.id ?? null);
+  }
+  async function resolveRequest() {
+    if (!canEdit || busy || !photos || !packet || !requestText.trim() || state?.llm?.status !== 'configured') return;
+    const controller = new AbortController(); resolutionRequest.current = controller;
+    setBusy(true); setError(''); setResolution(null); setGoalText(['', '', '0']); setSelectedItemId(''); setSelectedPhotoId(null);
+    try {
+      const result = await api<Resolution>('/api/resolve', { method: 'POST', signal: controller.signal,
+        body: JSON.stringify({ text: requestText.trim(), map_id: packet.info.map_id, expected_revision: photos.revision }) });
+      if (controller.signal.aborted || `${result.map_id}:${result.index_revision}` !== resolutionContext.current) return;
+      setResolution(result); setSelected(null);
+      const id = result.status === 'matched' ? result.item_ids[0] : '';
+      setSelectedItemId(id); setSelectedPhotoId(result.photo_id ?? photos.photos.find(p => p.item_id === id)?.id ?? null);
+      if (result.goal) setGoalText([String(result.goal.x_m), String(result.goal.y_m), String(result.goal.yaw_rad * 180 / Math.PI)]);
+    } catch (failure) { if (!controller.signal.aborted) setError((failure as Error).message); }
+    finally { if (resolutionRequest.current === controller) { resolutionRequest.current = null; setBusy(false); } }
   }
   function photoChanged(index: PhotoIndex, addedId?: string) {
     setPhotos(index);
@@ -362,10 +396,19 @@ export function App() {
       {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Demo capture front observation" title="Demo capture · synthetic frame" disabled={!canEdit || busy || !photos} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
       {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Demo capture arm observation" title="Demo capture · synthetic frame" disabled={!canEdit || busy || !photos} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
       {panel('operate', <div className="operate-body">
+        <label className="subheading" htmlFor="item-request">REQUEST</label>
+        <form className="request-row" onSubmit={event => { event.preventDefault(); void resolveRequest(); }}>
+          <input id="item-request" value={requestText} maxLength={500} placeholder="Bring me the red cup" disabled={!canEdit || busy}
+            onChange={event => { setRequestText(event.target.value); setResolution(null); setGoalText(['', '', '0']); }} />
+          <Button type="submit" disabled={!canEdit || busy || !photos || !requestText.trim() || state?.llm?.status !== 'configured'}>{resolutionRequest.current ? 'Resolving…' : 'Resolve'}</Button>
+        </form>
+        {state?.llm?.status !== 'configured' && <span className="muted">LLM {state?.llm?.status === 'unavailable' ? 'unavailable' : 'not configured'}</span>}
+        {resolution && <div role="status" className="resolution-result">
+          <span className="muted">{resolution.status === 'not_found' ? 'No matching item' : resolution.status === 'ambiguous' ? 'Choose item' : resolution.blocked_reason ?? 'Target selected'}</span>
+          {resolution.status === 'ambiguous' && <div className="candidate-list">{resolution.item_ids.map(id => <Button key={id} disabled={!canEdit || busy} onClick={() => selectItem(id)}>{photos?.items.find(i => i.id === id)?.name}</Button>)}</div>}
+        </div>}
         <label className="subheading" htmlFor="item-select">ITEM</label>
-        <select id="item-select" value={selectedItemId} onChange={e => {
-          setSelectedItemId(e.target.value); setSelectedPhotoId(photos?.photos.find(p => p.item_id === e.target.value)?.id ?? null);
-        }}><option value="">All photos</option>{photos?.items.map(i => <option value={i.id} key={i.id}>{i.name}</option>)}</select>
+        <select id="item-select" value={selectedItemId} disabled={busy} onChange={e => selectItem(e.target.value)}><option value="">All photos</option>{photos?.items.map(i => <option value={i.id} key={i.id}>{i.name}</option>)}</select>
         <div className="photo-list">{photos?.photos.length ? [...photos.photos].reverse().filter(p => !selectedItemId || p.item_id === selectedItemId).map(p =>
           <button key={p.id} className={`zone-row ${p.id === selectedPhotoId ? 'selected' : ''}`} onClick={() => selectPhoto(p.id)} title={p.kind === 'reference' ? 'Phone reference · no map point' : 'Captured base observation pose'}>
             <Camera size={14} /><span>{photos.items.find(i => i.id === p.item_id)?.name ?? 'Unlabelled'}</span><span className="row-end">{p.kind === 'reference' ? 'Reference' : p.camera_id}</span>
@@ -435,6 +478,8 @@ export function App() {
         <header className="dialog-header"><Dialog.Title>SETTINGS</Dialog.Title><Dialog.Close asChild><Button variant="ghost" className="icon" aria-label="Close settings"><X size={18} /></Button></Dialog.Close></header>
         <Dialog.Description className="sr-only">Map display and workspace settings</Dialog.Description>
         <div className="settings-body">
+          <span className="subheading">LLM</span><span className="muted">OpenRouter · {state?.llm?.status ?? 'Loading…'}</span>
+          <span className="muted">{state?.llm?.model ?? '—'}</span><div className="section-divider" />
           <span className="subheading">MAP DISPLAY</span>
           <label className="setting-row">Auto-align walls<input type="checkbox" checked={settingsDraft.auto_align} disabled={!canEdit}
             onChange={e => updateSetting({ ...settingsDraft, auto_align: e.target.checked })} /></label>

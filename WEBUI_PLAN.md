@@ -1,10 +1,11 @@
 # Minimal Remote Robot UI and Service Plan
 
-Updated: 2026-10-07. Status: local WebUI/backend milestone implemented; browser
+Updated: 2026-10-08. Status: local WebUI/backend milestone implemented; browser
 acceptance is reserved for the user. This milestone covers a synthetic map,
 display alignment, persisted no-go editing/settings and explicitly simulated
 pose/heading/path with global costmap enforcement and a local photo/item index
 on the development Mac. Phone references and synthetic observations are separate.
+Natural-language item selection uses a bounded OpenRouter resolver before navigation.
 ROS navigation enforcement, real cameras, VLM matching/survey
 and calibrated grasp alignment remain separate integration tasks.
 
@@ -425,8 +426,44 @@ Restrict file/directory permissions; chmod alone is not encryption. Host-key mod
 allows unattended startup but does not protect a disk containing both ciphertext
 and host key; do not assume a TPM. Settings show configured/locked/error only.
 Missing key/network disables skill actions while manual control/index use remains.
+The local resolver loads `llm_api_key` from `$CREDENTIALS_DIRECTORY` at startup;
+an explicitly provided `OPENROUTER_API_KEY` environment variable is the development
+fallback only when no credential directory is set. Restart the backend after changing
+credentials. APIs expose only model/status; never accept or return browser-side keys.
+Encrypted Ubuntu provisioning remains part of deployment, not the Mac milestone.
 See the [systemd-creds manual](https://manpages.ubuntu.com/manpages/noble/man1/systemd-creds.1.html)
 and [GPG manual](https://manpages.ubuntu.com/manpages/focal/man1/gpg.1.html).
+
+### Local natural-language item selection
+
+Implement before simulated Fetch. OPERATE adds one request input and Resolve action;
+Settings shows OpenRouter model/configuration status. `POST /api/resolve` accepts
+`text` (1–500 characters), current `map_id` and photo index `expected_revision`.
+Use the existing aiohttp dependency, a fixed official OpenRouter chat-completions
+endpoint and `deepseek/deepseek-v4.1-flash`. Send only registered item IDs,
+names/appearance and request text. This text workflow does not extract photo features
+or establish VLM observation associations.
+
+Require JSON-schema output with `matched`, `ambiguous` or `not_found` and up to
+eight existing item IDs. Prefer latency routing with `require_parameters=true`,
+disable reasoning, bound output to 384 tokens and apply a 15-second timeout.
+Validate IDs, uniqueness, cardinality and exact fields locally; no model-generated
+coordinates, code, routes or joint values. No automatic retry or fallback model.
+Allow one in-flight request for this single-user UI; concurrent requests get 429.
+Discard results after STOP, disconnect, navigation, map/index/no-go changes.
+An outbound request may finish after cancellation; its result cannot select a target.
+
+A unique match selects the item and its confirmed current-map observation. Preview
+only the independently validated station base pose; missing observation, unavailable
+image or stale/missing station shows a blocking reason without a goal. Multiple matches
+show explicit candidate buttons; no match clears selection. Resolving never starts
+navigation or grasp. Current costmap validation still runs on explicit Simulate;
+Fetch remains disabled until the task/gate milestone. Manual item selection stays usable
+without a key. Necessary checks use a local mock provider, not a paid live request.
+
+References: [model](https://openrouter.ai/deepseek/deepseek-v4.1-flash),
+[structured outputs](https://openrouter.ai/docs/guides/features/structured-outputs),
+[provider routing](https://openrouter.ai/docs/guides/routing/provider-selection).
 
 ## 5. Local alignment and fetch sequence
 

@@ -96,6 +96,13 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
     and any item with no remaining photos. Missing files show Image unavailable.
     Open an editor in two tabs; saving one makes the other form stale and rejects its
     save. Close/reopen it to refresh. Editing/import/capture require a stopped simulator.
+15. OPERATE > REQUEST: enter natural language and **Resolve**. A unique match selects
+    an existing item and previews its validated station goal when a confirmed,
+    available current-map observation exists. Missing prerequisites show a reason
+    without a goal. Multiple matches show candidate buttons; no match clears selection.
+    Choosing an ambiguous candidate selects it for manual review/Approach.
+    Resolve does not start movement; **Simulate** still validates the current costmap.
+    STOP/disconnect discards late results; provider failures/timeouts require explicit retry.
 
 Camera panes show selected stored images; live streams and Fetch remain unavailable.
 Simulation uses a nominal 0.32 × 0.28 m
@@ -122,7 +129,36 @@ reloading the raster or resetting map pan/zoom.
 Backend JSON uses atomic writes and revision checks. Photo writes have a separate
 writer lock and run in a storage thread so STOP/navigation remain responsive.
 Runtime data and dependencies are ignored by Git. Invalid saved data fails startup
-instead of silently replacing it. Credentials are not stored by this milestone.
+instead of silently replacing it. The UI does not store credentials.
+
+## OpenRouter configuration
+
+Fixed model: `deepseek/deepseek-v4.1-flash`; official `/api/v1/chat/completions`
+endpoint. Latency routing, schema-support requirement, reasoning disabled, 384-token
+output cap and 15-second timeout. Only request text and registered names/appearance/IDs
+are sent. Photo analysis/association and Fetch are separate milestones.
+
+Ubuntu: the backend reads `llm_api_key` from `$CREDENTIALS_DIRECTORY` supplied by
+the planned systemd encrypted-credential deployment. Encryption/provisioning is
+not performed by this Mac milestone. When that directory is explicitly set but
+unreadable, the backend fails closed rather than using an environment key.
+
+For local development, provide `OPENROUTER_API_KEY` only to the backend. In zsh,
+read it without displaying it or putting its literal value in shell history:
+
+```zsh
+read -rs 'OPENROUTER_API_KEY?OpenRouter key: '
+export OPENROUTER_API_KEY
+pm2 restart myagv-api --update-env
+unset OPENROUTER_API_KEY
+```
+
+Environment variables are not encrypted storage. PM2 retains this development
+environment in memory; keep keys out of `ecosystem.config.cjs`, `pm2 save`, logs
+and frontend settings. The backend loads credentials once at startup. Settings
+shows model/status only; Configured means loaded, not verified by OpenRouter.
+Missing key/network leaves manual item selection usable. No key was provided for
+implementation checks: mock tests passed; real provider behavior remains user acceptance.
 
 `web_backend/map_data.py` generates a 240 × 200 OccupancyGrid, 0.05 m/cell, with
 free/occupied/unknown cells, rotated walls, a divider and furniture. Its origin
@@ -137,7 +173,7 @@ trusted LAN or phone hotspot; do not expose it to the public internet.
 ## Necessary checks
 
 ```bash
-.venv/bin/python -m unittest test_web_backend test_web_simulation test_web_photos
+.venv/bin/python -m unittest test_web_backend test_web_simulation test_web_photos test_web_resolve
 npm --prefix web run build
 npm --prefix web test
 ```
@@ -146,5 +182,8 @@ These check map/chassis geometry, conservative zone rasterization, inflation,
 detour/no-path/deletion, simulated arrival, API guards/STOP/cancel/disconnect,
 direct edits/persistence/revisions, photo source separation, delayed acquisition
 pose binding, confirmed item/station links, storage failure cleanup and frontend types/build.
+The resolver mock checks its outbound contract, ID/schema boundaries, unique/ambiguous/
+no-match behavior, goal prerequisites, credential isolation, provider failure/timeout,
+concurrency and STOP result rejection. No live OpenRouter inference was performed.
 HTTP, PNG, static asset and WebSocket smoke checks passed for both
 PM2 services. Browser visual/interaction checks are deliberately left to the user.

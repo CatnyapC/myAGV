@@ -23,6 +23,10 @@ select:focus-visible, textarea:focus-visible { outline: 2px solid var(--cyan-8);
 .stored-photo img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
 .photo-caption { color: var(--gray-11); background: var(--gray-2); border: 0; border-top: 1px solid var(--gray-6); padding: 6px; font-size: 11px; }
 .photo-list { max-height: 128px; overflow: auto; }
+.request-row { display: flex; gap: 6px; }
+.request-row input { flex: 1; width: 0; }
+.resolution-result { display: flex; flex-direction: column; gap: 6px; }
+.candidate-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .photo-list .zone-row { padding: 7px 5px; }
 .settings-dialog.photo-dialog { width: min(440px, calc(100vw - 24px)); }
 .photo-dialog .dialog-footer { flex-wrap: wrap; gap: 6px; }

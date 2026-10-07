@@ -27,6 +27,11 @@ before each task. Manage running services with PM2. Do not open a browser for QA
   station links with explicit confirmation/digest checks, delete and atomic persistence.
   Separate storage worker/lock; stale form revisions, invalid images and missing files
   are handled. Tests, frontend build and PM2 checks; no browser QA.
+- [x] Natural-language item selection — sections 4/5. Bounded OpenRouter call,
+  existing ID/schema validation, unique selection/station preview, ambiguous
+  candidates/no match, backend-only credentials and compact REQUEST UI. Timeout,
+  provider errors, stale/cancelled results and one-request limit checked using a
+  local mock. No paid live request or browser QA; Fetch remains disabled.
 
 Implementation checks passed. UI checkboxes below remain for the user; no browser
 was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
@@ -52,6 +57,10 @@ was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
 - [ ] Link an existing taught station with confirmation; Approach only previews its base.
 - [ ] Reload/restart; photos/labels/links persist. Delete photos and check item cleanup.
 - [ ] Open an editor in two tabs; save one, then check stale save rejection in the other.
+- [ ] Configure a backend-only OpenRouter key; Settings shows loaded model/status.
+- [ ] REQUEST resolves a unique item; preview uses the validated station, not capture pose.
+- [ ] Ambiguous/no-match requests show candidates/empty selection; Resolve never moves.
+- [ ] STOP or close the UI while resolving; no late selection appears after reconnect.
 
 ## Deferred robot integration
 
