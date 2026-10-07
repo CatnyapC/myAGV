@@ -18,6 +18,7 @@ and small alignment steps. Start with taught grasp height and operator confirmat
 | Scene interpretation | Optional VLM skill labels photos; operator can label them manually |
 | Command interpretation | Optional LLM skill resolves text to an existing item ID |
 | Route planning | Existing deterministic navigation code |
+| No-go zones | Leaflet rectangles persisted by the backend and applied to both navigation costmaps |
 | Final alignment | Calibrated top-down image geometry, bounded motion and fresh feedback |
 | Grasp and return | Existing taught arm poses and this run's startup return poses |
 
@@ -50,7 +51,7 @@ Do not label the existing CLI sequence as visually aligned.
 
 | Panel | Required content | Minimum content size |
 | --- | --- | --- |
-| MAP | Occupancy map, robot heading, selected item's observation/approach markers, proposed goal and active path; pan/zoom/fit | 360 × 280px |
+| MAP | Occupancy map, robot heading, selected item's observation/approach markers, proposed goal, active path and no-go rectangles; pan/zoom/fit | 360 × 280px |
 | FRONT CAMERA | Navigation/context view, maximize, unavailable/stale state | 280 × 180px |
 | ARM CAMERA | Downward live view; calibrated target/gripper overlay when valid; pixel-only overlay otherwise | 280 × 180px |
 | OPERATE | Compact item rows with thumbnail/name, target field, task actions, mode-specific controls and current task phase/blocking reason | 280 × 360px |
@@ -166,6 +167,47 @@ a new active map invalidates pending goals and incompatible item/station links.
 Reference: [official GMapping configuration](https://github.com/elephantrobotics/myagv_ros/blob/myagv_ros_2023Pi/myagv_navigation/launch/gmapping.launch)
 and [navigation configuration](https://github.com/elephantrobotics/myagv_ros/blob/myagv_ros_2023Pi/myagv_navigation/launch/navigation_active.launch).
 
+### Minimal no-go zones
+
+Leaflet core supplies [rectangle overlays](https://github.com/Leaflet/Leaflet/blob/v1.9.4/src/layer/vector/Rectangle.js),
+not navigation restrictions or an interactive drawing/editor toolbar. Reuse core
+`L.rectangle` with a small two-corner selection flow; no drawing dependency in the
+minimum release. If drag-to-draw and resize handles become necessary,
+[Leaflet.draw](https://leaflet.github.io/Leaflet.draw/docs/leaflet-draw-latest.html)
+provides rectangle drawing/editing/deletion; enable only those tools.
+
+- **UI:** one No-go action in MAP's More menu. While stopped with an operator lease,
+  select two opposite corners, preview a translucent red rectangle, then Save or
+  Cancel. Select a saved zone to Delete; changing it means delete/redraw. Escape
+  cancels selection; provide coordinate inputs for keyboard use. Zone selection
+  suppresses goal selection and never starts motion. No new panel or polygon editor.
+- **Data:** one `no_go_zones.json`, scoped to map identity with its own revision.
+  Store each zone's ID and four ordered corners in ROS map-frame meters; convert
+  all corners through the existing transform, not just screen bounds. Rectangles
+  are aligned to the display grid when drawn; use core `L.polygon` to redisplay
+  their stored geometry if the grid orientation changes. Backend validates finite,
+  nondegenerate rectangles within map bounds, lease, map and expected zone revision.
+  Reject edits covering the current robot footprint; edit only while idle/stopped.
+  Persist atomically; a map identity change requires explicit zone review/rebinding.
+- **Enforcement:** the same backend publishes a latched derived OccupancyGrid on
+  `/navigation_map`: copy the original `/map`, conservatively rasterize every cell
+  intersecting a zone as occupied (`100`), and rebuild from the original on deletion.
+  Leave the SLAM/AMCL map and saved PGM untouched. Configure existing ROS1
+  `costmap_2d/StaticLayer` in **both global and rolling local costmaps** to consume
+  this map (`map_topic`, `first_map_only: false`); use static layer, obstacle layer
+  with maximum combination, then inflation. Retain sensing/footprint clearance
+  and verify sensor clearing cannot erase virtual obstacles. No new ROS service,
+  custom costmap plugin or planner is required. Verify the installed configuration
+  and rolling-window behavior against the [StaticLayer implementation](https://github.com/ros-planning/navigation/blob/noetic-devel/costmap_2d/plugins/static_layer.cpp).
+- **Execution:** reject goals/staging/return poses whose chassis footprint intersects
+  a zone. Zone save remains Pending until fresh global/local costmaps reflect the
+  update; block navigation and pickup approach until application is verified.
+  The existing direct `cmd_vel` pickup alignment must check the updated local grid,
+  not bypass zones after move_base finishes. Reload/reapply zones before allowing
+  navigation after restart; missing/mismatched enforcement stops autonomous travel.
+  Manual teleop is outside this navigation-only restriction and must not be presented
+  as protected by it. No temporary bypass, scheduling or live edits during a task.
+
 ## 4. Minimum robot-side services and data
 
 Run **one Python backend service**, in the robot's existing ROS-compatible runtime.
@@ -193,6 +235,8 @@ Minimum persistent data:
 
 - Existing GMapping 2D map (`.pgm + .yaml`) and map identity/revision; web PNG is
   a derived preview, not a replacement navigation map.
+- One map-scoped `no_go_zones.json`; derived `/navigation_map` is rebuilt from
+  the active original map plus saved zones, never used as localization evidence.
 - Existing `stations.json`, unchanged: measured base pose and arm joint angles.
   Its validator rejects extra fields; do not insert photo/semantic fields there.
 - One `photo_index.json` plus an image directory, outside tracked source/runtime
@@ -219,13 +263,14 @@ model-generated code, joint targets or routes. Manual labels/selection work offl
 
 | Channel | Purpose |
 | --- | --- |
-| `GET /api/state` | Capabilities, limits, measured state, ownership, task phase, stream health and calibration readiness |
+| `GET /api/state` | Capabilities, limits, measured state, ownership, task phase, stream health, calibration readiness and applied no-go revision/readiness |
 | `GET /api/map` | Map identity/revision, frame, width/height, resolution in m/cell, origin x/y/yaw with explicit units, and authenticated PNG URL tied to that revision |
 | `GET /api/items`, `/api/stations` | Compact photo index and taught records |
+| `GET /api/no-go-zones` | Active map's saved zone geometry and revision |
 | `POST /api/control/claim`, `/release` | One expiring operator lease; observers cannot move the robot |
-| `POST /api/commands` | Typed commands: navigate/fetch, home/gripper, teach, photo capture/label, optional resolve, alignment measure/step/confirm |
+| `POST /api/commands` | Typed commands: navigate/fetch, home/gripper, teach, photo capture/label, optional resolve, alignment measure/step/confirm, zone add/delete with expected revision |
 | `POST /api/stop` | Priority stop/cancel with confirmed or unconfirmed result |
-| `WSS /api/events` | State changes, map revision notifications, map-frame robot pose/planner path with timestamps, and ordered, expiring leased manual input |
+| `WSS /api/events` | State changes, map/zone revision and application notifications, map-frame robot pose/planner path with timestamps, and ordered, expiring leased manual input |
 | Authenticated camera/image URLs | Two live streams and index photos; separate from control WebSocket |
 
 Commands carry an ID, lease and bounded typed arguments. Distinguish accepted,
@@ -302,7 +347,9 @@ to be calibrated stereo.
 2. One backend: read-only map/state, both cameras, lease/watchdog/STOP, manual
    modes and measured teaching. Attach photos to stations; manually label/select.
 3. Reuse navigation/fetch stages with a stopped manual alignment/grasp gate and
-   startup return behavior. Validate on hardware before claiming autonomous pickup.
+   startup return behavior. Add persisted no-go rectangles and global/local costmap
+   enforcement before enabling web navigation. Validate on hardware before claiming
+   autonomous pickup.
 4. Calibrate fixed-plane geometry; implement measure/step/recheck with taught Z.
    Add optional photo-label/target-resolution skills after the deterministic flow works.
 
@@ -323,6 +370,11 @@ Acceptance for implementation:
   coordinates. Check nonzero origin/rotation, Y orientation, cell centers and
   click-to-goal round trips. Resize preserves view; SLAM bounds/revision updates
   remain aligned. Clicking previews only; a new map identity invalidates pending goals.
+- [ ] No-go add/delete persists and reapplies after restart. Invalid/stale edits
+  and robot-overlapping zones are rejected. A zone across the direct route produces
+  a detour or no path; blocked goals/staging/return and direct pickup alignment are
+  rejected. Local rolling costmaps, sensor clearing and costmap reset preserve zones;
+  deletion removes only virtual obstacles. Pending enforcement blocks navigation.
 - [ ] Item photo/map/station links survive restart; map mismatch/unknown item
   cannot trigger fetch. No observation pose displayed as a measured object pose.
 - [ ] Manual fallback works without a model key; skills cannot bypass validation.
