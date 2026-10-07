@@ -17,7 +17,9 @@ pm2 start ecosystem.config.cjs --only myagv-api,myagv-web
 ```
 
 Development UI: <http://127.0.0.1:5173>. The API and built static UI are also served
-at <http://127.0.0.1:8791>. Both bind to loopback. The development frontend proxies
+at <http://127.0.0.1:8791>. The API binds to loopback; the development frontend
+binds to all interfaces. On a trusted LAN or phone hotspot, open
+`http://<Mac-LAN-IP>:5173` from another device. The development frontend proxies
 `/api` and WebSocket traffic to the backend; frontend and backend sources stay
 separate. For a built UI only, start just `myagv-api` with PM2.
 
@@ -101,8 +103,8 @@ The backend detects the dominant orthogonal direction and generates a separate
 display PNG/origin. The original cells are unchanged. For weak wall evidence it
 uses the original grid view; manual display angle handles ambiguous rooms.
 
-The current loopback Demo boundary is not remote-control authentication/TLS.
-Do not expose this service on a network before the robot integration task.
+The Demo has no remote-control authentication/TLS. Use network access only on a
+trusted LAN or phone hotspot; do not expose it to the public internet.
 
 ## Necessary checks
 
