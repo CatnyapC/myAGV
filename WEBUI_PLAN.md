@@ -1,8 +1,9 @@
 # Minimal Remote Robot UI and Service Plan
 
-Updated: 2026-10-07. Status: implementation plan; this revision changes documentation
-only. The repository has robot control/navigation code, but no web UI, web API,
-photo index or calibrated visual alignment implementation yet.
+Updated: 2026-10-07. Status: local WebUI/backend milestone in progress. This
+milestone covers a synthetic map, display alignment, persisted no-go editing and
+settings on the development Mac. ROS navigation enforcement, cameras, photo index
+and calibrated grasp alignment remain separate robot integration tasks.
 
 ## 1. Selected implementation
 
@@ -171,6 +172,12 @@ Cache the raster until map content/geometry changes; send small pose/path update
 over the shared API WebSocket. During SLAM, replace PNG and metadata as one revision,
 including changed bounds/origin. Keep map identity separate from update revision;
 a new active map invalidates pending goals and incompatible item/station links.
+For rectangular no-go editing, auto-align the display to the dominant orthogonal
+wall direction estimated from occupied cells. Do not rotate the navigation map or
+change its frame. The backend supplies a derived PNG with separate display
+origin/yaw/bounds, used by the same reversible overlay transform. Provide an
+auto-align toggle and a manual angle fallback in Settings; weak wall evidence uses
+the unaligned view. Saved zone corners stay in the original map frame.
 Reference: [official GMapping configuration](https://github.com/elephantrobotics/myagv_ros/blob/myagv_ros_2023Pi/myagv_navigation/launch/gmapping.launch)
 and [navigation configuration](https://github.com/elephantrobotics/myagv_ros/blob/myagv_ros_2023Pi/myagv_navigation/launch/navigation_active.launch).
 
@@ -223,6 +230,15 @@ The frontend executes in the remote browser; control, files and model keys remai
 on the robot. Reuse ROS navigation/drivers and existing camera publishers when
 available; otherwise use one capture worker for both cameras, not a new camera API
 service per device. Confirm the actual ROS/Python compatibility before integration.
+
+Manage the backend and local frontend development server with PM2. Production
+serves the separately built frontend from the one backend process. This local
+milestone binds to loopback and is explicitly Demo-only: no ROS/serial imports,
+motion commands, simulated live pose or camera imagery. No-go persistence here
+is editing only; navigation enforcement stays unavailable until robot integration.
+Store shared map-display settings atomically on the backend; keep panel geometry
+in validated browser localStorage as described above. Local loopback access is not
+the authentication/TLS deployment for remote robot control.
 
 ```text
 Browser: four panels + input
