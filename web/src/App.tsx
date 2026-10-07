@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerE
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
-import { Camera, Crosshair, Dice5, Expand, LayoutGrid, Menu, MoreHorizontal, RotateCcw, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
+import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu, MoreHorizontal, Play, RotateCcw, Search, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
 import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
@@ -418,7 +418,8 @@ export function App() {
         <form className="request-row" onSubmit={event => { event.preventDefault(); void resolveRequest(); }}>
           <input id="item-request" value={requestText} maxLength={500} placeholder="Bring me the red cup" disabled={!canEdit || busy}
             onChange={event => updateRequest(event.target.value)} />
-          <Button type="submit" disabled={!canEdit || busy || !photos || !requestText.trim() || state?.llm?.status !== 'configured' || settingsDirty || settingsSaving || Boolean(saveError)}>{resolutionRequest.current ? 'Resolving…' : 'Resolve'}</Button>
+          <Button type="submit" variant="default" className="icon" aria-label={resolutionRequest.current ? 'Resolving…' : 'Resolve'} title="Resolve" aria-busy={Boolean(resolutionRequest.current)}
+            disabled={!canEdit || busy || !photos || !requestText.trim() || state?.llm?.status !== 'configured' || settingsDirty || settingsSaving || Boolean(saveError)}>{resolutionRequest.current ? <LoaderCircle size={16} /> : <Search size={16} />}</Button>
           <Button type="button" variant="ghost" className="icon" aria-label="Random Japanese request" title="Random Japanese request" disabled={!canEdit || busy}
             onClick={() => updateRequest(REQUEST_EXAMPLES[Math.floor(Math.random() * REQUEST_EXAMPLES.length)])}><Dice5 size={16} /></Button>
         </form>
@@ -452,8 +453,8 @@ export function App() {
         <div className="goal-inputs">{['X (m)', 'Y (m)', 'θ (°)'].map((label, i) => <label key={label}>{label}<input type="number" step={i === 2 ? '5' : '.05'}
           min={i === 2 ? -180 : undefined} max={i === 2 ? 180 : undefined} placeholder={i === 2 ? '0' : 'Map click'} value={goalText[i]}
           disabled={!canLayout || busy} onChange={e => setGoalText(old => old.map((v, n) => n === i ? e.target.value : v))} /></label>)}</div>
-        <div className="action-line"><Button variant="default" disabled={!canEdit || !goalValid || !costmapReady || busy}
-          onClick={() => void simulationCommand('navigate')}>Simulate</Button><Button variant="default" disabled>Fetch</Button>
+        <div className="action-line"><Button variant="default" className="button-simulate" disabled={!canEdit || !goalValid || !costmapReady || busy}
+          onClick={() => void simulationCommand('navigate')}><Play size={16} /> Simulate</Button><Button variant="default" disabled><Hand size={16} /> Fetch</Button>
           <Button disabled={!connected || state?.phase === 'idle' || busy} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
         <div className="section-divider" />
         <span className="subheading">NO-GO ZONES</span>
