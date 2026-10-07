@@ -3,9 +3,10 @@
 Updated: 2026-10-07. Status: local WebUI/backend milestone implemented; browser
 acceptance is reserved for the user. This milestone covers a synthetic map,
 display alignment, persisted no-go editing/settings and explicitly simulated
-pose/heading/path with global costmap enforcement on the development Mac.
-ROS navigation enforcement, cameras, photo index
-and calibrated grasp alignment remain separate robot integration tasks.
+pose/heading/path with global costmap enforcement and a local photo/item index
+on the development Mac. Phone references and synthetic observations are separate.
+ROS navigation enforcement, real cameras, VLM matching/survey
+and calibrated grasp alignment remain separate integration tasks.
 
 ## 1. Selected implementation
 
@@ -252,7 +253,7 @@ Manage the backend and local frontend development server with PM2. Production
 serves the separately built frontend from the one backend process. This local
 milestone binds to loopback and is explicitly Demo-only: no ROS/serial imports
 or hardware commands. The next local milestone adds explicitly simulated pose,
-heading and navigation, with no fabricated camera imagery. Show a simple top-view
+heading and navigation, with no fabricated live camera stream. Show a simple top-view
 chassis outline with a front heading mark; use a breathing cyan glow only while
 the simulated chassis moves/turns, respecting reduced-motion preferences.
 Show compact map-frame X/Y/yaw and task state in OPERATE. Map clicks preview a
@@ -297,7 +298,10 @@ Minimum persistent data:
 - Existing `stations.json`, unchanged: measured base pose and arm joint angles.
   Its validator rejects extra fields; do not insert photo/semantic fields there.
 - One `photo_index.json` plus an image directory, outside tracked source/runtime
-  secrets. Each observation stores an observation ID, image reference, capture
+  secrets. Phone uploads are item reference photos: name/appearance examples for
+  manual or VLM feature registration, without map pose or observation markers.
+  Robot survey photos are separate observations. Each observation stores an ID,
+  image reference, capture
   time, map ID/revision, measured capture base pose and camera identity. Survey
   frames may be unlabeled; add item ID/name/appearance after labeling/confirmation.
   Arm-camera captures also store synchronized measured arm pose when needed.
@@ -316,6 +320,21 @@ Write JSON updates atomically through the single backend writer. Reject mismatch
 maps and stale station links. A VLM returns candidate labels/regions; an LLM returns
 an allowed item ID or ambiguity. Validate both, use timeouts, and never execute
 model-generated code, joint targets or routes. Manual labels/selection work offline.
+Compare collected observation images against item reference images/features;
+model results are candidate identity links, not automatic map-coordinate estimates.
+Confirm an observation/item association before using it for target resolution.
+
+The local photo milestone accepts phone/reference uploads, manual item features,
+confirmed observation associations and links to existing validated stations.
+New/changed station links require explicit confirmation; a digest of the validated
+station record detects later edits. Stale links cannot silently refresh on label save.
+Demo Capture generates a clearly synthetic test frame and freezes the simulated
+map-frame base pose/capture timestamp before image generation or storage awaits.
+It exercises binding and persistence without pretending to capture a real camera.
+Reference uploads never inherit upload-time robot pose. Real camera acquisition-time
+TF, VLM extraction/matching and automatic photo survey remain later integrations.
+Keep four panels: show selected stored images in the camera panes, compact item/photo
+selection in OPERATE, observation markers in MAP, and editing in a dialog.
 
 ### ROS1 survey and keyframes
 
@@ -351,7 +370,7 @@ of every object; supplement missed shelves/tables with selected viewing poses.
   links enable Fetch. Reuse camera transport and image conversion/saving utilities;
   no separate survey service, follow_waypoints dependency or RTAB-Map stack.
 
-### Minimal API contract (proposed, not implemented)
+### Minimal API contract (robot integration proposed)
 
 | Channel | Purpose |
 | --- | --- |
@@ -366,6 +385,14 @@ of every object; supplement missed shelves/tables with selected viewing poses.
 | Authenticated camera/image URLs | Two live streams and index photos; separate from control WebSocket |
 
 The UI serves one user; editing and commands require no ownership handshake.
+The local photo milestone implements `GET /api/items`, `GET /api/stations`,
+`POST /api/photos/reference` (normalized PNG), `POST /api/photos/capture`
+(synthetic Demo only), `PATCH`/`DELETE /api/photos/{id}` and stored image URLs.
+Photo writes use an independent writer lock and expected index revision; image
+generation/storage runs outside the request/STOP loop. The editor freezes its
+opening revision, so incoming notifications cannot silently overwrite stale forms.
+The bounded JSON index accepts up to 1000 images / 500 items and 4 MiB normalized
+PNG images; use SQLite if longer surveys exceed this local milestone's ceiling.
 Commands carry an ID and bounded typed arguments. Distinguish accepted,
 running and completed/failed; deduplicate requests and reject stale/out-of-order
 manual inputs. Map goals include frame/map identity, units and heading. Start with
@@ -456,7 +483,9 @@ PM2 serves development UI on loopback port 5173 and the backend/built frontend o
 origin/yaw. Necessary automated checks cover coordinate transforms, PNG loading,
 zone/settings validation and restart persistence, revision conflicts,
 simulation rasterization/inflation/detours/no-path/arrival/cancellation, chassis
-geometry, frontend build and HTTP/WebSocket access. Simulated global costmaps
+geometry, reference/observation separation, acquisition pose binding, confirmed
+item/station associations, photo persistence/storage failure and frontend build
+and HTTP/WebSocket access. Simulated global costmaps
 do not claim ROS global/local enforcement. No browser QA was performed; see
 `WEBUI_TASKS.md` and `WEBUI.md` for user manual acceptance. The full robot
 acceptance items below remain uncompleted by this local milestone.

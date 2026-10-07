@@ -76,7 +76,27 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
     They clear navigation without moving on reconnect. MAP > More > **Reset demo
     pose** restores a safe start; service restart re-applies zones before simulation.
 
-Camera panes and Fetch remain unavailable. Simulation uses a nominal 0.32 × 0.28 m
+11. Menu > **Import reference photo** accepts a phone PNG/JPEG/WebP (up to 16 MiB).
+    The browser converts it to an RGB/RGBA PNG up to 1600 pixels on its longest side
+    and 4 MiB. Edit name/appearance manually; the reference has no map observation.
+12. Use the camera icon in either camera panel header for **Demo capture**. It creates
+    a synthetic fixture and saves the simulated base pose/time before generation or
+    storage. Select its dashed map marker or photo row to inspect it. In Edit, choose
+    the reference's existing item and **Confirm association**. Names alone never merge
+    items. This is manual association; VLM feature extraction/matching is deferred.
+13. **View point** previews the observation's capture base pose. It is not an object
+    position. **Simulate** remains a separate action and checks the current costmap.
+    To link an existing validated record from `stations.json`, select a Station in
+    Edit and explicitly confirm it. **Approach** previews only the station base pose.
+    The file/schema are unchanged; no measured station is invented. Later record
+    changes invalidate its digest until explicitly reconfirmed. Fetch stays disabled.
+14. Reload/restart to check photos, features and associations. Delete removes the photo
+    and any item with no remaining photos. Missing files show Image unavailable.
+    Open an editor in two tabs; saving one makes the other form stale and rejects its
+    save. Close/reopen it to refresh. Editing/import/capture require a stopped simulator.
+
+Camera panes show selected stored images; live streams and Fetch remain unavailable.
+Simulation uses a nominal 0.32 × 0.28 m
 chassis and 0.05 m clearance, with conservative cell padding. This is not measured
 robot geometry. ROS global/local costmaps, real localization/cameras and hardware
 movement remain unconnected. Demo A* does not replace ROS1 move_base.
@@ -85,6 +105,9 @@ movement remain unconnected. Demo A* does not replace ROS1 move_base.
 
 - `web_runtime/settings.json`: shared display preferences and revision.
 - `web_runtime/no_go_zones.json`: original map-frame rectangle corners and revision.
+- `web_runtime/photo_index.json`, `web_runtime/images/`: reference/observation records,
+  features, confirmed item/station links and UUID-named normalized PNG files. Limits:
+  1000 photos / 500 items. Metadata binds acquisition pose, not storage-time pose.
 - Browser localStorage `myagv:local-demo:layout:v1`: validated panel geometry only.
 
 Simulated pose/goals/routes are runtime-only. `/api/navigation-map` returns the
@@ -94,7 +117,8 @@ simulation grid and applied zone revision. Both preserve source origin/frame.
 coordinates. Small `telemetry` WebSocket messages update pose/path without
 reloading the raster or resetting map pan/zoom.
 
-Backend JSON uses atomic writes, one writer lock and revision checks.
+Backend JSON uses atomic writes and revision checks. Photo writes have a separate
+writer lock and run in a storage thread so STOP/navigation remain responsive.
 Runtime data and dependencies are ignored by Git. Invalid saved data fails startup
 instead of silently replacing it. Credentials are not stored by this milestone.
 
@@ -111,13 +135,14 @@ trusted LAN or phone hotspot; do not expose it to the public internet.
 ## Necessary checks
 
 ```bash
-.venv/bin/python -m unittest test_web_backend test_web_simulation
+.venv/bin/python -m unittest test_web_backend test_web_simulation test_web_photos
 npm --prefix web run build
 npm --prefix web test
 ```
 
 These check map/chassis geometry, conservative zone rasterization, inflation,
 detour/no-path/deletion, simulated arrival, API guards/STOP/cancel/disconnect,
-direct edits/persistence/revisions and frontend types/build.
+direct edits/persistence/revisions, photo source separation, delayed acquisition
+pose binding, confirmed item/station links, storage failure cleanup and frontend types/build.
 HTTP, PNG, static asset and WebSocket smoke checks passed for both
 PM2 services. Browser visual/interaction checks are deliberately left to the user.

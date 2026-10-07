@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { chassisOutline, rectangleCorners, toView, toWorld, type MapInfo, type Navigation, type Origin, type Point, type Zone } from './mapGeometry';
+import { chassisOutline, rectangleCorners, toView, toWorld, type MapInfo, type Navigation, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
 
 export function MapView(props: {
   info: MapInfo; image: string; zones: Zone[]; selected: string | null;
@@ -8,6 +8,7 @@ export function MapView(props: {
   navigation: Navigation | null; goal: Origin | null; connected: boolean; showCostmap: boolean; focusRobotVersion: number;
   onDraft: (points: Point[]) => void; onSelect: (id: string | null) => void;
   onGoal: (point: Point) => void;
+  photos: Photo[]; selectedPhotoId: string | null; onPhoto: (id: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -21,6 +22,7 @@ export function MapView(props: {
   const path = useRef<L.Polyline | null>(null);
   const target = useRef<L.CircleMarker | null>(null);
   const targetHeading = useRef<L.Polyline | null>(null);
+  const observations = useRef<L.LayerGroup | null>(null);
 
   useEffect(() => {
     if (!host.current) return;
@@ -30,6 +32,7 @@ export function MapView(props: {
     L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(instance);
     map.current = instance;
     polygons.current = L.layerGroup().addTo(instance);
+    observations.current = L.layerGroup().addTo(instance);
     path.current = L.polyline([], { color: 'var(--cyan-9)', weight: 2, opacity: .85, interactive: false }).addTo(instance);
     robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 1.8, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
     heading.current = L.polyline([], { color: 'var(--cyan-11)', weight: 1.5, interactive: false }).addTo(instance);
@@ -127,6 +130,26 @@ export function MapView(props: {
       });
     }
   }, [props.zones, props.selected, props.info]);
+
+  useEffect(() => {
+    const group = observations.current;
+    if (!group) return;
+    group.clearLayers();
+    for (const photo of props.photos) {
+      if (photo.kind !== 'observation' || photo.map_id !== props.info.map_id) continue;
+      const chosen = photo.id === props.selectedPhotoId;
+      const marker = L.circleMarker(toView([photo.base_pose.x_m, photo.base_pose.y_m], props.info.display.origin),
+        { radius: chosen ? 6 : 4, color: chosen ? 'var(--cyan-11)' : 'var(--gray-11)', weight: 1.5,
+          fillOpacity: .12, dashArray: '2 2', bubblingMouseEvents: false }).addTo(group);
+      const label = document.createElement('span'); label.textContent = `Observation · ${photo.camera_id} · Demo`;
+      marker.bindTooltip(label).on('click', () => { if (!latest.current.drawing) latest.current.onPhoto(photo.id); });
+      const element = marker.getElement();
+      element?.setAttribute('tabindex', '0'); element?.setAttribute('role', 'button'); element?.setAttribute('aria-label', label.textContent);
+      element?.addEventListener('keydown', event => {
+        if ((event as KeyboardEvent).key === 'Enter' || (event as KeyboardEvent).key === ' ') { event.preventDefault(); if (!latest.current.drawing) latest.current.onPhoto(photo.id); }
+      });
+    }
+  }, [props.photos, props.selectedPhotoId, props.info]);
 
   useEffect(() => {
     preview.current?.remove();

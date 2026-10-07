@@ -4,20 +4,15 @@ import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
 import { Camera, Crosshair, Expand, LayoutGrid, Menu, MoreHorizontal, RotateCcw, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
-import { type MapInfo, type Navigation, type Point, type Settings, type Zones } from './mapGeometry';
+import { type MapInfo, type Navigation, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
+import { api } from './api';
+import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
 type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v1';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
-
-async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(url, { ...options, headers: { 'Content-Type': 'application/json', ...options.headers } });
-  const body = await response.json().catch(() => ({ error: `Request failed (${response.status})` }));
-  if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
-  return body as T;
-}
 
 export function App() {
   const [state, setState] = useState<State | null>(null);
@@ -38,6 +33,11 @@ export function App() {
   const [focusRobotVersion, setFocusRobotVersion] = useState(0);
   const [showCostmap, setShowCostmap] = useState(false);
   const [goalText, setGoalText] = useState(['', '', '0']);
+  const [photos, setPhotos] = useState<PhotoIndex | null>(null);
+  const [stations, setStations] = useState<Stations>({});
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState('');
+  const [photoMode, setPhotoMode] = useState<'import' | 'edit' | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [layoutEditing, setLayoutEditing] = useState(false);
   const [layoutError, setLayoutError] = useState('');
@@ -65,11 +65,14 @@ export function App() {
   const goalValid = goalText.every(v => v.trim() !== '' && Number.isFinite(Number(v))) && Math.abs(Number(goalText[2])) <= 180;
   const goal = goalValid ? { x_m: Number(goalText[0]), y_m: Number(goalText[1]), yaw_rad: Number(goalText[2]) * Math.PI / 180 } : null;
   const costmapReady = navigation?.costmap.ready && navigation.costmap.applied_zone_revision === zones?.revision;
+  const selectedPhoto = photos?.photos.find(p => p.id === selectedPhotoId) ?? null;
+  const selectedItem = photos?.items.find(i => i.id === selectedItemId);
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
-    const [nextState, info, nextZones, preferences] = await Promise.all([
+    const [nextState, info, nextZones, preferences, nextPhotos, nextStations] = await Promise.all([
       api<State>('/api/state'), api<MapInfo>('/api/map'), api<Zones>('/api/no-go-zones'), api<Settings>('/api/settings'),
+      api<PhotoIndex>('/api/items'), api<Stations>('/api/stations'),
     ]);
     const imageResponse = await fetch(info.png_url);
     if (!imageResponse.ok) throw new Error('Map changed; reload required');
@@ -90,11 +93,16 @@ export function App() {
       });
       setState(old => old && old.navigation.stamp_s > nextState.navigation.stamp_s ? old : nextState);
       setZones(nextZones); setSavedSettings(preferences);
+      setPhotos(nextPhotos); setStations(nextStations);
       if (!editingSettings.current) { setSettingsDraft(preferences.values); setAngleText(String(preferences.values.manual_angle_deg)); }
     } catch (failure) { URL.revokeObjectURL(image); throw failure; }
   }, []);
 
   useEffect(() => () => { if (packet) URL.revokeObjectURL(packet.image); }, [packet]);
+  useEffect(() => {
+    if (selectedPhotoId && photos && !photos.photos.some(p => p.id === selectedPhotoId)) { setSelectedPhotoId(null); if (photoMode === 'edit') setPhotoMode(null); }
+    if (selectedItemId && photos && !photos.items.some(i => i.id === selectedItemId)) setSelectedItemId('');
+  }, [photos, selectedPhotoId, selectedItemId, photoMode]);
 
   useEffect(() => {
     let disposed = false, timer: ReturnType<typeof setTimeout>, socket: WebSocket | null = null;
@@ -215,6 +223,32 @@ export function App() {
     if (!canLayout || drawing || busy) return;
     setGoalText(old => [point[0].toFixed(2), point[1].toFixed(2), old[2]]);
   }
+  function selectPhoto(id: string) {
+    setSelectedPhotoId(id); setSelected(null);
+    setSelectedItemId(photos?.photos.find(p => p.id === id)?.item_id ?? '');
+  }
+  function photoChanged(index: PhotoIndex, addedId?: string) {
+    setPhotos(index);
+    const id = addedId ?? selectedPhotoId;
+    setSelectedPhotoId(id);
+    setSelectedItemId(index.photos.find(p => p.id === id)?.item_id ?? '');
+    if (addedId) setPhotoMode('edit');
+  }
+  async function capture(camera_id: 'front' | 'arm') {
+    if (!canEdit || !packet || !photos || busy) return;
+    setBusy(true); setError('');
+    try {
+      const result = await api<PhotoIndex & { added_id: string }>('/api/photos/capture', { method: 'POST',
+        body: JSON.stringify({ camera_id, map_id: packet.info.map_id, expected_revision: photos.revision }) });
+      photoChanged(result, result.added_id);
+    } catch (failure) { setError((failure as Error).message); await reload().catch(() => {}); }
+    finally { setBusy(false); }
+  }
+  function storedCamera(camera: 'front' | 'arm') {
+    const matches = selectedPhoto && (selectedPhoto.kind === 'reference' ? camera === 'front' : selectedPhoto.camera_id === camera);
+    return matches ? <StoredPhoto key={selectedPhoto.id} photo={selectedPhoto} onEdit={() => setPhotoMode('edit')} /> :
+      <div className="camera-body"><Camera size={26} strokeWidth={1} /><span>Camera unavailable</span></div>;
+  }
   function startDrawing() { setSelected(null); setDraft([]); setDrawing(true); setLayoutEditing(false); }
   function resetLayout() {
     if (!canLayout || !grid.current) return;
@@ -279,6 +313,7 @@ export function App() {
       <Dropdown.Root><Dropdown.Trigger asChild><Button variant="ghost" className="icon" aria-label="Open navigation"><Menu size={18} /></Button></Dropdown.Trigger>
         <Dropdown.Portal><Dropdown.Content className="menu" align="start" sideOffset={6}>
           <Dropdown.Item className="menu-item" onSelect={() => { setSettingsOpen(true); }}><Settings2 size={16} /> Settings</Dropdown.Item>
+          <Dropdown.Item className="menu-item" disabled={!canEdit || busy || !photos} onSelect={() => setPhotoMode('import')}><Camera size={16} /> Import reference photo</Dropdown.Item>
           <Dropdown.Item className="menu-item" disabled={!canLayout} onSelect={() => setLayoutEditing(v => !v)}><LayoutGrid size={16} /> {layoutEditing ? 'Lock layout' : 'Edit layout'}</Dropdown.Item>
           <Dropdown.Item className="menu-item" disabled={!canLayout} onSelect={resetLayout}><RotateCcw size={16} /> Restore default layout</Dropdown.Item>
         </Dropdown.Content></Dropdown.Portal>
@@ -313,6 +348,7 @@ export function App() {
         {packet ? <MapView info={packet.info} image={packet.image} zones={zones?.zones ?? []} selected={selected}
           drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
           navigation={navigation} goal={goal} connected={connected} showCostmap={showCostmap} focusRobotVersion={focusRobotVersion}
+          photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto}
           onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
           <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"
@@ -323,9 +359,26 @@ export function App() {
           </div>
         </details>}
       </>)}
-      {panel('front', <div className="camera-body"><Camera size={26} strokeWidth={1} /><span>Camera unavailable</span></div>)}
-      {panel('arm', <div className="camera-body"><Camera size={26} strokeWidth={1} /><span>Camera unavailable</span></div>)}
+      {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Demo capture front observation" title="Demo capture · synthetic frame" disabled={!canEdit || busy || !photos} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
+      {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Demo capture arm observation" title="Demo capture · synthetic frame" disabled={!canEdit || busy || !photos} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
       {panel('operate', <div className="operate-body">
+        <label className="subheading" htmlFor="item-select">ITEM</label>
+        <select id="item-select" value={selectedItemId} onChange={e => {
+          setSelectedItemId(e.target.value); setSelectedPhotoId(photos?.photos.find(p => p.item_id === e.target.value)?.id ?? null);
+        }}><option value="">All photos</option>{photos?.items.map(i => <option value={i.id} key={i.id}>{i.name}</option>)}</select>
+        <div className="photo-list">{photos?.photos.length ? [...photos.photos].reverse().filter(p => !selectedItemId || p.item_id === selectedItemId).map(p =>
+          <button key={p.id} className={`zone-row ${p.id === selectedPhotoId ? 'selected' : ''}`} onClick={() => selectPhoto(p.id)} title={p.kind === 'reference' ? 'Phone reference · no map point' : 'Captured base observation pose'}>
+            <Camera size={14} /><span>{photos.items.find(i => i.id === p.item_id)?.name ?? 'Unlabelled'}</span><span className="row-end">{p.kind === 'reference' ? 'Reference' : p.camera_id}</span>
+          </button>) : <span className="muted">No photos</span>}</div>
+        {selectedPhoto && <div className="action-line"><Button onClick={() => setPhotoMode('edit')}>Edit</Button>
+          {selectedPhoto.kind === 'observation' && <Button disabled={!canEdit || !selectedPhoto.map_matches || !selectedPhoto.available} onClick={() => {
+            const pose = selectedPhoto.base_pose; setGoalText([String(pose.x_m), String(pose.y_m), String(pose.yaw_rad * 180 / Math.PI)]);
+          }}>View point</Button>}
+          {selectedItem?.station_status === 'ready' && <Button disabled={!canEdit} onClick={() => {
+            const base = stations[selectedItem.station_link!.name]?.base;
+            if (base) setGoalText([String(base.x_m), String(base.y_m), String(base.yaw_deg)]);
+          }}>Approach</Button>}
+        </div>}
         <span className="subheading">POSE · DEMO</span>
         <output className="pose-readout" aria-label="Simulated map-frame pose">
           <span>X <b>{navigation?.pose.x_m.toFixed(2) ?? '—'}</b> m</span>
@@ -375,6 +428,8 @@ export function App() {
       })}
     </div>
     </div>
+    {photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId} photo={photoMode === 'edit' ? selectedPhoto : null}
+      index={photos} stations={stations} enabled={canEdit} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}
     <Dialog.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
       <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="settings-dialog">
         <header className="dialog-header"><Dialog.Title>SETTINGS</Dialog.Title><Dialog.Close asChild><Button variant="ghost" className="icon" aria-label="Close settings"><X size={18} /></Button></Dialog.Close></header>

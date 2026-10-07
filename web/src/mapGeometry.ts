@@ -8,6 +8,13 @@ export type MapInfo = {
 export type Zone = { id: string; corners: Point[] };
 export type Zones = { map_id: string; revision: number; zones: Zone[] };
 export type Settings = { revision: number; values: { auto_align: boolean; manual_angle_deg: number } };
+type PhotoBase = { id: string; saved_at_s: number; source: string; image_url: string; available: boolean; map_matches: boolean; item_id?: string; association_source?: 'manual' };
+export type Photo = PhotoBase & ({ kind: 'reference' } | {
+  kind: 'observation'; captured_at_s: number; camera_id: 'front' | 'arm'; map_id: string; map_revision: number; frame: string; base_pose: Origin;
+});
+export type Item = { id: string; name: string; appearance: string; station_link?: { name: string; map_id: string; digest: string }; station_status: string; fetch_available: false };
+export type PhotoIndex = { version: number; revision: number; photos: Photo[]; items: Item[] };
+export type Stations = Record<string, { base: { x_m: number; y_m: number; yaw_deg: number }; arm_angles_deg: number[] }>;
 export type Navigation = {
   map_id: string; frame: string; source: 'simulation'; stamp_s: number;
   pose: Origin; goal: Origin | null; path: Point[]; moving: boolean; phase: string; status: string;

@@ -4,33 +4,18 @@ import asyncio
 from contextlib import suppress
 import json
 import math
-import os
 from pathlib import Path
-import tempfile
 import uuid
 from urllib.parse import urlsplit
 
 from aiohttp import web
 from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
+from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame
+from .storage import atomic_json
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0)
-
-
-def atomic_json(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(dir=path.parent, prefix='.write-')
-    try:
-        with os.fdopen(fd, 'w') as stream:
-            json.dump(value, stream, allow_nan=False, indent=2)
-            stream.write('\n')
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(name, path)
-    finally:
-        if os.path.exists(name):
-            os.unlink(name)
 
 
 def load_json(path, fallback):
@@ -115,10 +100,72 @@ async def boundary(request, handler):
     return response
 
 
-def create_app(directory=ROOT / 'web_runtime'):
-    app = web.Application(middlewares=[boundary], client_max_size=32 * 1024)
+def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.json'):
+    app = web.Application(middlewares=[boundary], client_max_size=MAX_IMAGE_BYTES + 1024)
     editor = Editor(directory)
     app[EDITOR] = editor
+    photos = PhotoIndex(directory, stations_path)
+    photo_lock = asyncio.Lock()
+
+    def photo_stopped():
+        if editor.sim.phase != 'idle':
+            raise web.HTTPConflict(text='Photo editing requires a stopped simulator')
+
+    async def photo_index(request):
+        return web.json_response(await asyncio.to_thread(photos.snapshot, editor.grid['map_id']))
+
+    async def stations(request):
+        try:
+            return web.json_response(await asyncio.to_thread(photos.stations))
+        except (ValueError, OSError, TypeError):
+            return web.json_response({})
+
+    async def reference_upload(request):
+        photo_stopped()
+        if request.content_type != 'image/png':
+            raise ValueError('Upload a normalized PNG reference image')
+        image = await request.read()
+        async with photo_lock:
+            photo_stopped()
+            added = await asyncio.to_thread(photos.add, image, dict(kind='reference', source='phone'), int(request.query['expected_revision']))
+        await editor.emit('photos')
+        return web.json_response({**await asyncio.to_thread(photos.snapshot, editor.grid['map_id']), 'added_id': added['id']})
+
+    async def capture_photo(request):
+        data = await request.json()
+        async with photo_lock:
+            photo_stopped()
+            if data['map_id'] != editor.grid['map_id'] or data['camera_id'] not in ('front', 'arm'):
+                raise ValueError('Invalid map or camera for Demo capture')
+            photos.check(data['expected_revision'])
+            nav = editor.sim.telemetry()  # Freeze acquisition metadata before any await.
+            metadata = dict(kind='observation', source='simulation', captured_at_s=nav['stamp_s'],
+                            base_pose=nav['pose'], camera_id=data['camera_id'], map_id=nav['map_id'],
+                            map_revision=editor.grid['revision'], frame=nav['frame'])
+            image = await asyncio.to_thread(demo_frame, data['camera_id'])
+            added = await asyncio.to_thread(photos.add, image, metadata, data['expected_revision'])
+        await editor.emit('photos')
+        return web.json_response({**await asyncio.to_thread(photos.snapshot, editor.grid['map_id']), 'added_id': added['id']})
+
+    async def photo_edit(request):
+        data = await request.json()
+        async with photo_lock:
+            photo_stopped()
+            if request.method == 'DELETE':
+                await asyncio.to_thread(photos.delete, request.match_info['id'], data['expected_revision'])
+            else:
+                await asyncio.to_thread(photos.edit, request.match_info['id'], data, editor.grid['map_id'])
+        await editor.emit('photos')
+        return web.json_response(await asyncio.to_thread(photos.snapshot, editor.grid['map_id']))
+
+    async def photo_image(request):
+        photo_id = request.match_info['id']
+        if not any(p['id'] == photo_id for p in photos.value['photos']):
+            raise web.HTTPNotFound(text='Photo not found')
+        path = photos.image_path(photo_id)
+        if not path.is_file():
+            raise web.HTTPNotFound(text='Stored image unavailable')
+        return web.FileResponse(path, headers={'Content-Type': 'image/png'})
 
     async def state(request):
         return web.json_response(editor.state())
@@ -287,6 +334,13 @@ def create_app(directory=ROOT / 'web_runtime'):
         raise web.HTTPNotFound(text='Build frontend first, or use the PM2 development frontend on port 5173')
 
     app.router.add_get('/api/state', state)
+    app.router.add_get('/api/items', photo_index)
+    app.router.add_get('/api/stations', stations)
+    app.router.add_post('/api/photos/reference', reference_upload)
+    app.router.add_post('/api/photos/capture', capture_photo)
+    app.router.add_patch('/api/photos/{id}', photo_edit)
+    app.router.add_delete('/api/photos/{id}', photo_edit)
+    app.router.add_get('/api/photos/{id}/image', photo_image)
     app.router.add_get('/api/map', map_info)
     app.router.add_get('/api/map.png', map_image)
     app.router.add_get('/api/no-go-zones', zones)
