@@ -4,11 +4,11 @@ import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
 import { Camera, Crosshair, Expand, LayoutGrid, Menu, MoreHorizontal, RotateCcw, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
-import { type MapInfo, type Point, type Settings, type Zones } from './mapGeometry';
+import { type MapInfo, type Navigation, type Point, type Settings, type Zones } from './mapGeometry';
 import { Button } from './ui';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
-type State = { robot_id: string; demo: boolean; phase: string; operator_active: boolean };
+type State = { robot_id: string; demo: boolean; phase: string; operator_active: boolean; navigation: Navigation };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v1';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
 
@@ -36,6 +36,9 @@ export function App() {
   const [draft, setDraft] = useState<Point[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [fitVersion, setFitVersion] = useState(0);
+  const [focusRobotVersion, setFocusRobotVersion] = useState(0);
+  const [showCostmap, setShowCostmap] = useState(false);
+  const [goalText, setGoalText] = useState(['', '', '0']);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [layoutEditing, setLayoutEditing] = useState(false);
   const [layoutError, setLayoutError] = useState('');
@@ -51,6 +54,9 @@ export function App() {
   const draggingDivider = useRef<{ seam: Divider; tiles: Tile[]; start: number; cellWidth: number; cellHeight: number } | null>(null);
   const generation = useRef(0);
   const previousMap = useRef('');
+  const eventSocket = useRef<WebSocket | null>(null);
+  const operatorLease = useRef(lease);
+  operatorLease.current = lease;
   const editingSettings = useRef(false);
   const settingsDirty = savedSettings !== null && JSON.stringify(settingsDraft) !== JSON.stringify(savedSettings.values);
   const angleValid = angleText.trim() !== '' && Number.isFinite(Number(angleText)) && Math.abs(Number(angleText)) <= 180;
@@ -58,6 +64,10 @@ export function App() {
   const canEdit = Boolean(lease && connected && state?.phase === 'idle');
   const canLayout = connected && state?.phase === 'idle';
   const canResize = canLayout && layoutEditing && !maximized;
+  const navigation = state?.navigation ?? null;
+  const goalValid = goalText.every(v => v.trim() !== '' && Number.isFinite(Number(v))) && Math.abs(Number(goalText[2])) <= 180;
+  const goal = goalValid ? { x_m: Number(goalText[0]), y_m: Number(goalText[1]), yaw_rad: Number(goalText[2]) * Math.PI / 180 } : null;
+  const costmapReady = navigation?.costmap.ready && navigation.costmap.applied_zone_revision === zones?.revision;
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -72,7 +82,7 @@ export function App() {
       if (current !== generation.current) { URL.revokeObjectURL(image); return; }
       const key = `${info.map_id}:${info.display.view_revision}`;
       if (key !== previousMap.current) { setDraft([]); setDrawing(false); }
-      if (!previousMap.current.startsWith(`${info.map_id}:`)) setSelected(null);
+      if (!previousMap.current.startsWith(`${info.map_id}:`)) { setSelected(null); setGoalText(['', '', '0']); }
       previousMap.current = key;
       setPacket(old => {
         // Keep map/pan intact on zone or lease events; replace raster only on a new view.
@@ -81,9 +91,9 @@ export function App() {
         }
         return { info, image };
       });
-      setState(nextState); setZones(nextZones); setSavedSettings(preferences);
+      setState(old => old && old.navigation.stamp_s > nextState.navigation.stamp_s ? old : nextState);
+      setZones(nextZones); setSavedSettings(preferences);
       if (!editingSettings.current) { setSettingsDraft(preferences.values); setAngleText(String(preferences.values.manual_angle_deg)); }
-      setConnected(true);
     } catch (failure) { URL.revokeObjectURL(image); throw failure; }
   }, []);
 
@@ -96,7 +106,15 @@ export function App() {
         await reload();
         if (disposed) return;
         socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events`);
-        socket.onmessage = () => { void reload().catch(failure => { setError(failure.message); }); };
+        eventSocket.current = socket;
+        socket.onopen = () => { setConnected(true); if (operatorLease.current) socket?.send(JSON.stringify({ type: 'operator', lease: operatorLease.current })); };
+        socket.onmessage = event => {
+          const message = JSON.parse(event.data) as { type: string; state?: State };
+          if (message.type === 'telemetry' && message.state) {
+            setState(message.state);
+            if (!message.state.operator_active) setLease(null);
+          } else void reload().catch(failure => { setError(failure.message); });
+        };
         socket.onclose = () => {
           if (!disposed) { setConnected(false); setLease(null); setDrawing(false); setDraft([]); timer = setTimeout(connect, 1500); }
         };
@@ -106,8 +124,12 @@ export function App() {
       }
     };
     void connect();
-    return () => { disposed = true; clearTimeout(timer); socket?.close(); ++generation.current; };
+    return () => { disposed = true; clearTimeout(timer); socket?.close(); eventSocket.current = null; ++generation.current; };
   }, [reload]);
+
+  useEffect(() => {
+    if (lease && eventSocket.current?.readyState === WebSocket.OPEN) eventSocket.current.send(JSON.stringify({ type: 'operator', lease }));
+  }, [lease, connected]);
 
   useEffect(() => {
     if (!lease || !connected) return;
@@ -205,8 +227,23 @@ export function App() {
   }
   async function stop() {
     setDrawing(false); setDraft([]); setLayoutEditing(false);
-    try { const result = await api<{ reason: string }>('/api/stop', { method: 'POST' }); setError(result.reason); }
+    try { await api('/api/stop', { method: 'POST' }); setError(''); await reload(); }
     catch (failure) { setError((failure as Error).message); }
+  }
+  async function simulationCommand(type: 'navigate' | 'cancel' | 'demo_reset') {
+    if (!zones || !packet || !lease || !connected || (type !== 'cancel' && !canEdit)) return;
+    setBusy(true); setError(''); setDrawing(false); setDraft([]); setLayoutEditing(false);
+    try {
+      await api('/api/commands', { method: 'POST', headers: { 'X-Control-Lease': lease },
+        body: JSON.stringify({ id: crypto.randomUUID(), type, map_id: packet.info.map_id,
+          frame: packet.info.frame, expected_revision: zones.revision, ...(type === 'navigate' ? { goal } : {}) }) });
+      if (type === 'demo_reset') { setGoalText(['', '', '0']); setFocusRobotVersion(v => v + 1); }
+    } catch (failure) { setError((failure as Error).message); }
+    finally { await reload().catch(() => {}); setBusy(false); }
+  }
+  function previewGoal(point: Point) {
+    if (!canLayout || drawing || busy) return;
+    setGoalText(old => [point[0].toFixed(2), point[1].toFixed(2), old[2]]);
   }
   function startDrawing() { setSelected(null); setDraft([]); setDrawing(true); setLayoutEditing(false); }
   function resetLayout() {
@@ -297,13 +334,18 @@ export function App() {
             <Dropdown.Root><Dropdown.Trigger asChild><Button variant="ghost" className="icon" aria-label="Map actions"><MoreHorizontal size={18} /></Button></Dropdown.Trigger>
               <Dropdown.Portal><Dropdown.Content className="menu" align="end" sideOffset={5}>
                 <Dropdown.Item className="menu-item" disabled={!canEdit || !packet || busy} onSelect={startDrawing}><Square size={15} /> No-go zone</Dropdown.Item>
+                <Dropdown.Item className="menu-item" disabled={!navigation} onSelect={() => setFocusRobotVersion(v => v + 1)}><Crosshair size={15} /> Fit robot</Dropdown.Item>
+                <Dropdown.CheckboxItem className="menu-item" checked={showCostmap} onCheckedChange={setShowCostmap}><Square size={15} /> Global costmap {showCostmap ? '✓' : ''}</Dropdown.CheckboxItem>
+                <Dropdown.Item className="menu-item" disabled={!canEdit || busy} onSelect={() => void simulationCommand('demo_reset')}><RotateCcw size={15} /> Reset demo pose</Dropdown.Item>
                 <Dropdown.Item className="menu-item" onSelect={() => setSettingsOpen(true)}><Settings2 size={15} /> Settings</Dropdown.Item>
               </Dropdown.Content></Dropdown.Portal>
             </Dropdown.Root>
           </div>
         </div>
         {packet ? <MapView info={packet.info} image={packet.image} zones={zones?.zones ?? []} selected={selected}
-          drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected} /> : <div className="empty">Loading map…</div>}
+          drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
+          navigation={navigation} goal={goal} connected={connected} showCostmap={showCostmap} focusRobotVersion={focusRobotVersion}
+          onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
           <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"
             value={keyboardCorners[i]} onChange={e => setKeyboardCorners(v => v.map((item, n) => n === i ? e.target.value : item))} /></label>)}
@@ -316,16 +358,27 @@ export function App() {
       {panel('front', <div className="camera-body"><Camera size={26} strokeWidth={1} /><span>Camera unavailable</span></div>)}
       {panel('arm', <div className="camera-body"><Camera size={26} strokeWidth={1} /><span>Camera unavailable</span></div>)}
       {panel('operate', <div className="operate-body">
-        <label className="subheading" htmlFor="target">TARGET</label><input id="target" placeholder="Select an item" disabled />
-        <div className="action-line"><Button variant="default" disabled>Go</Button><Button variant="default" disabled>Fetch</Button><Button disabled>Cancel</Button></div>
+        <span className="subheading">POSE · DEMO</span>
+        <output className="pose-readout" aria-label="Simulated map-frame pose">
+          <span>X <b>{navigation?.pose.x_m.toFixed(2) ?? '—'}</b> m</span>
+          <span>Y <b>{navigation?.pose.y_m.toFixed(2) ?? '—'}</b> m</span>
+          <span>θ <b>{navigation ? (navigation.pose.yaw_rad * 180 / Math.PI).toFixed(0) : '—'}</b>°</span>
+        </output>
+        <span className="subheading">GOAL</span>
+        <div className="goal-inputs">{['X (m)', 'Y (m)', 'θ (°)'].map((label, i) => <label key={label}>{label}<input type="number" step={i === 2 ? '5' : '.05'}
+          min={i === 2 ? -180 : undefined} max={i === 2 ? 180 : undefined} placeholder={i === 2 ? '0' : 'Map click'} value={goalText[i]}
+          disabled={!canLayout || busy} onChange={e => setGoalText(old => old.map((v, n) => n === i ? e.target.value : v))} /></label>)}</div>
+        <div className="action-line"><Button variant="default" disabled={!canEdit || !goalValid || !costmapReady || busy}
+          onClick={() => void simulationCommand('navigate')}>Simulate</Button><Button variant="default" disabled>Fetch</Button>
+          <Button disabled={!connected || !lease || state?.phase === 'idle' || busy} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
         <div className="section-divider" />
         <span className="subheading">NO-GO ZONES</span>
         <div className="zone-list">{zones?.zones.length ? zones.zones.map((zone, i) => <button key={zone.id}
           className={`zone-row ${selected === zone.id ? 'selected' : ''}`} onClick={() => { setSelected(zone.id); setDrawing(false); setDraft([]); }}>
           <Square size={14} /> Zone {i + 1}<span className="row-end">{selected === zone.id ? 'Selected' : ''}</span>
         </button>) : <span className="muted">None</span>}</div>
-        <span className="muted enforcement">Navigation enforcement unavailable</span>
-        <div className="section-divider" /><span className="subheading">TASK</span><span className="muted">Hardware unavailable</span>
+        <span className="muted enforcement">{costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
+        <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
       </div>)}
     </main>
     <div className="panel-dividers">

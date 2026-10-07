@@ -60,14 +60,14 @@ def dominant_angle(grid):
     return math.radians((best + 45) % 90 - 45)
 
 
-def png_rgb(width, height, rows):
+def png_rgb(width, height, rows, alpha=False):
     def chunk(kind, payload):
         return struct.pack('!I', len(payload)) + kind + payload + struct.pack('!I', zlib.crc32(kind + payload))
-    header = struct.pack('!2I5B', width, height, 8, 2, 0, 0, 0)
+    header = struct.pack('!2I5B', width, height, 8, 6 if alpha else 2, 0, 0, 0)
     return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', header) + chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b'')
 
 
-def render_map(grid, settings, view_revision, detected_angle):
+def render_map(grid, settings, view_revision, detected_angle, colors=None):
     source = grid['origin']
     angle = source['yaw_rad'] + (detected_angle or 0) if settings['auto_align'] else math.radians(settings['manual_angle_deg'])
     corners = [local_to_world([x, y], source) for x, y in
@@ -82,7 +82,8 @@ def render_map(grid, settings, view_revision, detected_angle):
     ox, oy = rotate(low_x, low_y, angle)
     origin = dict(x_m=ox, y_m=oy, yaw_rad=angle)
     rows = bytearray()
-    colors = {-1: b'\x1b\x1b\x1d', 0: b'\x34\x34\x38', 100: b'\xb4\xb4\xb8'}
+    alpha = colors is not None
+    colors = colors or {-1: b'\x1b\x1b\x1d', 0: b'\x34\x34\x38', 100: b'\xb4\xb4\xb8'}
     # PNG is top-down; OccupancyGrid is bottom-up. Reverse Y here, exactly once.
     for row in reversed(range(height)):
         rows.append(0)
@@ -96,7 +97,7 @@ def render_map(grid, settings, view_revision, detected_angle):
     metadata['display'] = dict(width_m=width * r, height_m=height * r, origin=origin,
                                view_revision=view_revision, alignment_available=detected_angle is not None)
     metadata['png_url'] = f'/api/map.png?view_revision={view_revision}'
-    return metadata, png_rgb(width, height, rows)
+    return metadata, png_rgb(width, height, rows, alpha=alpha)
 
 
 def validate_rectangle(corners, grid):

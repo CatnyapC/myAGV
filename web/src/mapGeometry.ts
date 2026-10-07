@@ -8,6 +8,19 @@ export type MapInfo = {
 export type Zone = { id: string; corners: Point[] };
 export type Zones = { map_id: string; revision: number; zones: Zone[] };
 export type Settings = { revision: number; values: { auto_align: boolean; manual_angle_deg: number } };
+export type Navigation = {
+  map_id: string; frame: string; source: 'simulation'; stamp_s: number;
+  pose: Origin; goal: Origin | null; path: Point[]; moving: boolean; phase: string; status: string;
+  footprint: { length_m: number; width_m: number };
+  costmap: { ready: boolean; applied_zone_revision: number; clearance_m: number };
+};
+
+export function chassisOutline(pose: Origin, length: number, width: number): Point[] {
+  const a = length / 2, b = width / 2, cut = Math.min(length, width) * .15;
+  return [[-a + cut, -b], [a - cut, -b], [a, -b + cut], [a, b - cut],
+    [a - cut, b], [-a + cut, b], [-a, b - cut], [-a, -b + cut]]
+    .map(([u, v]) => toWorld([v, u], pose));
+}
 
 export function toView([x, y]: Point, origin: Origin): Point {
   const c = Math.cos(origin.yaw_rad), s = Math.sin(origin.yaw_rad);

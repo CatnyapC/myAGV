@@ -1,6 +1,7 @@
 # Local WebUI
 
-Demo-only map editor on the development Mac. No ROS/serial connection or motion.
+Demo map editor and simulated navigation on the development Mac. No ROS/serial
+connection or hardware motion. All displayed poses/routes are explicitly simulated.
 The four panels follow `WEBUI_PLAN.md`; task status is in `WEBUI_TASKS.md`.
 
 ## Start
@@ -33,7 +34,8 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
 ## Manual acceptance
 
 1. Open the UI yourself. Select **Take** to acquire editing ownership. The lease
-   renews while connected; closing/disconnecting expires it within 30 seconds.
+   renews while connected. Closing the operator's WebSocket stops simulation and
+   releases ownership; lease expiry also stops it. Observer disconnects do not.
 2. The Demo map loads automatically. Menu > Settings > **Auto-align walls**
    aligns dominant walls. Disable it to enter a manual display angle. Changes
    auto-save after 400 ms; **Saved** requires backend acknowledgement. Retry is
@@ -54,15 +56,39 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
    Reload to confirm automatic layout persistence. Verify desktop/mobile layout
    and visible STOP yourself.
 
-The camera panes are unavailable; Go/Fetch/Cancel are disabled. STOP reports
-that hardware is unavailable. No-go zones are persisted editor annotations;
-ROS navigation costmap enforcement is not active in this local milestone.
+7. The cyan chassis outline shows simulated position and heading. OPERATE shows
+   map-frame X/Y/yaw. MAP > More > **Fit robot** centers it without resetting zoom.
+8. Click free map space to preview a cyan goal, or enter X/Y/yaw in OPERATE.
+   Click **Simulate** explicitly; the active goal turns orange.
+   The cyan line is the actual remaining A* route;
+   the chassis moves/turns with a breathing glow. Arrival adopts the requested yaw
+   and clears the line/glow. Reduced-motion settings disable breathing.
+9. While stopped, draw a no-go rectangle across the direct route. MAP > More >
+   **Global costmap** shows red blocked/inflated cells. Navigate again: expect a
+   detour or No path. Goals in walls, unknown cells, zones or clearance are rejected.
+   A zone covering the chassis clearance envelope is rejected. Zone edits and
+   layout changes are disabled during navigation. Delete the zone and retry.
+10. Try **Cancel**, STOP, Release and closing the operator tab during simulation.
+    They clear navigation without moving on reconnect. MAP > More > **Reset demo
+    pose** restores a safe start; service restart re-applies zones before simulation.
+
+Camera panes and Fetch remain unavailable. Simulation uses a nominal 0.32 × 0.28 m
+chassis and 0.05 m clearance, with conservative cell padding. This is not measured
+robot geometry. ROS global/local costmaps, real localization/cameras and hardware
+movement remain unconnected. Demo A* does not replace ROS1 move_base.
 
 ## Data and test map
 
 - `web_runtime/settings.json`: shared display preferences and revision.
 - `web_runtime/no_go_zones.json`: original map-frame rectangle corners and revision.
 - Browser localStorage `myagv:local-demo:layout:v1`: validated panel geometry only.
+
+Simulated pose/goals/routes are runtime-only. `/api/navigation-map` returns the
+derived source-plus-zones OccupancyGrid; `/api/global-costmap` returns its inflated
+simulation grid and applied zone revision. Both preserve source origin/frame.
+`/api/global-costmap.png` is an optional transparent overlay in the same display
+coordinates. Small `telemetry` WebSocket messages update pose/path without
+reloading the raster or resetting map pan/zoom.
 
 Backend JSON uses atomic writes and one writer lock; observers cannot modify it.
 Runtime data and dependencies are ignored by Git. Invalid saved data fails startup
@@ -81,11 +107,13 @@ Do not expose this service on a network before the robot integration task.
 ## Necessary checks
 
 ```bash
-.venv/bin/python -m unittest test_web_backend
+.venv/bin/python -m unittest test_web_backend test_web_simulation
 npm --prefix web run build
 npm --prefix web test
 ```
 
-These check map geometry, API edits/persistence/revisions/ownership and frontend
-types/build. HTTP, PNG, static asset and WebSocket smoke checks passed for both
+These check map/chassis geometry, conservative zone rasterization, inflation,
+detour/no-path/deletion, simulated arrival, API guards/STOP/disconnect/release,
+edits/persistence/revisions/ownership and frontend types/build.
+HTTP, PNG, static asset and WebSocket smoke checks passed for both
 PM2 services. Browser visual/interaction checks are deliberately left to the user.

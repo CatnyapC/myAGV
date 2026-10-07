@@ -2,8 +2,9 @@
 
 Updated: 2026-10-07. Status: local WebUI/backend milestone implemented; browser
 acceptance is reserved for the user. This milestone covers a synthetic map,
-display alignment, persisted no-go editing and
-settings on the development Mac. ROS navigation enforcement, cameras, photo index
+display alignment, persisted no-go editing/settings and explicitly simulated
+pose/heading/path with global costmap enforcement on the development Mac.
+ROS navigation enforcement, cameras, photo index
 and calibrated grasp alignment remain separate robot integration tasks.
 
 ## 1. Selected implementation
@@ -246,9 +247,26 @@ service per device. Confirm the actual ROS/Python compatibility before integrati
 
 Manage the backend and local frontend development server with PM2. Production
 serves the separately built frontend from the one backend process. This local
-milestone binds to loopback and is explicitly Demo-only: no ROS/serial imports,
-motion commands, simulated live pose or camera imagery. No-go persistence here
-is editing only; navigation enforcement stays unavailable until robot integration.
+milestone binds to loopback and is explicitly Demo-only: no ROS/serial imports
+or hardware commands. The next local milestone adds explicitly simulated pose,
+heading and navigation, with no fabricated camera imagery. Show a simple top-view
+chassis outline with a front heading mark; use a breathing cyan glow only while
+the simulated chassis moves/turns, respecting reduced-motion preferences.
+Show compact map-frame X/Y/yaw and task state in OPERATE. Map clicks preview a
+goal; heading and keyboard X/Y inputs precede an explicit Simulate action.
+
+Rebuild a derived navigation grid from the untouched source plus conservatively
+rasterized no-go rectangles. Build a simulated global costmap by blocking unknown
+cells and inflating obstacles for the chassis circumscribed radius plus clearance.
+A small stdlib A* demo planner uses this costmap, forbids diagonal corner cutting,
+and publishes its actual remaining path. This is a local acceptance harness;
+production still uses ROS1 move_base, not this planner. Provide an optional costmap
+overlay in MAP's More menu. Applied zone revision must match before simulation.
+Reject blocked goals, zones overlapping the robot clearance envelope, and zone
+edits during a task. STOP/cancel, ownership release/expiry or controlling socket
+disconnect clears the route; reconnect never resumes it. Simulated pose is runtime
+state, not persisted localization. No-go persistence re-applies before simulation
+after restart. Global/local ROS costmap enforcement remains a hardware milestone.
 Store shared map-display settings atomically on the backend; keep panel geometry
 in validated browser localStorage as described above. Local loopback access is not
 the authentication/TLS deployment for remote robot control.
@@ -434,7 +452,9 @@ PM2 serves development UI on loopback port 5173 and the backend/built frontend o
 8791. The synthetic OccupancyGrid deliberately has rotated walls and nonzero
 origin/yaw. Necessary automated checks cover coordinate transforms, PNG loading,
 zone/settings validation and restart persistence, lease/revision conflicts,
-frontend build and HTTP/WebSocket access. No browser QA was performed; see
+simulation rasterization/inflation/detours/no-path/arrival/cancellation, chassis
+geometry, frontend build and HTTP/WebSocket access. Simulated global costmaps
+do not claim ROS global/local enforcement. No browser QA was performed; see
 `WEBUI_TASKS.md` and `WEBUI.md` for user manual acceptance. The full robot
 acceptance items below remain uncompleted by this local milestone.
 

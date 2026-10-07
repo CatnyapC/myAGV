@@ -18,6 +18,9 @@ before each task. Manage running services with PM2. Do not open a browser for QA
 - [x] Reference workspace layout — section 3. Fill the current window height,
   paired divider handles with pointer/keyboard resizing, minimum content sizes,
   top-toolbar default restore and automatic browser persistence. Build and geometry check.
+- [x] Simulated navigation — sections 3/4/6. Map-frame pose/chassis outline,
+  heading/goal inputs, moving glow, remaining planner path, applied global costmap
+  revision/overlay, conservative zones/inflation, guarded A* simulation and STOP.
 
 Implementation checks passed. UI checkboxes below remain for the user; no browser
 was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
@@ -31,9 +34,13 @@ was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
 - [ ] Move/maximize panels, then use the top-toolbar default restore; reload to confirm.
 - [ ] Check Settings restore after restart.
 - [ ] Check compact layout on desktop/mobile; STOP stays visible.
+- [ ] Preview a goal, Simulate, check outline/heading/glow/path and arrival yaw.
+- [ ] Enable Global costmap; check zone detour/no-path, blocked goals and zone deletion.
+- [ ] Check robot-overlapping zone rejection and no edits during navigation.
+- [ ] Cancel/STOP/Release/close operator tab; check no route resumes on reconnect.
 
 ## Deferred robot integration
 
-ROS map subscription, real localization/path/cameras, global/local costmap zone
+ROS map subscription, real localization/path/cameras, ROS global/local costmap zone
 enforcement, motion watchdog, navigation/fetch, survey and grasp alignment are not
 implemented by this milestone. Controls must not claim hardware readiness.

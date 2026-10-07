@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { rectangleCorners, toView, type MapInfo, type Point, type Zone } from './mapGeometry';
+import { chassisOutline, rectangleCorners, toView, toWorld, type MapInfo, type Navigation, type Origin, type Point, type Zone } from './mapGeometry';
 
 export function MapView(props: {
   info: MapInfo; image: string; zones: Zone[]; selected: string | null;
   drawing: boolean; draft: Point[]; fitVersion: number;
+  navigation: Navigation | null; goal: Origin | null; connected: boolean; showCostmap: boolean; focusRobotVersion: number;
   onDraft: (points: Point[]) => void; onSelect: (id: string | null) => void;
+  onGoal: (point: Point) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -14,6 +16,11 @@ export function MapView(props: {
   const preview = useRef<L.Rectangle | null>(null);
   const polygons = useRef<L.LayerGroup | null>(null);
   const bounds = useRef<L.LatLngBounds | null>(null);
+  const robot = useRef<L.Polygon | null>(null);
+  const heading = useRef<L.Polyline | null>(null);
+  const path = useRef<L.Polyline | null>(null);
+  const target = useRef<L.CircleMarker | null>(null);
+  const targetHeading = useRef<L.Polyline | null>(null);
 
   useEffect(() => {
     if (!host.current) return;
@@ -23,11 +30,20 @@ export function MapView(props: {
     L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(instance);
     map.current = instance;
     polygons.current = L.layerGroup().addTo(instance);
+    path.current = L.polyline([], { color: 'var(--cyan-9)', weight: 2, opacity: .85, interactive: false }).addTo(instance);
+    robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 1.8, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
+    heading.current = L.polyline([], { color: 'var(--cyan-11)', weight: 1.5, interactive: false }).addTo(instance);
+    target.current = L.circleMarker([0, 0], { radius: 5, color: 'var(--orange-9)', weight: 2, fillOpacity: 0, opacity: 0, interactive: false }).addTo(instance);
+    targetHeading.current = L.polyline([], { color: 'var(--orange-9)', weight: 1.5, interactive: false }).addTo(instance);
     const observer = new ResizeObserver(() => instance.invalidateSize({ pan: false }));
     observer.observe(host.current);
     instance.on('click', (event: L.LeafletMouseEvent) => {
       const current = latest.current;
-      if (!current.drawing) { current.onSelect(null); return; }
+      if (!current.drawing) {
+        current.onSelect(null);
+        current.onGoal(toWorld([event.latlng.lat, event.latlng.lng], current.info.display.origin));
+        return;
+      }
       const point: Point = [event.latlng.lat, event.latlng.lng];
       current.onDraft(current.draft.length === 1 ? [current.draft[0], point] : [point]);
     });
@@ -57,6 +73,45 @@ export function MapView(props: {
   useEffect(() => {
     if (bounds.current) map.current?.fitBounds(bounds.current, { padding: [12, 12], animate: false });
   }, [props.fitVersion]);
+
+  useEffect(() => {
+    const nav = props.navigation;
+    if (!nav || nav.map_id !== props.info.map_id) {
+      robot.current?.setLatLngs([]); heading.current?.setLatLngs([]); path.current?.setLatLngs([]);
+      return;
+    }
+    const origin = props.info.display.origin;
+    robot.current?.setLatLngs(chassisOutline(nav.pose, nav.footprint.length_m, nav.footprint.width_m).map(p => toView(p, origin)));
+    robot.current?.getElement()?.classList.toggle('moving', props.connected && nav.moving);
+    heading.current?.setLatLngs([toView([nav.pose.x_m, nav.pose.y_m], origin), toView(toWorld([0, nav.footprint.length_m / 2 + .08], nav.pose), origin)]);
+    path.current?.setLatLngs(props.connected ? nav.path.map(p => toView(p, origin)) : []);
+  }, [props.navigation, props.info, props.connected]);
+
+  useEffect(() => {
+    const goal = props.navigation?.moving ? props.navigation.goal : props.goal ?? props.navigation?.goal;
+    const color = props.navigation?.moving ? 'var(--orange-9)' : 'var(--cyan-11)';
+    target.current?.setStyle({ opacity: goal ? 1 : 0, color });
+    targetHeading.current?.setStyle({ color });
+    if (goal) {
+      target.current?.setLatLng(toView([goal.x_m, goal.y_m], props.info.display.origin));
+      targetHeading.current?.setLatLngs([toView([goal.x_m, goal.y_m], props.info.display.origin),
+        toView(toWorld([0, .35], goal), props.info.display.origin)]);
+    } else targetHeading.current?.setLatLngs([]);
+  }, [props.goal, props.navigation, props.info]);
+
+  useEffect(() => {
+    const pose = latest.current.navigation?.pose;
+    if (pose && props.focusRobotVersion) map.current?.panTo(toView([pose.x_m, pose.y_m], props.info.display.origin), { animate: false });
+  }, [props.focusRobotVersion, props.info]);
+
+  useEffect(() => {
+    if (!props.showCostmap || !props.navigation || !map.current) return;
+    const display = props.info.display;
+    const url = `/api/global-costmap.png?view_revision=${display.view_revision}&zone_revision=${props.navigation.costmap.applied_zone_revision}`;
+    const image = L.imageOverlay(url, [[0, 0], [display.height_m, display.width_m]],
+      { className: 'occupancy-raster', interactive: false, zIndex: 2 }).addTo(map.current);
+    return () => { image.remove(); };
+  }, [props.showCostmap, props.info, props.navigation?.costmap.applied_zone_revision]);
 
   useEffect(() => {
     const group = polygons.current;
