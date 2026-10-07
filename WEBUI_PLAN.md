@@ -17,7 +17,8 @@ and small alignment steps. Start with taught grasp height and operator confirmat
 | Item memory | Photos, capture poses and a small JSON index linked to taught stations |
 | Scene interpretation | Optional VLM skill labels photos; operator can label them manually |
 | Command interpretation | Optional LLM skill resolves text to an existing item ID |
-| Route planning | Existing deterministic navigation code |
+| Route planning | Existing ROS1 move_base planners, called through navigation.py |
+| Photo survey | Ordered viewing poses through existing navigation plus distance/heading keyframes |
 | No-go zones | Leaflet rectangles persisted by the backend and applied to both navigation costmaps |
 | Final alignment | Calibrated top-down image geometry, bounded motion and fresh feedback |
 | Grasp and return | Existing taught arm poses and this run's startup return poses |
@@ -26,6 +27,9 @@ No VLMaps/3D reconstruction, feature voxel map, vector database, local model ser
 VLA or mandatory fast multimodal model in the minimum release. Add a model to
 local alignment only if measured hardware results show geometry is insufficient.
 Skills are bounded backend workflows, not independent services or motion authorities.
+Keep ROS1; do not introduce ROS2/Nav2 or PhotoAtWaypoint. The existing
+`Navigation.go_to()` handles one goal, not a complete patrol. Add only the survey
+queue and photo sampling around it; retain upstream planning and obstacle handling.
 
 Reuse `teleop_control.py`, `navigation.py` and the movement sequence in
 `fetch_demo.py`. Preserve BASE / ARM / PICKUP modes, homing requirements, measured
@@ -72,6 +76,9 @@ OPERATE shows only controls relevant to the current mode:
 - **Teach:** Capture photo, item name, Record pose and explicit Overwrite.
   Capture and pose recording require valid timestamps/feedback; station recording
   waits for standstill and stable measured arm joints.
+- **Survey:** add ordered viewing poses through MAP's More menu; preview the route
+  order, then Start survey in OPERATE. Reuse Cancel and the current task phase.
+  Keep capture distance/heading thresholds in hidden Settings; no new panel.
 - **Align:** target selection in the image, valid-plane status, measured residual
   and height source; small-step controls and Confirm grasp. Enable automatic Step
   only after physical calibration validation. Unknown height blocks auto grasp.
@@ -240,8 +247,9 @@ Minimum persistent data:
 - Existing `stations.json`, unchanged: measured base pose and arm joint angles.
   Its validator rejects extra fields; do not insert photo/semantic fields there.
 - One `photo_index.json` plus an image directory, outside tracked source/runtime
-  secrets. Each observation stores item ID/name/appearance, image reference,
-  capture time, map ID/revision, measured capture base pose and camera identity.
+  secrets. Each observation stores an observation ID, image reference, capture
+  time, map ID/revision, measured capture base pose and camera identity. Survey
+  frames may be unlabeled; add item ID/name/appearance after labeling/confirmation.
   Arm-camera captures also store synchronized measured arm pose when needed.
   Optional station link supplies the validated approach/grasp; repeated
   observations share an item ID only after confirmation.
@@ -259,6 +267,40 @@ maps and stale station links. A VLM returns candidate labels/regions; an LLM ret
 an allowed item ID or ambiguity. Validate both, use timeouts, and never execute
 model-generated code, joint targets or routes. Manual labels/selection work offline.
 
+### ROS1 survey and keyframes
+
+Use a few operator-selected viewing poses on the existing 2D map. Do not navigate
+to every occupancy cell or treat photo spacing as map resolution. The minimum
+survey does not automatically generate a coverage route or guarantee visibility
+of every object; supplement missed shelves/tables with selected viewing poses.
+
+- **Motion:** the backend owns one ordered queue and calls `Navigation.go_to()`
+  sequentially. Validate each pose/map/no-go revision, hold the operator lease,
+  and keep the arm in transport posture. Preserve existing arrival/standstill
+  checks, so the robot stops at each viewing pose; photos can also be sampled
+  during travel between poses. Do not silently loosen arrival checks for speed.
+  Cancel, STOP, lease loss, localization failure, navigation failure or map
+  identity change cancels the active goal and clears pending motion. No automatic
+  restart, simultaneous fetch or second navigation client.
+- **Sampling:** use the existing front-camera source. Save the first valid frame,
+  then a frame when translation from the last accepted frame reaches the distance
+  threshold **or** wrapped heading change reaches the angle threshold. Start with
+  configurable **0.5 m / 30 degrees**; permit **0.1 m** for selected dense surveys.
+  These are initial sampling settings, not localization/object accuracy claims.
+  Skip stale/blurred frames; bounded capture/storage work must not delay STOP,
+  navigation or the watchdog. Stop accepting frames on invalid localization,
+  timestamp/TF failure or storage exhaustion; report the blocking reason.
+- **Pose binding:** reuse the already-used ROS1 `tf2_ros.Buffer` and listener.
+  Query `map -> base_footprint` at the image's acquisition timestamp, rather than
+  using `Navigation.get_pose()` unchanged: it currently queries the latest pose.
+  Validate camera timestamps against ROS time; never substitute save time or a
+  latest-pose fallback. Store a camera pose only when its calibrated TF chain is
+  available. TF supplies coordinate transforms, not object distance or height.
+- **Index:** save images and synchronized metadata into the same photo index.
+  Manual/VLM labeling runs outside the motion loop; only confirmed item/station
+  links enable Fetch. Reuse camera transport and image conversion/saving utilities;
+  no separate survey service, follow_waypoints dependency or RTAB-Map stack.
+
 ### Minimal API contract (proposed, not implemented)
 
 | Channel | Purpose |
@@ -268,7 +310,7 @@ model-generated code, joint targets or routes. Manual labels/selection work offl
 | `GET /api/items`, `/api/stations` | Compact photo index and taught records |
 | `GET /api/no-go-zones` | Active map's saved zone geometry and revision |
 | `POST /api/control/claim`, `/release` | One expiring operator lease; observers cannot move the robot |
-| `POST /api/commands` | Typed commands: navigate/fetch, home/gripper, teach, photo capture/label, optional resolve, alignment measure/step/confirm, zone add/delete with expected revision |
+| `POST /api/commands` | Typed commands: navigate/fetch, survey start with ordered poses and validated capture thresholds, cancel, home/gripper, teach, photo capture/label, optional resolve, alignment measure/step/confirm, zone add/delete with expected revision |
 | `POST /api/stop` | Priority stop/cancel with confirmed or unconfirmed result |
 | `WSS /api/events` | State changes, map/zone revision and application notifications, map-frame robot pose/planner path with timestamps, and ordered, expiring leased manual input |
 | Authenticated camera/image URLs | Two live streams and index photos; separate from control WebSocket |
@@ -352,11 +394,9 @@ to be calibrated stereo.
    autonomous pickup.
 4. Calibrate fixed-plane geometry; implement measure/step/recheck with taught Z.
    Add optional photo-label/target-resolution skills after the deterministic flow works.
+5. Add the ROS1 survey queue and front-camera keyframes to the same backend/index.
+   Reuse single-goal navigation; verify capture-time TF and cancellation on hardware.
 
-Later, distance-triggered front photos may be captured every 10cm of measured
-travel with timestamps/map poses and image/pose synchronization checks. Stop capture
-on invalid localization, bound storage and process labels outside the motion loop.
-This adds observations to the same index; it does not require a 3D mapping service.
 Variable-height estimation and a fast model remain separate, measured additions.
 
 Acceptance for implementation:
@@ -377,6 +417,11 @@ Acceptance for implementation:
   deletion removes only virtual obstacles. Pending enforcement blocks navigation.
 - [ ] Item photo/map/station links survive restart; map mismatch/unknown item
   cannot trigger fetch. No observation pose displayed as a measured object pose.
+- [ ] Survey reuses ROS1 navigation with one active goal; ordered viewing poses
+  respect no-go zones. Cancel/STOP/lease loss/failure clears the queue without restart.
+- [ ] Keyframes follow configured distance/heading thresholds, including angle
+  wraparound. Delayed images use acquisition-time TF; stale/missing transforms
+  produce no false pose binding. Storage/model work cannot block motion stopping.
 - [ ] Manual fallback works without a model key; skills cannot bypass validation.
 - [ ] Blur/disconnect/lease expiry and missing browser cleanup stop input;
   duplicates and competing controllers cannot issue extra movement.
