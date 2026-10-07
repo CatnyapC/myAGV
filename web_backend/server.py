@@ -1,6 +1,7 @@
 """Loopback-only Demo API. No robot motion or ROS connection is available."""
 import argparse
 import asyncio
+from contextlib import suppress
 import json
 import math
 import os
@@ -218,6 +219,22 @@ def create_app(directory=ROOT / 'web_runtime'):
         for socket in tuple(editor.sockets):
             await socket.close(code=1001, message=b'Service stopping')
 
+    async def lease_watch(application):
+        async def expire():
+            while True:
+                await asyncio.sleep(1)
+                async with editor.lock:
+                    expired = bool(editor.lease and time.monotonic() >= editor.expires)
+                    if expired:
+                        editor.lease, editor.expires = None, 0
+                if expired:
+                    await editor.emit('state')
+        task = asyncio.create_task(expire())
+        yield
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
     async def static(request):
         dist = ROOT / 'web' / 'dist'
         path = (dist / request.match_info['path']).resolve()
@@ -241,12 +258,13 @@ def create_app(directory=ROOT / 'web_runtime'):
     app.router.add_get('/api/events', events)
     app.router.add_get('/{path:.*}', static)
     app.on_shutdown.append(shutdown)
+    app.cleanup_ctx.append(lease_watch)
     return app
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--port', type=int, default=8000)
+    parser.add_argument('--port', type=int, default=8791)
     parser.add_argument('--data-dir', type=Path, default=ROOT / 'web_runtime')
     args = parser.parse_args()
     web.run_app(create_app(args.data_dir), host='127.0.0.1', port=args.port)

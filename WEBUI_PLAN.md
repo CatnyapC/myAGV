@@ -1,7 +1,8 @@
 # Minimal Remote Robot UI and Service Plan
 
-Updated: 2026-10-07. Status: local WebUI/backend milestone in progress. This
-milestone covers a synthetic map, display alignment, persisted no-go editing and
+Updated: 2026-10-07. Status: local WebUI/backend milestone implemented; browser
+acceptance is reserved for the user. This milestone covers a synthetic map,
+display alignment, persisted no-go editing and
 settings on the development Mac. ROS navigation enforcement, cameras, photo index
 and calibrated grasp alignment remain separate robot integration tasks.
 
@@ -325,7 +326,8 @@ of every object; supplement missed shelves/tables with selected viewing poses.
 | `GET /api/map` | Map identity/revision, frame, width/height, resolution in m/cell, origin x/y/yaw with explicit units, and authenticated PNG URL tied to that revision |
 | `GET /api/items`, `/api/stations` | Compact photo index and taught records |
 | `GET /api/no-go-zones` | Active map's saved zone geometry and revision |
-| `POST /api/control/claim`, `/release` | One expiring operator lease; observers cannot move the robot |
+| `POST /api/control/claim`, `/renew`, `/release` | One expiring operator lease; observers cannot edit shared data or move the robot |
+| `GET`, `PUT /api/settings` | Persisted display settings with expected revision; lease required for writes |
 | `POST /api/commands` | Typed commands: navigate/fetch, survey start with ordered poses and validated capture thresholds, cancel, home/gripper, teach, photo capture/label, optional resolve, alignment measure/step/confirm, zone add/delete with expected revision |
 | `POST /api/stop` | Priority stop/cancel with confirmed or unconfirmed result |
 | `WSS /api/events` | State changes, map/zone revision and application notifications, map-frame robot pose/planner path with timestamps, and ordered, expiring leased manual input |
@@ -415,6 +417,15 @@ to be calibrated stereo.
 
 Variable-height estimation and a fast model remain separate, measured additions.
 
+Local milestone delivered in `web/`, `web_backend/` and `ecosystem.config.cjs`.
+PM2 serves development UI on loopback port 5173 and the backend/built frontend on
+8791. The synthetic OccupancyGrid deliberately has rotated walls and nonzero
+origin/yaw. Necessary automated checks cover coordinate transforms, PNG loading,
+zone/settings validation and restart persistence, lease/revision conflicts,
+frontend build and HTTP/WebSocket access. No browser QA was performed; see
+`WEBUI_TASKS.md` and `WEBUI.md` for user manual acceptance. The full robot
+acceptance items below remain uncompleted by this local milestone.
+
 Acceptance for implementation:
 
 - [ ] Four panels only; core information visible, diagnostics on demand; established
@@ -447,8 +458,9 @@ Acceptance for implementation:
   fetch returns to this run's startup poses. Unverified grasp is explicit.
 
 Physical commissioning must supply camera endpoints/orientation/timestamps, actual
-ROS/Python runtime, transport posture and calibration results. This plan provisions
-no credentials, installs no dependencies and performs no hardware operation.
+ROS/Python runtime, transport posture and calibration results. The local milestone
+provisions no credentials and performs no hardware operation. Frontend and optional
+web-backend dependencies are installed only for the development environment.
 
 ## 7. Design provenance
 

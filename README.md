@@ -4,6 +4,9 @@ Language: [English](#english) | [日本語](#日本語)
 
 Minimal robot setup commands: [QUICKSTART.md](QUICKSTART.md).
 
+Local four-panel WebUI and map/no-go editor: [WEBUI.md](WEBUI.md).
+Demo-only development milestone; services are managed with PM2.
+
 Combined ROS keyboard control for **AGV + P340 arm + gripper**:
 see [TELEOP.md](TELEOP.md). Use `teleop_control.py` in the system ROS Python
 environment; `command_control.py` below remains the direct-serial command console.
