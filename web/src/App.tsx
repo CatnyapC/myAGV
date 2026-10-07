@@ -63,7 +63,8 @@ export function App() {
   editingSettings.current = settingsDirty || settingsSaving || !angleValid;
   const canEdit = Boolean(lease && connected && state?.phase === 'idle');
   const canLayout = connected && state?.phase === 'idle';
-  const canResize = canLayout && layoutEditing && !maximized;
+  const canResize = canLayout && !maximized;
+  const canMove = canResize && layoutEditing;
   const navigation = state?.navigation ?? null;
   const goalValid = goalText.every(v => v.trim() !== '' && Number.isFinite(Number(v))) && Math.abs(Number(goalText[2])) <= 180;
   const goal = goalValid ? { x_m: Number(goalText[0]), y_m: Number(goalText[1]), yaw_rad: Number(goalText[2]) * Math.PI / 180 } : null;
@@ -186,8 +187,8 @@ export function App() {
     return () => { observer.disconnect(); instance.off('change'); instance.destroy(false); grid.current = null; fitViewport.current = () => {}; };
   }, []);
   useEffect(() => {
-    grid.current?.enableMove(Boolean(canResize)).enableResize(false);
-  }, [canResize]);
+    grid.current?.enableMove(Boolean(canMove)).enableResize(false);
+  }, [canMove]);
 
   useEffect(() => {
     if (!settingsDirty || !savedSettings || !canEdit || settingsSaving || saveError || !angleValid) return;
@@ -389,7 +390,7 @@ export function App() {
           aria-orientation={vertical ? 'vertical' : 'horizontal'}
           aria-label={`Resize ${seam.before.map(id => names[id]).join(' / ')} and ${seam.after.map(id => names[id]).join(' / ')}`}
           aria-valuenow={seam.position} aria-valuemin={0} aria-valuemax={vertical ? gridSize.columns : Math.max(...layout.map(t => t.y + t.h))}
-          disabled={!canResize} title={canResize ? 'Drag to resize adjacent panels' : 'Unlock Edit layout to resize'}
+          disabled={!canResize} title={canResize ? 'Drag to resize adjacent panels' : 'Resize unavailable while offline or navigating'}
           style={vertical ? { left: `calc(${seam.position / gridSize.columns * 100}% - 4px)`, top: seam.start * gridSize.cellHeight + 4,
             height: (seam.end - seam.start) * gridSize.cellHeight - 8 } :
             { top: seam.position * gridSize.cellHeight - 4, left: `calc(${seam.start / gridSize.columns * 100}% + 4px)`,

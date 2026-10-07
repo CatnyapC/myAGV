@@ -48,7 +48,9 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
    bounds and be at least one map cell wide/high.
 4. Select a saved zone on the map or in OPERATE, then **Delete**. Rotate the map,
    reload the page and restart `myagv-api`; saved zones should stay in place.
-5. Menu > **Edit layout** unlocks panel dragging by title and shared divider handles.
+5. Shared divider handles work immediately while connected and stopped; hover
+   highlights them. No Edit layout or Take is required for resizing. Menu >
+   **Edit layout** unlocks only panel repositioning by title.
    Drag a divider to resize adjacent panels together, or focus it and use arrow keys
    (Shift moves two grid units). Settings W/H inputs adjust the same boundaries.
    Browser layout editing does not require Take. Resize the window: panels fill

@@ -29,7 +29,8 @@ was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
 
 - [ ] Load the Demo map; toggle auto-align and adjust manual display angle.
 - [ ] Add/delete a rectangle before and after rotation; reload to confirm persistence.
-- [ ] Unlock Edit layout; drag the shared vertical/horizontal handles and use arrow keys.
+- [ ] With Edit layout off, hover/drag shared handles and use arrow keys; resizing works.
+- [ ] Unlock Edit layout; reposition panels by title. Resizing alone never unlocks dragging.
 - [ ] Resize the window; panels fill available height or scroll at minimum sizes.
 - [ ] Move/maximize panels, then use the top-toolbar default restore; reload to confirm.
 - [ ] Check Settings restore after restart.

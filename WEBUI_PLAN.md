@@ -124,9 +124,12 @@ Use 12 columns below 1168px and one column below 640px.
 
 Show slim divider handles between adjacent panels, matching the memory-live
 workspace: centered gray bars, cyan hover/focus, horizontal and vertical cursors.
+Divider handles are enabled whenever connected and stopped, without Edit layout
+or robot ownership. Hover/focus feedback must be available in the default workspace.
 Dragging a divider resizes both sides while preserving the outer boundary and
 minimum sizes. Arrow keys move the focused divider; Shift moves two grid units.
-Settings W/H inputs adjust the same shared boundaries. Drag panels by title;
+Settings W/H inputs adjust the same shared boundaries. Edit layout unlocks only
+repositioning by title; resizing does not unlock repositioning. Drag panels by title;
 camera/map gestures never drag a panel. Maximize/restore reuses existing panels.
 The top toolbar provides Restore default layout, also available in Menu/Settings.
 Reset exits maximization, restores default proportions at the current breakpoint
