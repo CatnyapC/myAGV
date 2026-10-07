@@ -24,7 +24,6 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .connection { display: flex; align-items: center; gap: 6px; color: var(--gray-11); margin-left: auto; font-size: 12px; }
 .connection::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--gray-8); }
 .connection.online::before { background: var(--cyan-9); }
-.ownership { color: var(--gray-11); font-size: 12px; }
 .stop { height: 36px; min-width: 64px; }
 .workspace { flex: 1; min-height: 0; position: relative; padding: 8px; overflow: auto; }
 .grid-stack { margin: 0; }
@@ -109,7 +108,6 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
   .topbar { gap: 6px; padding: 0 8px; }
   .brand { font-size: 10px; letter-spacing: .02em; max-width: 86px; overflow: hidden; }
   .demo-tag { font-size: 9px; padding: 3px; }
-  .ownership { display: none; }
   .connection { width: 8px; font-size: 0; }
   .connection::before { flex-shrink: 0; }
   .topbar .icon, .stop { height: 40px; }

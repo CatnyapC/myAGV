@@ -6,7 +6,7 @@ import unittest
 from aiohttp.test_utils import TestClient, TestServer
 
 from web_backend.map_data import demo_map, local_to_world, world_to_local
-from web_backend.server import EDITOR, create_app
+from web_backend.server import create_app
 from web_backend.simulation import Simulation, cell_index, global_costmap, navigation_grid, plan_path
 
 
@@ -57,21 +57,19 @@ class SimulationTest(unittest.TestCase):
 
 
 class SimulationAPITest(unittest.IsolatedAsyncioTestCase):
-    async def test_navigation_guards_stop_release_and_disconnect(self):
+    async def test_navigation_guards_stop_cancel_and_disconnect(self):
         asyncio.get_running_loop().set_debug(False)
         with tempfile.TemporaryDirectory() as directory:
             async with TestClient(TestServer(create_app(directory))) as client:
                 state = await (await client.get('/api/state')).json()
                 self.assertFalse(state['motion_available'])
                 self.assertEqual(state['navigation']['source'], 'simulation')
-                lease = await (await client.post('/api/control/claim')).json()
-                headers = {'X-Control-Lease': lease['lease']}
                 grid = demo_map()
                 nav = state['navigation']
                 px, py = nav['pose']['x_m'], nav['pose']['y_m']
                 overlap = dict(id='overlap', type='zone_add', map_id=grid['map_id'], expected_revision=0,
                                corners=[[px-.1,py-.1],[px+.1,py-.1],[px+.1,py+.1],[px-.1,py+.1]])
-                self.assertEqual((await client.post('/api/commands', json=overlap, headers=headers)).status, 400)
+                self.assertEqual((await client.post('/api/commands', json=overlap)).status, 400)
                 global_grid = await (await client.get('/api/global-costmap')).json()
                 free = [(i, value) for i, value in enumerate(global_grid['cells']) if value == 0]
                 goal_index = max(free, key=lambda entry: entry[0])[0]
@@ -80,11 +78,10 @@ class SimulationAPITest(unittest.IsolatedAsyncioTestCase):
                 command = dict(id='go', type='navigate', map_id=grid['map_id'], frame='map', expected_revision=0,
                                goal=dict(x_m=gx, y_m=gy, yaw_rad=-.5))
                 bad = {**command, 'id': 'bad', 'goal': dict(x_m=999, y_m=999, yaw_rad=0)}
-                self.assertEqual((await client.post('/api/commands', json=bad, headers=headers)).status, 400)
+                self.assertEqual((await client.post('/api/commands', json=bad)).status, 400)
                 async with client.ws_connect('/api/events') as socket:
                     await socket.receive_json()
-                    await socket.send_json(dict(type='operator', lease=lease['lease']))
-                    response = await client.post('/api/commands', json=command, headers=headers)
+                    response = await client.post('/api/commands', json=command)
                     self.assertEqual(response.status, 200, await response.text())
                     self.assertEqual((await response.json())['status'], 'running')
                     packet = await socket.receive_json(timeout=2)
@@ -92,47 +89,42 @@ class SimulationAPITest(unittest.IsolatedAsyncioTestCase):
                         packet = await socket.receive_json(timeout=2)
                     self.assertTrue(packet['state']['navigation']['moving'])
                     self.assertGreater(len(packet['state']['navigation']['path']), 2)
-                    async with client.ws_connect('/api/events') as observer:
-                        await observer.receive_json()
+                    async with client.ws_connect('/api/events') as second_socket:
+                        await second_socket.receive_json()
                     state = await (await client.get('/api/state')).json()
                     self.assertEqual(state['phase'], 'running')
-                    self.assertEqual((await client.post('/api/commands', json=overlap, headers=headers)).status, 409)
-                    repeat = await client.post('/api/commands', json=command, headers=headers)
+                    self.assertEqual((await client.post('/api/commands', json=overlap)).status, 409)
+                    repeat = await client.post('/api/commands', json=command)
                     self.assertEqual(repeat.status, 200)
                     await client.post('/api/stop')
                     stopped = await (await client.get('/api/state')).json()
                     self.assertEqual(stopped['phase'], 'idle')
                     self.assertEqual(stopped['navigation']['path'], [])
                     command['id'] = 'go-again'
-                    self.assertEqual((await client.post('/api/commands', json=command, headers=headers)).status, 200)
-                # Socket close cancels its operator's navigation; observers cannot cancel by disconnecting.
+                    self.assertEqual((await client.post('/api/commands', json=command)).status, 200)
+                # Closing the last UI connection stops navigation, including across reconnects.
                 for _ in range(20):
                     state = await (await client.get('/api/state')).json()
                     if state['phase'] == 'idle':
                         break
                     await asyncio.sleep(.01)
-                self.assertEqual(state['navigation']['status'], 'Operator disconnected')
-                self.assertFalse(state['operator_active'])
-                lease = await (await client.post('/api/control/claim')).json()
-                headers = {'X-Control-Lease': lease['lease']}
-                command['id'] = 'go-release'
-                self.assertEqual((await client.post('/api/commands', json=command, headers=headers)).status, 200)
-                await client.post('/api/control/release', headers=headers)
-                state = await (await client.get('/api/state')).json()
-                self.assertEqual(state['phase'], 'idle')
+                self.assertEqual(state['navigation']['status'], 'UI disconnected')
                 self.assertFalse(state['navigation']['moving'])
-                lease = await (await client.post('/api/control/claim')).json()
-                headers = {'X-Control-Lease': lease['lease']}
-                command['id'] = 'go-expiry'
-                self.assertEqual((await client.post('/api/commands', json=command, headers=headers)).status, 200)
-                client.server.app[EDITOR].expires = 0
-                for _ in range(20):
-                    await asyncio.sleep(.02)
+                async with client.ws_connect('/api/events') as socket:
+                    await socket.receive_json()
+                    # A retried command cannot restart navigation after reconnecting.
+                    self.assertEqual((await client.post('/api/commands', json=command)).status, 200)
                     state = await (await client.get('/api/state')).json()
-                    if state['phase'] == 'idle':
-                        break
-                self.assertEqual(state['navigation']['status'], 'Lease expired')
-                self.assertEqual(state['navigation']['path'], [])
+                    self.assertEqual(state['phase'], 'idle')
+                    self.assertEqual(state['navigation']['path'], [])
+                    command['id'] = 'go-cancel'
+                    self.assertEqual((await client.post('/api/commands', json=command)).status, 200)
+                    cancel = dict(id='cancel', type='cancel', map_id=grid['map_id'], expected_revision=0)
+                    self.assertEqual((await client.post('/api/commands', json=cancel)).status, 200)
+                    state = await (await client.get('/api/state')).json()
+                    self.assertEqual(state['navigation']['status'], 'Cancelled')
+                    self.assertEqual(state['navigation']['path'], [])
+                    self.assertFalse(state['navigation']['moving'])
                 image = await client.get('/api/global-costmap.png?view_revision=0&zone_revision=0')
                 self.assertEqual(image.status, 200)
                 png = await image.read()

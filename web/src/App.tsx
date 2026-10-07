@@ -8,7 +8,7 @@ import { type MapInfo, type Navigation, type Point, type Settings, type Zones } 
 import { Button } from './ui';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
-type State = { robot_id: string; demo: boolean; phase: string; operator_active: boolean; navigation: Navigation };
+type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v1';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
 
@@ -29,7 +29,6 @@ export function App() {
   const [angleText, setAngleText] = useState('0');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
-  const [lease, setLease] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [drawing, setDrawing] = useState(false);
@@ -54,15 +53,12 @@ export function App() {
   const draggingDivider = useRef<{ seam: Divider; tiles: Tile[]; start: number; cellWidth: number; cellHeight: number } | null>(null);
   const generation = useRef(0);
   const previousMap = useRef('');
-  const eventSocket = useRef<WebSocket | null>(null);
-  const operatorLease = useRef(lease);
-  operatorLease.current = lease;
   const editingSettings = useRef(false);
   const settingsDirty = savedSettings !== null && JSON.stringify(settingsDraft) !== JSON.stringify(savedSettings.values);
   const angleValid = angleText.trim() !== '' && Number.isFinite(Number(angleText)) && Math.abs(Number(angleText)) <= 180;
   editingSettings.current = settingsDirty || settingsSaving || !angleValid;
-  const canEdit = Boolean(lease && connected && state?.phase === 'idle');
-  const canLayout = connected && state?.phase === 'idle';
+  const canEdit = connected && state?.phase === 'idle';
+  const canLayout = canEdit;
   const canResize = canLayout && !maximized;
   const canMove = canResize && layoutEditing;
   const navigation = state?.navigation ?? null;
@@ -86,7 +82,7 @@ export function App() {
       if (!previousMap.current.startsWith(`${info.map_id}:`)) { setSelected(null); setGoalText(['', '', '0']); }
       previousMap.current = key;
       setPacket(old => {
-        // Keep map/pan intact on zone or lease events; replace raster only on a new view.
+        // Keep map/pan intact on zone events; replace raster only on a new view.
         if (old && old.info.map_id === info.map_id && old.info.revision === info.revision && old.info.display.view_revision === info.display.view_revision) {
           URL.revokeObjectURL(image); return old;
         }
@@ -107,17 +103,15 @@ export function App() {
         await reload();
         if (disposed) return;
         socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events`);
-        eventSocket.current = socket;
-        socket.onopen = () => { setConnected(true); if (operatorLease.current) socket?.send(JSON.stringify({ type: 'operator', lease: operatorLease.current })); };
+        socket.onopen = () => setConnected(true);
         socket.onmessage = event => {
           const message = JSON.parse(event.data) as { type: string; state?: State };
           if (message.type === 'telemetry' && message.state) {
             setState(message.state);
-            if (!message.state.operator_active) setLease(null);
           } else void reload().catch(failure => { setError(failure.message); });
         };
         socket.onclose = () => {
-          if (!disposed) { setConnected(false); setLease(null); setDrawing(false); setDraft([]); timer = setTimeout(connect, 1500); }
+          if (!disposed) { setConnected(false); setDrawing(false); setDraft([]); timer = setTimeout(connect, 1500); }
         };
         socket.onerror = () => socket?.close();
       } catch (failure) {
@@ -125,22 +119,8 @@ export function App() {
       }
     };
     void connect();
-    return () => { disposed = true; clearTimeout(timer); socket?.close(); eventSocket.current = null; ++generation.current; };
+    return () => { disposed = true; clearTimeout(timer); socket?.close(); ++generation.current; };
   }, [reload]);
-
-  useEffect(() => {
-    if (lease && eventSocket.current?.readyState === WebSocket.OPEN) eventSocket.current.send(JSON.stringify({ type: 'operator', lease }));
-  }, [lease, connected]);
-
-  useEffect(() => {
-    if (!lease || !connected) return;
-    const timer = setInterval(() => {
-      void api('/api/control/renew', { method: 'POST', headers: { 'X-Control-Lease': lease } }).catch(() => {
-        setLease(null); setDrawing(false); setDraft([]); setError('Editing lease expired');
-      });
-    }, 10000);
-    return () => clearInterval(timer);
-  }, [lease, connected]);
 
   useEffect(() => {
     if (!canEdit) { setDrawing(false); setDraft([]); }
@@ -196,7 +176,6 @@ export function App() {
       setSettingsSaving(true);
       try {
         const response = await api<Settings>('/api/settings', { method: 'PUT',
-          headers: { 'X-Control-Lease': lease! },
           body: JSON.stringify({ expected_revision: savedSettings.revision, values: settingsDraft }) });
         setSavedSettings(response);
         await reload();
@@ -204,22 +183,12 @@ export function App() {
       finally { setSettingsSaving(false); }
     }, 400);
     return () => clearTimeout(timer);
-  }, [settingsDirty, savedSettings, settingsDraft, canEdit, lease, settingsSaving, saveError, angleValid, reload]);
-
-  async function ownership() {
-    setBusy(true); setError('');
-    try {
-      if (lease) { await api('/api/control/release', { method: 'POST', headers: { 'X-Control-Lease': lease } }); setLease(null); }
-      else { const result = await api<{ lease: string }>('/api/control/claim', { method: 'POST' }); setLease(result.lease); }
-      await reload();
-    } catch (failure) { setError((failure as Error).message); }
-    finally { setBusy(false); }
-  }
+  }, [settingsDirty, savedSettings, settingsDraft, canEdit, settingsSaving, saveError, angleValid, reload]);
   async function command(type: 'zone_add' | 'zone_delete') {
     if (!zones || !packet || !canEdit) return;
     setBusy(true); setError('');
     try {
-      const result = await api<{ zones: Zones }>('/api/commands', { method: 'POST', headers: { 'X-Control-Lease': lease! },
+      const result = await api<{ zones: Zones }>('/api/commands', { method: 'POST',
         body: JSON.stringify({ id: crypto.randomUUID(), type, map_id: packet.info.map_id, expected_revision: zones.revision,
           ...(type === 'zone_add' ? { corners: rectangleCorners(draft[0], draft[1], packet.info.display.origin) } : { zone_id: selected }) }) });
       setZones(result.zones); setDraft([]); setDrawing(false); setSelected(null);
@@ -232,10 +201,10 @@ export function App() {
     catch (failure) { setError((failure as Error).message); }
   }
   async function simulationCommand(type: 'navigate' | 'cancel' | 'demo_reset') {
-    if (!zones || !packet || !lease || !connected || (type !== 'cancel' && !canEdit)) return;
+    if (!zones || !packet || !connected || (type !== 'cancel' && !canEdit)) return;
     setBusy(true); setError(''); setDrawing(false); setDraft([]); setLayoutEditing(false);
     try {
-      await api('/api/commands', { method: 'POST', headers: { 'X-Control-Lease': lease },
+      await api('/api/commands', { method: 'POST',
         body: JSON.stringify({ id: crypto.randomUUID(), type, map_id: packet.info.map_id,
           frame: packet.info.frame, expected_revision: zones.revision, ...(type === 'navigate' ? { goal } : {}) }) });
       if (type === 'demo_reset') { setGoalText(['', '', '0']); setFocusRobotVersion(v => v + 1); }
@@ -317,8 +286,6 @@ export function App() {
       <strong className="brand">MYAGV CONTROL</strong><span className="demo-tag">DEMO</span>
       <Button variant="ghost" className="icon" aria-label="Restore default layout" title="Restore default layout" disabled={!canLayout} onClick={resetLayout}><RotateCcw size={16} /></Button>
       <span className={`connection ${connected ? 'online' : ''}`}>{connected ? 'Connected' : 'Offline'}</span>
-      <span className="ownership">{lease ? 'Operator' : 'Observer'}</span>
-      <Button onClick={() => void ownership()} disabled={!connected || busy || (!lease && Boolean(state?.operator_active))}>{lease ? 'Release' : 'Take'}</Button>
       <Button variant="danger" onClick={() => void stop()} className="stop">STOP</Button>
     </header>
     {error && <div role="alert" className="error-bar"><span>{error}</span><Button variant="ghost" className="icon" aria-label="Dismiss error" onClick={() => setError('')}><X size={15} /></Button></div>}
@@ -371,7 +338,7 @@ export function App() {
           disabled={!canLayout || busy} onChange={e => setGoalText(old => old.map((v, n) => n === i ? e.target.value : v))} /></label>)}</div>
         <div className="action-line"><Button variant="default" disabled={!canEdit || !goalValid || !costmapReady || busy}
           onClick={() => void simulationCommand('navigate')}>Simulate</Button><Button variant="default" disabled>Fetch</Button>
-          <Button disabled={!connected || !lease || state?.phase === 'idle' || busy} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
+          <Button disabled={!connected || state?.phase === 'idle' || busy} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
         <div className="section-divider" />
         <span className="subheading">NO-GO ZONES</span>
         <div className="zone-list">{zones?.zones.length ? zones.zones.map((zone, i) => <button key={zone.id}
@@ -433,7 +400,7 @@ export function App() {
               onChange={e => resizePanel(widget.id!, 'h', Number(e.target.value))} /></label></div>)}
           <Button onClick={resetLayout} disabled={!canLayout}>Restore default layout</Button>{layoutError && <span role="alert" className="muted">{layoutError}</span>}
         </div>
-        <footer className="dialog-footer"><span className="muted">{canEdit ? 'Auto-save' : 'Take control to edit'}</span><Button variant="danger" onClick={() => void stop()}>STOP</Button></footer>
+        <footer className="dialog-footer"><span className="muted">{canEdit ? 'Auto-save' : connected ? 'Stop navigation to edit' : 'Offline'}</span><Button variant="danger" onClick={() => void stop()}>STOP</Button></footer>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>
   </div>;

@@ -35,9 +35,9 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
 
 ## Manual acceptance
 
-1. Open the UI yourself. Select **Take** to acquire editing ownership. The lease
-   renews while connected. Closing the operator's WebSocket stops simulation and
-   releases ownership; lease expiry also stops it. Observer disconnects do not.
+1. Open the UI yourself. Editing and simulation are available immediately while
+   connected and stopped. This is a single-user UI. Closing the last UI WebSocket
+   stops simulation; reconnecting never resumes it.
 2. The Demo map loads automatically. Menu > Settings > **Auto-align walls**
    aligns dominant walls. Disable it to enter a manual display angle. Changes
    auto-save after 400 ms; **Saved** requires backend acknowledgement. Retry is
@@ -49,11 +49,11 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
 4. Select a saved zone on the map or in OPERATE, then **Delete**. Rotate the map,
    reload the page and restart `myagv-api`; saved zones should stay in place.
 5. Shared divider handles work immediately while connected and stopped; hover
-   highlights them. No Edit layout or Take is required for resizing. Menu >
+   highlights them. No Edit layout is required for resizing. Menu >
    **Edit layout** unlocks only panel repositioning by title.
    Drag a divider to resize adjacent panels together, or focus it and use arrow keys
    (Shift moves two grid units). Settings W/H inputs adjust the same boundaries.
-   Browser layout editing does not require Take. Resize the window: panels fill
+   Resize the window: panels fill
    the available height; short/narrow windows scroll at minimum content sizes.
 6. The top-toolbar circular-arrow button **Restore default layout** exits maximization
    and restores the four default panels. It also appears in Menu and Settings.
@@ -72,7 +72,7 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
    detour or No path. Goals in walls, unknown cells, zones or clearance are rejected.
    A zone covering the chassis clearance envelope is rejected. Zone edits and
    layout changes are disabled during navigation. Delete the zone and retry.
-10. Try **Cancel**, STOP, Release and closing the operator tab during simulation.
+10. Try **Cancel**, STOP and closing the last UI tab during simulation.
     They clear navigation without moving on reconnect. MAP > More > **Reset demo
     pose** restores a safe start; service restart re-applies zones before simulation.
 
@@ -94,7 +94,7 @@ simulation grid and applied zone revision. Both preserve source origin/frame.
 coordinates. Small `telemetry` WebSocket messages update pose/path without
 reloading the raster or resetting map pan/zoom.
 
-Backend JSON uses atomic writes and one writer lock; observers cannot modify it.
+Backend JSON uses atomic writes, one writer lock and revision checks.
 Runtime data and dependencies are ignored by Git. Invalid saved data fails startup
 instead of silently replacing it. Credentials are not stored by this milestone.
 
@@ -117,7 +117,7 @@ npm --prefix web test
 ```
 
 These check map/chassis geometry, conservative zone rasterization, inflation,
-detour/no-path/deletion, simulated arrival, API guards/STOP/disconnect/release,
-edits/persistence/revisions/ownership and frontend types/build.
+detour/no-path/deletion, simulated arrival, API guards/STOP/cancel/disconnect,
+direct edits/persistence/revisions and frontend types/build.
 HTTP, PNG, static asset and WebSocket smoke checks passed for both
 PM2 services. Browser visual/interaction checks are deliberately left to the user.

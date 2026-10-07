@@ -6,9 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
-import secrets
 import tempfile
-import time
 import uuid
 from urllib.parse import urlsplit
 
@@ -61,8 +59,6 @@ class Editor:
             validate_rectangle(zone['corners'], self.grid)
         self.detected = dominant_angle(self.grid)
         self.metadata, self.png = render_map(self.grid, self.settings['values'], self.settings['revision'], self.detected)
-        self.lease = None
-        self.expires = 0
         self.sockets = set()
         self.lock = asyncio.Lock()
         self.replies = {}  # Bounded retry cache; duplicate command IDs never add another zone.
@@ -72,15 +68,8 @@ class Editor:
     def state(self):
         return dict(robot_id='local-demo', demo=True, phase=self.sim.phase, motion_available=False,
                     simulation_available=True, cameras_available=False, localization_available=False,
-                    zone_enforcement='simulated-global', operator_active=bool(self.lease and time.monotonic() < self.expires),
+                    zone_enforcement='simulated-global',
                     navigation=self.sim.telemetry())
-
-    def leased(self, request):
-        return self.lease and time.monotonic() < self.expires and secrets.compare_digest(request.headers.get('X-Control-Lease', ''), self.lease)
-
-    def require_lease(self, request):
-        if not self.leased(request):
-            raise web.HTTPForbidden(text='Operator lease required')
 
     async def emit(self, kind):
         for socket in tuple(self.sockets):
@@ -92,9 +81,8 @@ class Editor:
                     await asyncio.wait_for(socket.send_json(message), .2)
                 except (ConnectionError, asyncio.TimeoutError):
                     self.sockets.discard(socket)
-                    if socket.operator_lease and socket.operator_lease == self.lease:
+                    if not self.sockets:
                         self.sim.stop('Telemetry unavailable')
-                        self.lease, self.expires = None, 0
                     with suppress(ConnectionError, asyncio.TimeoutError):
                         await asyncio.wait_for(socket.close(code=1001, drain=False), .2)
 
@@ -167,51 +155,25 @@ def create_app(directory=ROOT / 'web_runtime'):
             return web.json_response(editor.settings)
         data = await request.json()
         async with editor.lock:
-            editor.require_lease(request)
             if data['expected_revision'] != editor.settings['revision']:
                 raise web.HTTPConflict(text='Settings changed; reload before editing')
             values = validate_settings(data['values'])
             saved = dict(revision=editor.settings['revision'] + 1, values=values)
             metadata, png = await asyncio.to_thread(render_map, editor.grid, values, saved['revision'], editor.detected)
-            # The thread yielded; recheck ownership before committing a shared edit.
-            editor.require_lease(request)
             atomic_json(editor.directory / 'settings.json', saved)
             editor.settings, editor.metadata, editor.png = saved, metadata, png
         await editor.emit('settings')
         return web.json_response(saved)
 
-    async def control(request):
-        async with editor.lock:
-            action = request.match_info['action']
-            if action == 'claim':
-                if editor.lease and time.monotonic() < editor.expires:
-                    raise web.HTTPConflict(text='Another operator owns editing')
-                if editor.lease:
-                    editor.sim.stop('Lease expired')
-                editor.lease = secrets.token_urlsafe(32)
-            else:
-                editor.require_lease(request)
-            if action == 'release':
-                editor.sim.stop('Ownership released')
-                editor.lease, editor.expires = None, 0
-                reply = dict(released=True)
-            else:
-                editor.expires = time.monotonic() + 30
-                reply = dict(lease=editor.lease, expires_in_s=30)
-        await editor.emit('state')
-        return web.json_response(reply)
-
     async def commands(request):
         data = await request.json()
         async with editor.lock:
-            editor.require_lease(request)
             command_id = data['id']
             if not isinstance(command_id, str) or not 1 <= len(command_id) <= 100:
                 raise ValueError('Invalid command ID')
-            cache_key = (editor.lease, command_id)
             fingerprint = json.dumps(data, sort_keys=True, allow_nan=False)
-            if cache_key in editor.replies:
-                old, reply = editor.replies[cache_key]
+            if command_id in editor.replies:
+                old, reply = editor.replies[command_id]
                 if old != fingerprint:
                     raise web.HTTPConflict(text='Command ID reused with different arguments')
                 return web.json_response(reply)
@@ -233,7 +195,6 @@ def create_app(directory=ROOT / 'web_runtime'):
                     editor.sim.phase, editor.sim.status = 'planning', 'Planning'
                     try:
                         path = await asyncio.to_thread(plan_path, editor.sim.costmap, dict(editor.sim.pose), goal)
-                        editor.require_lease(request)
                         if generation != editor.sim.generation:
                             raise web.HTTPConflict(text='Navigation cancelled while planning')
                         editor.sim.start(goal, path)
@@ -245,7 +206,7 @@ def create_app(directory=ROOT / 'web_runtime'):
                 raise web.HTTPBadRequest(text='Unsupported Demo command')
             if kind in ('navigate', 'cancel', 'demo_reset'):
                 reply = dict(id=command_id, status='running' if kind == 'navigate' else 'completed', navigation=editor.sim.telemetry())
-                editor.replies[cache_key] = fingerprint, reply
+                editor.replies[command_id] = fingerprint, reply
                 if len(editor.replies) > 200:
                     del editor.replies[next(iter(editor.replies))]
                 await editor.emit('telemetry')
@@ -263,13 +224,12 @@ def create_app(directory=ROOT / 'web_runtime'):
                     raise web.HTTPNotFound(text='Zone not found')
             saved = dict(map_id=editor.grid['map_id'], revision=editor.zones['revision'] + 1, zones=current)
             navigation, global_grid = await asyncio.to_thread(editor.sim.rebuild, saved, False)
-            editor.require_lease(request)
             atomic_json(editor.directory / 'no_go_zones.json', saved)
             editor.zones = saved
             editor.sim.navigation, editor.sim.costmap, editor.sim.revision = navigation, global_grid, saved['revision']
             editor.sim.goal = None
             reply = dict(id=command_id, status='completed', zones=saved, enforcement='simulated-global')
-            editor.replies[cache_key] = fingerprint, reply
+            editor.replies[command_id] = fingerprint, reply
             if len(editor.replies) > 200:
                 del editor.replies[next(iter(editor.replies))]
         await editor.emit('zones')
@@ -282,25 +242,16 @@ def create_app(directory=ROOT / 'web_runtime'):
 
     async def events(request):
         socket = web.WebSocketResponse(heartbeat=20)
-        socket.operator_lease = None
         await socket.prepare(request)
         editor.sockets.add(socket)
         await socket.send_json(dict(type='state'))
         try:
-            async for message in socket:
-                if message.type == web.WSMsgType.TEXT:
-                    try:
-                        data = json.loads(message.data)
-                        token = data.get('lease')
-                        if data.get('type') == 'operator' and isinstance(token, str) and editor.lease and time.monotonic() < editor.expires and secrets.compare_digest(token, editor.lease):
-                            socket.operator_lease = token
-                    except (ValueError, AttributeError):
-                        pass
+            async for _ in socket:
+                pass
         finally:
             editor.sockets.discard(socket)
-            if socket.operator_lease and socket.operator_lease == editor.lease:
-                editor.sim.stop('Operator disconnected')
-                editor.lease, editor.expires = None, 0
+            if not editor.sockets:
+                editor.sim.stop('UI disconnected')
                 await editor.emit('telemetry')
         return socket
 
@@ -308,21 +259,17 @@ def create_app(directory=ROOT / 'web_runtime'):
         for socket in tuple(editor.sockets):
             await socket.close(code=1001, message=b'Service stopping')
 
-    async def lease_watch(application):
-        async def expire():
+    async def simulation_tick(application):
+        async def advance():
             while True:
                 await asyncio.sleep(.1)
                 async with editor.lock:
-                    expired = bool(editor.lease and time.monotonic() >= editor.expires)
-                    if expired:
-                        editor.sim.stop('Lease expired')
-                        editor.lease, editor.expires = None, 0
                     running = editor.sim.phase == 'running'
                     if running:
                         editor.sim.advance(.1)
-                if expired or running:
+                if running:
                     await editor.emit('telemetry')
-        task = asyncio.create_task(expire())
+        task = asyncio.create_task(advance())
         yield
         task.cancel()
         with suppress(asyncio.CancelledError):
@@ -348,13 +295,12 @@ def create_app(directory=ROOT / 'web_runtime'):
     app.router.add_get('/api/global-costmap.png', costmap_image)
     app.router.add_get('/api/settings', settings)
     app.router.add_put('/api/settings', settings)
-    app.router.add_post('/api/control/{action:claim|renew|release}', control)
     app.router.add_post('/api/commands', commands)
     app.router.add_post('/api/stop', stop)
     app.router.add_get('/api/events', events)
     app.router.add_get('/{path:.*}', static)
     app.on_shutdown.append(shutdown)
-    app.cleanup_ctx.append(lease_watch)
+    app.cleanup_ctx.append(simulation_tick)
     return app
 
 

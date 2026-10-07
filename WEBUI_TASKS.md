@@ -4,7 +4,7 @@ Scope: development Mac, no ROS or hardware control. Read the cited plan section
 before each task. Manage running services with PM2. Do not open a browser for QA.
 
 - [x] Backend and PM2 setup — plan sections 4 and 6. One Python API, same-origin
-  static serving, development proxy, Demo status, persisted JSON and edit lease.
+  static serving, development proxy, Demo status and persisted JSON for a single user.
 - [x] Test map and auto-alignment — section 3, Leaflet map rendering. Generate a
   small rotated occupancy map; show an aligned derived raster without changing
   map coordinates. Manual angle fallback; resizing preserves the map.
@@ -38,7 +38,7 @@ was opened. PM2 processes: `myagv-api` (8791), `myagv-web` (5173).
 - [ ] Preview a goal, Simulate, check outline/heading/glow/path and arrival yaw.
 - [ ] Enable Global costmap; check zone detour/no-path, blocked goals and zone deletion.
 - [ ] Check robot-overlapping zone rejection and no edits during navigation.
-- [ ] Cancel/STOP/Release/close operator tab; check no route resumes on reconnect.
+- [ ] Cancel/STOP/close last UI tab; check no route resumes on reconnect.
 
 ## Deferred robot integration
 

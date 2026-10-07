@@ -45,7 +45,7 @@ Do not label the existing CLI sequence as visually aligned.
 
 ```text
 +--------------------------------------------------------------------------+
-| [Menu] MYAGV CONTROL   Connection   Observer/Operator   [Take] [STOP]      |
+| [Menu] MYAGV CONTROL   Connection                              [STOP]      |
 +-------------------------------+---------------------+--------------------+
 | MAP                           | FRONT CAMERA        | OPERATE            |
 | Robot / goal / path           | Live view           | Target + item list |
@@ -63,7 +63,7 @@ Do not label the existing CLI sequence as visually aligned.
 | ARM CAMERA | Downward live view; calibrated target/gripper overlay when valid; pixel-only overlay otherwise | 280 × 180px |
 | OPERATE | Compact item rows with thumbnail/name, target field, task actions, mode-specific controls and current task phase/blocking reason | 280 × 360px |
 
-Keep STOP and ownership outside the grid, visible in dialogs, maximized views and
+Keep STOP outside the grid, visible in dialogs, maximized views and
 mobile layouts. No separate STATIONS, TASK, EVENTS, chat, service-status or analytics
 panels. Station teaching belongs in OPERATE; diagnostics belong in Details.
 
@@ -124,8 +124,8 @@ Use 12 columns below 1168px and one column below 640px.
 
 Show slim divider handles between adjacent panels, matching the memory-live
 workspace: centered gray bars, cyan hover/focus, horizontal and vertical cursors.
-Divider handles are enabled whenever connected and stopped, without Edit layout
-or robot ownership. Hover/focus feedback must be available in the default workspace.
+Divider handles are enabled whenever connected and stopped, without Edit layout.
+Hover/focus feedback must be available in the default workspace.
 Dragging a divider resizes both sides while preserving the outer boundary and
 minimum sizes. Arrow keys move the focused divider; Shift moves two grid units.
 Settings W/H inputs adjust the same shared boundaries. Edit layout unlocks only
@@ -134,14 +134,14 @@ camera/map gestures never drag a panel. Maximize/restore reuses existing panels.
 The top toolbar provides Restore default layout, also available in Menu/Settings.
 Reset exits maximization, restores default proportions at the current breakpoint
 and overwrites the saved browser layout. Layout editing is locked during operation;
-unlock only while stopped. Browser-local layout changes do not require robot ownership.
+unlock only while stopped.
 
 Save validated geometry and visibility in browser localStorage, scoped to robot
 identity and layout version; never store robot state, credentials or panel HTML.
 Unknown panel IDs/invalid dimensions restore defaults. ResizeObserver updates map
 and video bounds without resetting camera sessions, selection or control state.
 Use two columns when space permits and one column/view tabs on phones; preserve
-camera aspect ratio, vertical scrolling and persistent STOP/ownership.
+camera aspect ratio, vertical scrolling and persistent STOP.
 
 ### Leaflet map rendering
 
@@ -161,7 +161,7 @@ roslibjs, rosbridge or 3D renderer.
   execution goal. Observation markers remain distinct from measured item positions.
 - **Interaction:** pan/zoom, Fit map/robot, select a marker to load its item/photo,
   click to preview a goal, then set heading through an input or directional drag.
-  Provide keyboard equivalents. Execute goes through the backend command/lease
+  Provide keyboard equivalents. Execute goes through the backend command
   checks; clicking or dragging never sends a navigation goal automatically.
 - **Resize:** call `map.invalidateSize({pan: false})` from ResizeObserver after
   GridStack resizing, maximize/restore or revealing a hidden panel. Preserve the
@@ -207,7 +207,7 @@ minimum release. If drag-to-draw and resize handles become necessary,
 [Leaflet.draw](https://leaflet.github.io/Leaflet.draw/docs/leaflet-draw-latest.html)
 provides rectangle drawing/editing/deletion; enable only those tools.
 
-- **UI:** one No-go action in MAP's More menu. While stopped with an operator lease,
+- **UI:** one No-go action in MAP's More menu. While connected and stopped,
   select two opposite corners, preview a translucent red rectangle, then Save or
   Cancel. Select a saved zone to Delete; changing it means delete/redraw. Escape
   cancels selection; provide coordinate inputs for keyboard use. Zone selection
@@ -217,7 +217,7 @@ provides rectangle drawing/editing/deletion; enable only those tools.
   all corners through the existing transform, not just screen bounds. Rectangles
   are aligned to the display grid when drawn; use core `L.polygon` to redisplay
   their stored geometry if the grid orientation changes. Backend validates finite,
-  nondegenerate rectangles within map bounds, lease, map and expected zone revision.
+  nondegenerate rectangles within map bounds, map and expected zone revision.
   Reject edits covering the current robot footprint; edit only while idle/stopped.
   Persist atomically; a map identity change requires explicit zone review/rebinding.
 - **Enforcement:** the same backend publishes a latched derived OccupancyGrid on
@@ -266,7 +266,7 @@ and publishes its actual remaining path. This is a local acceptance harness;
 production still uses ROS1 move_base, not this planner. Provide an optional costmap
 overlay in MAP's More menu. Applied zone revision must match before simulation.
 Reject blocked goals, zones overlapping the robot clearance envelope, and zone
-edits during a task. STOP/cancel, ownership release/expiry or controlling socket
+edits during a task. STOP/cancel or the last UI socket
 disconnect clears the route; reconnect never resumes it. Simulated pose is runtime
 state, not persisted localization. No-go persistence re-applies before simulation
 after restart. Global/local ROS costmap enforcement remains a hardware milestone.
@@ -277,7 +277,7 @@ the authentication/TLS deployment for remote robot control.
 ```text
 Browser: four panels + input
     | same-origin HTTPS / WSS / camera streams
-One robot backend: auth + operator lease + watchdog + command/task execution
+One robot backend: auth + watchdog + command/task execution
                    + photo index + alignment geometry + optional skill/API calls
     | existing control helpers, ROS navigation and camera sources
 myAGV + P340 + LiDAR + front/downward cameras
@@ -325,11 +325,11 @@ survey does not automatically generate a coverage route or guarantee visibility
 of every object; supplement missed shelves/tables with selected viewing poses.
 
 - **Motion:** the backend owns one ordered queue and calls `Navigation.go_to()`
-  sequentially. Validate each pose/map/no-go revision, hold the operator lease,
+  sequentially. Validate each pose/map/no-go revision
   and keep the arm in transport posture. Preserve existing arrival/standstill
   checks, so the robot stops at each viewing pose; photos can also be sampled
   during travel between poses. Do not silently loosen arrival checks for speed.
-  Cancel, STOP, lease loss, localization failure, navigation failure or map
+  Cancel, STOP, disconnect, localization failure, navigation failure or map
   identity change cancels the active goal and clears pending motion. No automatic
   restart, simultaneous fetch or second navigation client.
 - **Sampling:** use the existing front-camera source. Save the first valid frame,
@@ -355,18 +355,18 @@ of every object; supplement missed shelves/tables with selected viewing poses.
 
 | Channel | Purpose |
 | --- | --- |
-| `GET /api/state` | Capabilities, limits, measured state, ownership, task phase, stream health, calibration readiness and applied no-go revision/readiness |
+| `GET /api/state` | Capabilities, limits, measured state, task phase, stream health, calibration readiness and applied no-go revision/readiness |
 | `GET /api/map` | Map identity/revision, frame, width/height, resolution in m/cell, origin x/y/yaw with explicit units, and authenticated PNG URL tied to that revision |
 | `GET /api/items`, `/api/stations` | Compact photo index and taught records |
 | `GET /api/no-go-zones` | Active map's saved zone geometry and revision |
-| `POST /api/control/claim`, `/renew`, `/release` | One expiring operator lease; observers cannot edit shared data or move the robot |
-| `GET`, `PUT /api/settings` | Persisted display settings with expected revision; lease required for writes |
+| `GET`, `PUT /api/settings` | Persisted display settings with expected revision |
 | `POST /api/commands` | Typed commands: navigate/fetch, survey start with ordered poses and validated capture thresholds, cancel, home/gripper, teach, photo capture/label, optional resolve, alignment measure/step/confirm, zone add/delete with expected revision |
 | `POST /api/stop` | Priority stop/cancel with confirmed or unconfirmed result |
-| `WSS /api/events` | State changes, map/zone revision and application notifications, map-frame robot pose/planner path with timestamps, and ordered, expiring leased manual input |
+| `WSS /api/events` | State changes, map/zone revision and application notifications, map-frame robot pose/planner path with timestamps, and ordered, expiring manual input |
 | Authenticated camera/image URLs | Two live streams and index photos; separate from control WebSocket |
 
-Commands carry an ID, lease and bounded typed arguments. Distinguish accepted,
+The UI serves one user; editing and commands require no ownership handshake.
+Commands carry an ID and bounded typed arguments. Distinguish accepted,
 running and completed/failed; deduplicate requests and reject stale/out-of-order
 manual inputs. Map goals include frame/map identity, units and heading. Start with
 existing camera transport or MJPEG on the trusted LAN/VPN; measure frame age before
@@ -375,7 +375,7 @@ considering WebRTC. Never send base64 video through the control channel.
 Use authenticated same-origin access over HTTPS or a trusted VPN; validate WebSocket
 Origin/CSRF boundaries. The server watchdog stops motion on expired input even if
 the browser sends no cleanup. Initial input timeout must be no looser than existing
-0.6-second teleop behavior. Blur, hidden tab, pointer cancellation, mode/lease loss
+0.6-second teleop behavior. Blur, hidden tab, pointer cancellation, mode change
 and disconnect stop manual input; reconnect never resumes it.
 
 Stale required pose/video blocks affected actions. STOP cancels navigation and
@@ -437,7 +437,7 @@ to be calibrated stereo.
 
 1. Four-panel frontend mock, theme, responsive layout and persisted resize/drag;
    persistent Demo indication. No fake hardware state.
-2. One backend: read-only map/state, both cameras, lease/watchdog/STOP, manual
+2. One backend: read-only map/state, both cameras, watchdog/STOP, manual
    modes and measured teaching. Attach photos to stations; manually label/select.
 3. Reuse navigation/fetch stages with a stopped manual alignment/grasp gate and
    startup return behavior. Add persisted no-go rectangles and global/local costmap
@@ -454,7 +454,7 @@ Local milestone delivered in `web/`, `web_backend/` and `ecosystem.config.cjs`.
 PM2 serves development UI on loopback port 5173 and the backend/built frontend on
 8791. The synthetic OccupancyGrid deliberately has rotated walls and nonzero
 origin/yaw. Necessary automated checks cover coordinate transforms, PNG loading,
-zone/settings validation and restart persistence, lease/revision conflicts,
+zone/settings validation and restart persistence, revision conflicts,
 simulation rasterization/inflation/detours/no-path/arrival/cancellation, chassis
 geometry, frontend build and HTTP/WebSocket access. Simulated global costmaps
 do not claim ROS global/local enforcement. No browser QA was performed; see
@@ -480,13 +480,13 @@ Acceptance for implementation:
 - [ ] Item photo/map/station links survive restart; map mismatch/unknown item
   cannot trigger fetch. No observation pose displayed as a measured object pose.
 - [ ] Survey reuses ROS1 navigation with one active goal; ordered viewing poses
-  respect no-go zones. Cancel/STOP/lease loss/failure clears the queue without restart.
+  respect no-go zones. Cancel/STOP/disconnect/failure clears the queue without restart.
 - [ ] Keyframes follow configured distance/heading thresholds, including angle
   wraparound. Delayed images use acquisition-time TF; stale/missing transforms
   produce no false pose binding. Storage/model work cannot block motion stopping.
 - [ ] Manual fallback works without a model key; skills cannot bypass validation.
-- [ ] Blur/disconnect/lease expiry and missing browser cleanup stop input;
-  duplicates and competing controllers cannot issue extra movement.
+- [ ] Blur/disconnect/input expiry and missing browser cleanup stop input;
+  duplicate requests cannot issue extra movement.
 - [ ] Stale data and unknown Z block relevant actions; alignment uses calibrated
   measured steps and bounded retries, never an invented height or success badge.
 - [ ] Teaching saves measured poses; transport posture gates chassis movement;
