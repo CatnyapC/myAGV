@@ -130,9 +130,14 @@ commands positive motion on either logical axis. The SDK receives native +Y for
 logical X+, and native -X for logical Y+; images retain their mounted orientation.
 
 Import and photo/item editing open as a child page inside OPERATE. The upper-left
-back arrow returns to its main controls. Save item & capture both cameras records
-the current, operator-positioned correct grasp without moving the robot. It needs
-an idle, localized robot and homed arm. New items are saved before acquisition.
+back arrow returns to its main controls. First manually grasp the item and use
+Save current grasp Z to record only the measured arm Z coordinate, in millimeters,
+as `grasp_z_mm` on the item. Then release the item in place, return to OPERATE and
+raise the arm above that height to the alignment position before saving both
+camera views. The item editor explains this clearance step between the buttons.
+New goal capture requires a recorded grasp height. These actions need an idle,
+localized robot and homed arm. New items are saved before acquisition. Height
+recording does not move the arm or add automatic vertical motion to Fetch.
 The paired goal photos remain in the photo index with a compressed JPEG copy for
 LLM input. Deleting or reassigning either goal photo invalidates that item's goal.
 

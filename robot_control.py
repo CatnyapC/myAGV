@@ -634,6 +634,15 @@ class Control:
         elif kind == 'capture':
             self.robot.nav.wait_stopped()
             return self.capture(packet['camera_id'])
+        elif kind == 'capture_grasp_height':
+            self.require_arm()
+            self.robot.nav.wait_stopped()
+            wait_arm(self.arm, timeout=3)
+            with arm_deadline(.4):
+                coords = self.arm.get_coords_info()
+            if not coords or len(coords) < 3:
+                raise RuntimeError('Arm coordinate feedback unavailable')
+            return dict(grasp_z_mm=number(coords[2], *LIMITS['Z'], 'Arm Z feedback'))
         elif kind == 'capture_grasp_goal':
             self.require_arm()
             self.robot.nav.wait_stopped()

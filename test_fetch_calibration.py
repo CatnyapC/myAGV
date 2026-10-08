@@ -21,6 +21,15 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
+    def test_grasp_height_records_only_measured_z_without_motion_or_capture(self):
+        c = fake_control()
+        c.arm.get_coords_info.return_value = [111, 222, 12.5]
+        with patch('robot_control.wait_arm'), patch('robot_control.arm_deadline', return_value=nullcontext()):
+            self.assertEqual(c.execute(dict(type='capture_grasp_height')), dict(grasp_z_mm=12.5))
+        c.capture.assert_not_called()
+        c.arm.set_coords.assert_not_called()
+        c.arm.set_angles.assert_not_called()
+
     def test_mapping_limits_validation_and_compression(self):
         self.assertEqual(alignment_command({'x_mm': 2, 'y_mm': 1}, None), {'X': 2, 'Y': 1})
         self.assertEqual(alignment_command({'x_mm': -2, 'y_mm': -1}, None), {'X': -2, 'Y': -1})

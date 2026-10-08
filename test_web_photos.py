@@ -122,6 +122,8 @@ class PhotoAPITest(unittest.IsolatedAsyncioTestCase):
 
             async def capture(command, wait):
                 self.assertTrue(wait)
+                if command['type'] == 'capture_grasp_height':
+                    return dict(grasp_z_mm=12.5)
                 self.assertEqual(command['type'], 'capture_grasp_goal')
                 self.assertEqual(command['expected_revision'], app[EDITOR].zones['revision'])
                 captures = {}
@@ -139,8 +141,20 @@ class PhotoAPITest(unittest.IsolatedAsyncioTestCase):
 
             hardware.command = AsyncMock(side_effect=capture)
             async with TestClient(TestServer(app)) as client:
+                data = dict(item_id=item_id, map_id=grid['map_id'], expected_revision=2, zone_revision=app[EDITOR].zones['revision'])
+                self.assertEqual((await client.post('/api/items/grasp-goal', json=data)).status, 400)
+                hardware.command.assert_not_called()
+                response = await client.post('/api/items/grasp-height', json=data)
+                self.assertEqual(response.status, 200, await response.text())
+                height = await response.json()
+                self.assertEqual(height['items'][0]['grasp_z_mm'], 12.5)
+                self.assertEqual(len(height['photos']), 1)
+                self.assertEqual(PhotoIndex(ui, root / 'stations.json').value['items'][0]['grasp_z_mm'], 12.5)
+                for invalid in (True, float('nan'), '12.5'):
+                    with self.assertRaises(ValueError):
+                        PhotoIndex(ui, root / 'stations.json').save_grasp_height(item_id, invalid, height['revision'])
                 response = await client.post('/api/items/grasp-goal', json=dict(item_id=item_id,
-                    map_id=grid['map_id'], expected_revision=2, zone_revision=app[EDITOR].zones['revision']))
+                    map_id=grid['map_id'], expected_revision=height['revision'], zone_revision=app[EDITOR].zones['revision']))
                 self.assertEqual(response.status, 200, await response.text())
                 result = await response.json()
                 item = result['items'][0]

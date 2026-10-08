@@ -102,6 +102,8 @@ class PhotoIndex:
         for item in value['items']:
             if not isinstance(item.get('name'), str) or not 1 <= len(item['name'].strip()) <= 100 or not isinstance(item.get('appearance'), str) or len(item['appearance']) > 1000:
                 raise ValueError('Invalid item features')
+            if 'grasp_z_mm' in item and (type(item['grasp_z_mm']) not in (int, float) or not math.isfinite(item['grasp_z_mm'])):
+                raise ValueError('Invalid grasp height')
             if 'station_link' in item:
                 link = item['station_link']
                 if not all(isinstance(link.get(k), str) and link[k] for k in ('name', 'map_id', 'digest')):
@@ -274,6 +276,15 @@ class PhotoIndex:
             photo.pop('association_source', None)
         used = {p.get('item_id') for p in value['photos']}
         value['items'] = [i for i in value['items'] if i['id'] in used]
+        self.commit(value)
+
+    def save_grasp_height(self, item_id, z_mm, revision):
+        self.check(revision)
+        value = deepcopy(self.value)
+        item = next((i for i in value['items'] if i['id'] == item_id), None)
+        if item is None:
+            raise ValueError('Save the item before recording its grasp height')
+        item['grasp_z_mm'] = z_mm
         self.commit(value)
 
     def save_grasp_goal(self, item_id, cameras, revision, map_id):

@@ -344,19 +344,26 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
     async def capture_grasp_goal(request):
         data = await request.json()
+        height_only = request.path.endswith('/grasp-height')
         async with photo_lock:
             photo_stopped()
             if not editor.hardware or data['map_id'] != editor.grid['map_id']:
                 raise ValueError('Live hardware on the current map required for grasp goals')
             photos.check(data['expected_revision'])
-            if not any(i['id'] == data['item_id'] for i in photos.value['items']):
+            item = next((i for i in photos.value['items'] if i['id'] == data['item_id']), None)
+            if item is None:
                 raise ValueError('Save the item before recording its grasp goal')
-            if len(photos.value['photos']) > 998:
+            if not height_only and 'grasp_z_mm' not in item:
+                raise ValueError('Record the grasp height before saving alignment camera views')
+            if not height_only and len(photos.value['photos']) > 998:
                 raise ValueError('Photo index needs space for both grasp goal images')
-            command = {**data, 'type': 'capture_grasp_goal', 'expected_revision': data['zone_revision']}
+            command = {**data, 'type': 'capture_grasp_height' if height_only else 'capture_grasp_goal', 'expected_revision': data['zone_revision']}
             result = await editor.hardware.command(command, wait=True)
-            cameras = {camera: (await ingest_capture(result['captures'][camera]))['id'] for camera in ('front', 'arm')}
-            await asyncio.to_thread(photos.save_grasp_goal, data['item_id'], cameras, photos.value['revision'], editor.grid['map_id'])
+            if height_only:
+                await asyncio.to_thread(photos.save_grasp_height, data['item_id'], result['grasp_z_mm'], photos.value['revision'])
+            else:
+                cameras = {camera: (await ingest_capture(result['captures'][camera]))['id'] for camera in ('front', 'arm')}
+                await asyncio.to_thread(photos.save_grasp_goal, data['item_id'], cameras, photos.value['revision'], editor.grid['map_id'])
         await editor.emit('photos')
         return web.json_response(await asyncio.to_thread(photos.snapshot, editor.grid['map_id']))
 
@@ -823,6 +830,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app.router.add_post('/api/photos/reference', reference_upload)
     app.router.add_post('/api/photos/capture', capture_photo)
     app.router.add_post('/api/items/grasp-goal', capture_grasp_goal)
+    app.router.add_post('/api/items/grasp-height', capture_grasp_goal)
     app.router.add_patch('/api/photos/{id}', photo_edit)
     app.router.add_delete('/api/photos/{id}', photo_edit)
     app.router.add_get('/api/photos/{id}/image', photo_image)

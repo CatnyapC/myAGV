@@ -31,7 +31,7 @@ async function normalizedPng(file: File): Promise<Blob> {
 
 export function PhotoEditor(props: {
   photo: Photo | null; index: PhotoIndex; stations: Stations; enabled: boolean; autoDescribe: boolean;
-  goalCaptureEnabled: boolean; onCaptureGoal: (itemId: string, revision: number) => Promise<PhotoIndex>;
+  goalCaptureEnabled: boolean; onCaptureGoal: (itemId: string, revision: number, step: 'height' | 'goal') => Promise<PhotoIndex>;
   onClose: () => void; onChange: (index: PhotoIndex, addedId?: string) => void; onBusy: (value: boolean) => void; onStop: () => void;
 }) {
   const currentItem = props.index.items.find(i => i.id === props.photo?.item_id);
@@ -64,7 +64,7 @@ export function PhotoEditor(props: {
     });
     return () => { controller.abort(); setBusy(false); props.onBusy(false); };
   }, [describeRequested, props.photo?.id, props.enabled]);
-  async function mutate(remove = false, graspGoal = false) {
+  async function mutate(remove = false, record?: 'height' | 'goal') {
     if (!props.enabled || busy) return;
     setBusy(true); props.onBusy(true); setError('');
     try {
@@ -79,11 +79,11 @@ export function PhotoEditor(props: {
           body: JSON.stringify({ expected_revision: revision,
             ...(!remove ? { item_id: itemId, name, appearance, station_name: station, confirmed: true, station_confirmed: stationConfirmed } : {}) }) });
         props.onChange(result); setRevision(result.revision);
-        if (graspGoal) {
+        if (record) {
           const savedItemId = result.photos.find(p => p.id === props.photo?.id)?.item_id;
           if (!savedItemId) throw new Error('Save an item before recording its grasp goal');
           setItemId(savedItemId);
-          const captured = await props.onCaptureGoal(savedItemId, result.revision);
+          const captured = await props.onCaptureGoal(savedItemId, result.revision, record);
           props.onChange(captured); setRevision(captured.revision);
         } else props.onClose();
       }
@@ -122,11 +122,16 @@ export function PhotoEditor(props: {
             {stationNeedsConfirmation && props.stations[station] && <><span className="muted">X {props.stations[station].base.x_m.toFixed(2)} m · Y {props.stations[station].base.y_m.toFixed(2)} m · θ {props.stations[station].base.yaw_deg.toFixed(0)}°</span>
               <label className="setting-row">Confirm station<input type="checkbox" checked={stationConfirmed} disabled={!props.enabled || busy} onChange={e => setStationConfirmed(e.target.checked)} /></label></>}
             {editingItem && !['ready', 'none'].includes(editingItem.station_status) && <span className="muted">Station link {editingItem.station_status}</span>}
-            <div className="section-divider" /><span className="subheading">CORRECT GRASP GOAL</span>
-            <span className="muted">Position the gripper correctly for this item, then save both camera views.</span>
+            <div className="section-divider" /><span className="subheading">1. GRASP HEIGHT</span>
+            <span className="muted">Manually grasp this item, then record the current arm Z coordinate.</span>
             <Button disabled={!props.enabled || !props.goalCaptureEnabled || busy || !name.trim() || (stationNeedsConfirmation && !stationConfirmed)}
-              onClick={() => void mutate(false, true)}><Camera size={15} />Save item & capture both cameras</Button>
-            <span className="muted">{editingItem?.grasp_goal_ready ? 'Correct-grasp views saved.' : editingItem?.grasp_goal ? 'Saved views unavailable; capture both cameras again.' : 'No grasp goal saved yet.'}</span>
+              onClick={() => void mutate(false, 'height')}>Save current grasp Z</Button>
+            <span className="muted">{editingItem?.grasp_z_mm != null ? `Grasp Z saved: ${editingItem.grasp_z_mm.toFixed(1)} mm` : 'Grasp height not recorded yet.'}</span>
+            <span className="muted">Next, return to OPERATE controls, release the item in place, and raise the arm to the alignment position above the saved grasp height so adjustments will not knock over the item. Then return here to save both camera views.</span>
+            <span className="subheading">2. ALIGNMENT CAMERA GOAL</span>
+            <Button disabled={!props.enabled || !props.goalCaptureEnabled || busy || !name.trim() || editingItem?.grasp_z_mm == null || (stationNeedsConfirmation && !stationConfirmed)}
+              onClick={() => void mutate(false, 'goal')}><Camera size={15} />Save item & capture both cameras</Button>
+            <span className="muted">{editingItem?.grasp_goal_ready ? 'Alignment views saved.' : editingItem?.grasp_goal ? 'Saved views unavailable; capture both cameras again.' : 'No alignment goal saved yet.'}</span>
             {editingItem?.grasp_goal && <div className="grasp-goal-views">{(['front', 'arm'] as const).map(camera => {
               const goalPhoto = props.index.photos.find(p => p.id === editingItem.grasp_goal?.[camera]);
               return goalPhoto?.available && <figure key={camera}><img src={goalPhoto.image_url} alt={`${camera} correct grasp goal`} /><figcaption>{camera.toUpperCase()} GOAL</figcaption></figure>;

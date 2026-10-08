@@ -367,10 +367,10 @@ export function App() {
     if (photoMode) setMaximized(current => current && current !== 'operate' ? 'operate' : current);
   }, [photoMode]);
 
-  async function captureGraspGoal(itemId: string, revision: number) {
+  async function captureGraspGoal(itemId: string, revision: number, step: 'height' | 'goal') {
     if (!packet || !zones) throw new Error('Current map unavailable');
     await controlReady();
-    return api<PhotoIndex>('/api/items/grasp-goal', { method: 'POST', body: JSON.stringify({
+    return api<PhotoIndex>(`/api/items/grasp-${step}`, { method: 'POST', body: JSON.stringify({
       id: commandId(), item_id: itemId, session_id: session.current, stop_epoch: state?.hardware?.stop_epoch,
       map_id: packet.info.map_id, expected_revision: revision, zone_revision: zones.revision,
     }) });
