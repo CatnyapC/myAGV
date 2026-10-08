@@ -289,6 +289,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     async def state(request):
         return web.json_response(editor.state())
 
+    async def battery(request):
+        return web.json_response(editor.hardware.battery() if editor.hardware else None, headers={'Cache-Control': 'no-store'})
+
     async def map_info(request):
         return web.json_response(editor.metadata)
 
@@ -624,6 +627,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         return web.FileResponse(editor.hardware.directory / f'{camera_id}.jpg', headers={'Cache-Control': 'no-store'})
 
     app.router.add_get('/api/state', state)
+    app.router.add_get('/api/battery', battery)
     app.router.add_get('/api/items', photo_index)
     app.router.add_post('/api/resolve', resolve)
     app.router.add_get('/api/stations', stations)

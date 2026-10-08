@@ -6,6 +6,7 @@ import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu,
 import { MapView, rectangleCorners } from './MapView';
 import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
+import { BatteryStatus } from './BatteryStatus';
 import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
 import { HardwareControls, MapUpdateControls, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
@@ -417,6 +418,7 @@ export function App() {
 
   return <div className="dark app">
     <header className="topbar">
+      <BatteryStatus />
       <Dropdown.Root><Dropdown.Trigger asChild><Button variant="ghost" className="icon" aria-label="Open navigation"><Menu size={18} /></Button></Dropdown.Trigger>
         <Dropdown.Portal><Dropdown.Content className="menu" align="start" sideOffset={6}>
           <Dropdown.Item className="menu-item" onSelect={() => { setSettingsOpen(true); }}><Settings2 size={16} /> Settings</Dropdown.Item>

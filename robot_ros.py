@@ -30,6 +30,7 @@ class RobotROS:
         from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
         from nav_msgs.msg import OccupancyGrid, Path
         from sensor_msgs.msg import LaserScan
+        from std_msgs.msg import Float32
 
         self.ros, self.directory = rospy, directory
         self.Twist, self.InitialPose = Twist, PoseWithCovarianceStamped
@@ -51,6 +52,7 @@ class RobotROS:
         self.costmap_saved = 0
         self.map_saved = None
         self.scan = None
+        self.battery = None
         self.path = []
         self.path_at = 0
         self.velocity = (0, 0, 0)
@@ -65,6 +67,7 @@ class RobotROS:
         self.subscribers = [
             rospy.Subscriber('/myagv/input_vel', Twist, self.receive_velocity, queue_size=1),
             rospy.Subscriber('/scan', LaserScan, self.receive_scan, queue_size=1),
+            rospy.Subscriber('/myagv/battery_voltage', Float32, self.receive_battery, queue_size=1),
             rospy.Subscriber('/move_base/GlobalPlanner/plan', Path, self.receive_path, queue_size=1),
         ]
         for name in ('global', 'local'):
@@ -90,6 +93,9 @@ class RobotROS:
         filtered = deepcopy(message)
         filtered.ranges = filter_scan(message, self.control.config.get('small_obstacle_m', .15) if self.control else .15)
         self.filtered_scan.publish(filtered)
+
+    def receive_battery(self, message):
+        self.battery = dict(voltage_v=message.data, stamp_s=time.time()) if math.isfinite(message.data) and 0 < message.data <= 25.5 else None
 
     def receive_path(self, message):
         if message.header.frame_id == 'map':

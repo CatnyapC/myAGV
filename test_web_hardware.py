@@ -13,6 +13,29 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class HardwareTest(unittest.IsolatedAsyncioTestCase):
+    async def test_battery_endpoint_rejects_stale_or_invalid_feedback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bridge = root / 'ros'
+            atomic_json(bridge / 'map.json', {**demo_map(), 'map_id': 'ros-test'})
+            async with TestClient(TestServer(create_app(root / 'ui', hardware_dir=bridge))) as client:
+                hardware = client.server.app[EDITOR].hardware
+                now = time.time()
+                battery = dict(voltage_v=12.3, stamp_s=now)
+                hardware.snapshot = dict(stamp_s=now, battery=battery)
+                response = await client.get('/api/battery')
+                self.assertEqual(await response.json(), battery)
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+                for invalid in (None, [], {}, dict(voltage_v=12.3, stamp_s=now - 6),
+                                dict(voltage_v=12.3, stamp_s=now + 10),
+                                *(dict(voltage_v=v, stamp_s=now) for v in (0, -1, 26, True, '12', float('nan'), float('inf')))):
+                    hardware.snapshot = dict(stamp_s=now, battery=invalid)
+                    self.assertIsNone(await (await client.get('/api/battery')).json())
+                hardware.snapshot = dict(stamp_s=now - 3, battery=battery)
+                self.assertIsNone(await (await client.get('/api/battery')).json())
+            async with TestClient(TestServer(create_app(root / 'demo'))) as client:
+                self.assertIsNone(await (await client.get('/api/battery')).json())
+
     async def test_stop_recovery_waits_for_feedback_and_reports_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -146,6 +146,15 @@ class Hardware:
             raise RuntimeError('ROS costmap stale or revision pending')
         return grid
 
+    def battery(self):
+        battery = self.snapshot.get('battery')
+        if not self.fresh(self.snapshot.get('stamp_s')) or not isinstance(battery, dict) or not self.fresh(battery.get('stamp_s'), 5):
+            return None
+        voltage = battery.get('voltage_v')
+        if type(voltage) not in (int, float) or not math.isfinite(voltage) or not 0 < voltage <= 25.5:
+            return None
+        return dict(voltage_v=voltage, stamp_s=battery['stamp_s'])
+
     def telemetry(self, grid):
         current = self.fresh(self.snapshot.get('stamp_s'))
         pose = self.snapshot.get('pose') if current and self.fresh(self.snapshot.get('pose_stamp_s')) and self.snapshot.get('frame') == grid['frame'] and self.snapshot.get('map_id') == grid['map_id'] else None
