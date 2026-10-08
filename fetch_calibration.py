@@ -52,7 +52,8 @@ def position_alignment(positions, config, history):
             raise ValueError('Invalid target image position')
     moves = {}
     for camera, axis in (('arm', 'X'), ('front', 'turn_deg')):
-        error = positions[camera + '_current'] - positions[camera + '_goal']
+        target = positions['arm_goal'] if camera == 'arm' else .5
+        error = positions[camera + '_current'] - target
         limit = config['max_step_mm'] if axis == 'X' else 2
         step = limit * min(1, abs(error) / .05)
         if history and history[-1].get('positions'):

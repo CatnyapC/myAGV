@@ -928,7 +928,7 @@ class Control:
                 raise RuntimeError('Fresh sensors required during fetch alignment')
 
         try:
-            for round_index in range(9):
+            for round_index in range(33):
                 current()
                 self.status = 'Round %d: capturing front and arm cameras' % (round_index + 1)
                 self.robot.nav.wait_stopped()
@@ -957,11 +957,11 @@ class Control:
                     time.sleep(.05)
                 if packet.get('preview') or not any(moves.values()):
                     return
-                if round_index == 8:
-                    raise RuntimeError('Fetch cameras did not converge after 8 corrections')
+                if round_index == 32:
+                    raise RuntimeError('Fetch cameras did not converge after 32 corrections')
                 if moves['turn_deg']:
                     turned += abs(moves['turn_deg'])
-                    if turned > 10:
+                    if turned > 45:
                         raise ValueError('Fetch rotation budget exhausted')
                     current()
                     self.status = 'Aligning left/right with base rotation'

@@ -46,6 +46,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(position_alignment(p, None, []), dict(x_mm=-2, turn_deg=0))
         self.assertEqual(position_alignment(dict(p, arm_current=.8, front_current=.3), None, []), dict(x_mm=2, turn_deg=-2))
         self.assertEqual(position_alignment(dict(p, arm_current=.57), None, []), dict(x_mm=0, turn_deg=0))
+        self.assertEqual(position_alignment(dict(p, arm_current=.56, front_goal=.7), None, []), dict(x_mm=0, turn_deg=0))
+        self.assertEqual(position_alignment(dict(p, arm_current=.56, front_goal=.7, front_current=.7), None, []), dict(x_mm=0, turn_deg=2))
         previous = dict(positions=dict(p, arm_current=.60), commanded=dict(X=2, turn_deg=0))
         self.assertEqual(position_alignment(dict(p, arm_current=.58), None, [previous]), dict(x_mm=2, turn_deg=0))
         for value in (None, True, float('nan'), -0.1, 1.1):
@@ -152,11 +154,11 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             c.arm_step.assert_not_called()
             self.assertFalse(list(c.directory.iterdir()))
             requests.clear()
-            results = iter([{'x_mm': .5, 'turn_deg': 0}] * 8 + [{'x_mm': 0, 'turn_deg': 0}])
+            results = iter([{'x_mm': .5, 'turn_deg': 0}] * 32 + [{'x_mm': 0, 'turn_deg': 0}])
             with patch('robot_control.atomic_json', side_effect=respond):
                 c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
-            self.assertEqual(len(requests), 9)
-            self.assertEqual(c.arm_step.call_count, 8)
+            self.assertEqual(len(requests), 33)
+            self.assertEqual(c.arm_step.call_count, 32)
             self.assertEqual(len(requests[-1]['history']), 2)
             c.arm_step.reset_mock()
             c.turn_fetch.reset_mock()
@@ -166,6 +168,12 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             c.arm_step.assert_not_called()
             c.turn_fetch.assert_not_called()
             self.assertTrue(requests[-1]['preview'])
+            results = iter([{'x_mm': 0, 'turn_deg': 2}] * 22 +
+                           [{'x_mm': 0, 'turn_deg': 1}, {'x_mm': 0, 'turn_deg': .1}])
+            with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'rotation budget'):
+                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
+            self.assertEqual(sum(abs(entry.args[0]) for entry in c.turn_fetch.call_args_list), 45)
+            c.arm_step.assert_not_called()
 
     async def test_settings_persist_and_live_round_log_records_request_and_response(self):
         with tempfile.TemporaryDirectory() as directory:

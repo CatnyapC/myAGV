@@ -729,7 +729,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     fetch_log.update(task_id=value['task_id'], rounds=[])
                 entry = dict(id=handled, round=value.get('round', len(fetch_log['rounds']) + 1),
                              mode=value.get('mode', 'grasp'), preview=value.get('preview', False), status='requesting', started_at_s=time.time())
-                fetch_log['rounds'] = (fetch_log['rounds'] + [entry])[-16:]
+                fetch_log['rounds'] = (fetch_log['rounds'] + [entry])[-33:]
                 fetch_log['revision'] += 1
                 started = time.monotonic()
                 photo = None

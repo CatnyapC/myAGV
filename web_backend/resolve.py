@@ -124,8 +124,11 @@ J1=90 degrees faces vehicle forward, where the item is located. The arm-top came
 is mounted 90 degrees clockwise. It sees only a SMALL FRAGMENT of the item entering
 from the BOTTOM edge; the gripper is NEVER visible. This is the intended view.
 Arm-camera image X corresponds to logical arm X/base Y (forward/back). Front-camera
-image X measures left/right error; the controller corrects it by rotating the base
-in place (clockwise for a target right of GOAL), never by moving arm Y. These are context only;
+image X measures left/right error; the controller rotates the base to center the
+target at image x=0.50 (clockwise when right of center), never by moving arm Y.
+Arm distance uses CURRENT versus arm GOAL: right means X+, left means X-.
+Front GOAL is an identification reference, not the desired horizontal position.
+These are context only;
 return image positions, not hardware coordinates or commands. Do not rotate images.
 
 Pair GOAL and CURRENT by camera label. In arm views, locate the matching bottom-edge

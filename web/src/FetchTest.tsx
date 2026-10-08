@@ -84,7 +84,7 @@ export function FetchTest(props: {
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
-    <span className="muted">Preview: no movement. Align: arm X and base rotation, up to 8 corrections. Base turn ≤2°/round, ≤10° total; no translation or gripper motion. Rotation runs first, then fresh photos before arm movement.</span>
+    <span className="muted">Preview: no movement. Align: center the item in the front camera by rotating the base; arm X adjusts distance. Up to 32 corrections, ≤2°/turn and ≤45° total. No translation or gripper motion. Rotation runs first, then fresh photos before arm movement.</span>
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
