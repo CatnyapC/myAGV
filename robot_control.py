@@ -266,6 +266,7 @@ class Control:
         if not low + 5 <= coords[index] <= high - 5 or (pickup and coords[0] <= 5):
             raise ValueError('Arm workspace limit')
         with arm_deadline(.4):
+            self.arm.set_mode(0)
             self.arm.set_coords(coords, 30)
         end = time.monotonic() + 3
         while time.monotonic() < end:

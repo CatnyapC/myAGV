@@ -5,6 +5,19 @@ export async function api<T>(url: string, options: RequestInit = {}): Promise<T>
   return body as T;
 }
 
+// Wait for a new server receipt; a local WebSocket send isn't a live lease yet.
+export async function waitForControlLease(read: () => { ack: number; epoch: number; visible: boolean }): Promise<void> {
+  const { ack, epoch } = read();
+  const until = Date.now() + 1000;
+  while (Date.now() < until) {
+    const current = read();
+    if (!current.visible || current.epoch !== epoch) throw new Error('Action cancelled; page lost focus or STOP was pressed');
+    if (current.ack > ack) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error('Control heartbeat unavailable; reconnect before retrying');
+}
+
 // getRandomValues also works on the supervised LAN HTTP origin.
 export function commandId(): string {
   const b = crypto.getRandomValues(new Uint8Array(16));

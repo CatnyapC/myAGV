@@ -470,7 +470,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         try:
             async for message in socket:
                 if editor.hardware and message.type == web.WSMsgType.TEXT:
-                    await editor.hardware.heartbeat(session, json.loads(message.data))
+                    if await editor.hardware.heartbeat(session, json.loads(message.data)):
+                        await socket.send_json(dict(type='lease_ack'))
         except (RuntimeError, ValueError, ConnectionError):
             pass
         finally:

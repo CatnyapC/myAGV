@@ -16,6 +16,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
   const [radius, setRadius] = useState('0.25');
   const [measured, setMeasured] = useState(false);
   const [survey, setSurvey] = useState<Origin[]>([]);
+  const [confirmation, setConfirmation] = useState<{ type: string; message: string; values?: Record<string, unknown> } | null>(null);
   const idle = connected && state?.phase === 'idle';
   const review = state?.phase === 'review_grasp';
   const holding = state?.phase === 'verify_grasp';
@@ -25,15 +26,20 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     void command('manual', { mode, input });
   };
   const release = () => { hold(null); stop(); };
-  const button = (key: string, label: string) => <Button key={key} disabled={!connected || !state?.motion_available || (!idle && state.phase !== 'manual') || (mode === 'ARM' && !state.arm_homed)}
+  const button = (key: string, label: string) => <Button key={key} disabled={!connected || !state?.motion_available || (!idle && state.phase !== 'manual' && !(state.phase === 'working' && state.status === 'manual')) || (mode === 'ARM' && !state.arm_homed)}
     style={{ touchAction: 'none' }} onPointerDown={e => move(e, key)} onPointerUp={release}
     onPointerCancel={release} onLostPointerCapture={() => hold(null)}
     onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (!e.repeat) { const input = { mode, key }; hold(input); void command('manual', { mode, input }); } } }}
     onKeyUp={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); release(); } }} onBlur={() => hold(null)} aria-label={`Hold ${label}`}>{label}</Button>;
   return <details className="hardware-controls" open>
     <summary>Hardware controls</summary>
+    {confirmation && <div role="alertdialog" aria-label="Confirm hardware action">
+      <p>{confirmation.message}</p>
+      <Button disabled={!connected || (!idle && !(state?.phase === 'fault' && confirmation.type === 'recover_stop'))} onClick={() => { setConfirmation(null); void command(confirmation.type, confirmation.values); }}>Confirm</Button>
+      <Button onClick={() => setConfirmation(null)}>Cancel</Button>
+    </div>}
     {state?.phase === 'fault' && <div role="alert"><strong>Stop unconfirmed · motion locked</strong>
-      <Button disabled={!connected} onClick={() => { if (window.confirm('Have you physically verified that the base and arm have stopped? This clears the fault and resets homing confirmation.')) void command('recover_stop', { confirmed: true }); }}>Verify stopped and clear fault</Button>
+      <Button disabled={!connected} onClick={() => setConfirmation({ type: 'recover_stop', values: { confirmed: true }, message: 'Have you physically verified that the base and arm have stopped? This clears the fault and resets homing confirmation.' })}>Verify stopped and clear fault</Button>
     </div>}
     <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Pose confirmed ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
     <div className="action-line">
@@ -43,8 +49,8 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     <span className="muted">Pose confirmation is a manual check: the map marker must match the real robot position and heading. Confirmations reset when the controller restarts.</span>
     <div className="action-line">
       <Button disabled={!idle || state?.arm_available} onClick={() => void command('connect_arm')}>Connect P340</Button>
-      <Button disabled={!idle || !state?.arm_available} onClick={() => { if (window.confirm('Home the real arm now? Clear its full travel area.')) void command('home'); }}>Home arm</Button>
-      <Button disabled={!idle || !state?.arm_available} onClick={() => { if (window.confirm('Confirm the arm has already completed homing since power-on?')) void command('confirm_homed'); }}>Already homed</Button>
+      <Button disabled={!idle || !state?.arm_available} onClick={() => setConfirmation({ type: 'home', message: 'Home the real arm now? Clear its full travel area.' })}>Home arm</Button>
+      <Button disabled={!idle || !state?.arm_available} onClick={() => setConfirmation({ type: 'confirm_homed', message: 'Confirm the arm has already completed homing since power-on?' })}>Already homed</Button>
     </div>
     <span className="muted">P340 {state?.arm_angles?.map(v => `${v.toFixed(1)}°`).join(' / ') || state?.arm_error || 'Feedback unavailable'}</span>
     <label className="setting-row">Manual mode<select value={mode} disabled={!idle} onChange={e => { hold(null); setMode(e.target.value); }}>
@@ -62,7 +68,12 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     <Button disabled={!idle || !state?.arm_homed || !measured} onClick={() => void command('transport_record', { clearance_m: Number(radius), measured })}>Record transport pose</Button>
     <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before automatic travel'}</span>
     <label className="setting-row">Station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>
-    <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => { const previous = stations[name.trim()]; if (!previous || window.confirm('Overwrite this station with the current base and arm pose? Linked items will need reconfirmation.')) void command('teach', { name: name.trim(), overwrite: Boolean(previous), expected_station: previous }); }}>Teach current base + arm pose</Button>
+    <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => {
+      const previous = stations[name.trim()];
+      const values = { name: name.trim(), overwrite: Boolean(previous), expected_station: previous };
+      if (previous) setConfirmation({ type: 'teach', values, message: 'Overwrite this station with the current base and arm pose? Linked items will need reconfirmation.' });
+      else void command('teach', values);
+    }}>Teach current base + arm pose</Button>
     <span className="muted">Existing names require overwrite confirmation. J1 must be zero. Link the station to an item in its photo editor.</span>
     {(review || holding) && <div role="alert">
       <strong>{review ? 'Inspect live arm camera; align before grasp' : 'Inspect live arm camera; verify object held'}</strong>

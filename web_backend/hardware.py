@@ -82,18 +82,19 @@ class Hardware:
         state = self.sessions.get(session)
         now = time.monotonic()
         if not state or message.get('nonce') != state.get('nonce') or not 0 <= now - state['issued'] <= .3:
-            return
+            return False
         state['nonce'], state['ack'] = None, now
         if session == self.owner and self.control:
             await self.rpc(dict(op='heartbeat', boot_id=self.control['boot_id'], session_id=session,
                                 deadline=now + .45, input=message.get('input')))
+        return True
 
     async def command(self, data, wait=False):
         state = self.sessions.get(data.get('session_id'), {})
         if not self.control or not self.fresh(self.control.get('stamp_s'), 1):
             raise RuntimeError('Hardware controller unavailable')
         if not 0 <= time.monotonic() - state.get('ack', 0) <= .3:
-            raise ValueError('Live, focused WebSocket session required')
+            raise ValueError('Control heartbeat missing or stale; keep this page visible and retry')
         if self.control['phase'] not in ('idle', 'fault') and self.owner != data.get('session_id'):
             raise ValueError('Another tab owns the active task')
         # Claim before sending so the first heartbeat cannot miss an accepted command.

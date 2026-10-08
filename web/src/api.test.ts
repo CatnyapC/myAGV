@@ -1,6 +1,23 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { commandId, hardwareBlocks, type HardwareState } from './api.ts';
+import { commandId, hardwareBlocks, waitForControlLease, type HardwareState } from './api.ts';
+
+test('commands wait for a fresh receipt, and STOP or hidden page cancels pending commands', async () => {
+  let state = { ack: 1, epoch: 0, visible: true };
+  let ready = false;
+  const waiting = waitForControlLease(() => state).then(() => { ready = true; });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(ready, false);
+  state.ack++;
+  await waiting;
+  const stopped = waitForControlLease(() => state);
+  state.epoch++;
+  await assert.rejects(stopped, /cancelled/);
+  state.visible = false;
+  await assert.rejects(waitForControlLease(() => state), /cancelled/);
+  state = { ack: 0, epoch: 0, visible: true };
+  await assert.rejects(waitForControlLease(() => state), /heartbeat unavailable/);
+});
 
 test('hardware action locks explain calibration, faults and unavailable feedback', () => {
   const state: HardwareState = { stop_epoch: 0, phase: 'idle', status: 'Ready', arm_available: true,

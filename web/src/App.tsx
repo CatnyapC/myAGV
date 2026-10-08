@@ -6,7 +6,7 @@ import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu,
 import { MapView, rectangleCorners } from './MapView';
 import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
-import { api, commandId, hardwareBlocks } from './api';
+import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
 import { HardwareControls, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
@@ -75,6 +75,8 @@ export function App() {
   const draggingDivider = useRef<{ seam: Divider; tiles: Tile[]; start: number; cellWidth: number; cellHeight: number } | null>(null);
   const generation = useRef(0);
   const session = useRef('');
+  const leaseAck = useRef(0);
+  const actionEpoch = useRef(0);
   const held = useRef<HeldInput>(null);
   const hardwareMode = useRef(false);
   hardwareMode.current = state?.demo === false;
@@ -154,15 +156,16 @@ export function App() {
           const message = JSON.parse(event.data) as { type: string; state?: State; session_id?: string; nonce?: string };
           if (message.type === 'lease') {
             session.current = message.session_id ?? '';
-            if (!document.hidden && document.hasFocus()) socket?.send(JSON.stringify({ nonce: message.nonce, input: held.current }));
+            if (!document.hidden) socket?.send(JSON.stringify({ nonce: message.nonce, input: held.current }));
             return;
           }
+          if (message.type === 'lease_ack') { ++leaseAck.current; return; }
           if (message.type === 'telemetry' && message.state) {
             setState(message.state);
           } else void reload().catch(failure => { setError(failure.message); });
         };
         socket.onclose = () => {
-          session.current = ''; held.current = null;
+          session.current = ''; held.current = null; ++actionEpoch.current;
           if (!disposed) { resolutionRequest.current?.abort(); setResolution(null); setConnected(false); setDrawing(false); setDraft([]); timer = setTimeout(connect, 1500); }
         };
         socket.onerror = () => socket?.close();
@@ -176,6 +179,7 @@ export function App() {
 
   useEffect(() => {
     const release = () => {
+      ++actionEpoch.current;
       held.current = null;
       if (hardwareMode.current) void api('/api/stop', { method: 'POST', keepalive: true }).catch(() => {});
     };
@@ -246,10 +250,14 @@ export function App() {
     }, 400);
     return () => clearTimeout(timer);
   }, [settingsDirty, savedSettings, settingsDraft, canEdit, settingsSaving, saveError, angleValid, reload]);
+  async function controlReady() {
+    if (hardwareMode.current) await waitForControlLease(() => ({ ack: leaseAck.current, epoch: actionEpoch.current, visible: !document.hidden }));
+  }
   async function command(type: 'zone_add' | 'zone_delete') {
     if (!zones || !packet || !canEdit) return;
     setBusy(true); setError('');
     try {
+      await controlReady();
       const result = await api<{ zones: Zones }>('/api/commands', { method: 'POST',
         body: JSON.stringify({ id: commandId(), type, session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision,
           ...(type === 'zone_add' ? { corners: rectangleCorners(draft[0], draft[1], packet.info.display.origin) } : { zone_id: selected }) }) });
@@ -261,22 +269,26 @@ export function App() {
     if (!packet || !zones || !session.current) return;
     setError('');
     try {
+      await controlReady();
+      if (type === 'manual' && !held.current) return;
       await api('/api/commands', { method: 'POST', body: JSON.stringify({ ...values,
         type, id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision }) });
       if (type === 'teach' || type === 'transport_record') await reload();
     } catch (failure) { held.current = null; setError((failure as Error).message); }
   }
   async function stop() {
+    ++actionEpoch.current;
     held.current = null;
     resolutionRequest.current?.abort(); setResolution(null);
     setDrawing(false); setDraft([]); setLayoutEditing(false);
-    try { await api('/api/stop', { method: 'POST' }); setError(''); await reload(); }
+    try { await api('/api/stop', { method: 'POST' }); await reload(); }
     catch (failure) { setError((failure as Error).message); }
   }
   async function simulationCommand(type: 'navigate' | 'cancel' | 'demo_reset') {
     if (!zones || !packet || !connected || (type !== 'cancel' && !canEdit)) return;
     setBusy(true); setError(''); setDrawing(false); setDraft([]); setLayoutEditing(false);
     try {
+      await controlReady();
       await api('/api/commands', { method: 'POST',
         body: JSON.stringify({ id: commandId(), type, session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id,
           frame: packet.info.frame, expected_revision: zones.revision, ...(type === 'navigate' ? { goal } : {}) }) });
@@ -325,6 +337,7 @@ export function App() {
     if (!canEdit || !packet || !photos || busy) return;
     setBusy(true); setError('');
     try {
+      await controlReady();
       const result = await api<PhotoIndex & { added_id: string }>('/api/photos/capture', { method: 'POST',
         body: JSON.stringify({ id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, camera_id, map_id: packet.info.map_id, expected_revision: photos.revision, zone_revision: zones?.revision }) });
       photoChanged(result, result.added_id);

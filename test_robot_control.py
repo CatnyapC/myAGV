@@ -45,6 +45,15 @@ def packet(**values):
 
 
 class ControlTest(unittest.TestCase):
+    def test_manual_arm_step_sets_absolute_mode_before_target(self):
+        c = fake_control()
+        c.arm.get_coords_info.side_effect = [[200,0,0], [201,0,0]]
+        c.arm.get_angles_info.return_value = [0,0,0]
+        with patch('robot_control.arm_deadline', return_value=nullcontext()):
+            c.arm_step('X', 1)
+        calls = c.arm.method_calls
+        self.assertLess(calls.index(unittest.mock.call.set_mode(0)), calls.index(unittest.mock.call.set_coords([201,0,0],30)))
+
     def test_retries_lease_and_stop_preempt_pending_command(self):
         c, p = fake_control(), packet()
         self.assertEqual(c.receive(p)['status'], 'accepted')
@@ -171,8 +180,8 @@ class IPCtest(unittest.IsolatedAsyncioTestCase):
             h.rpc=rpc
             nonce=h.challenge('tab')['nonce']
             h.owner='tab'
-            await h.heartbeat('tab',dict(nonce=nonce))
-            await h.heartbeat('tab',dict(nonce=nonce))
+            self.assertTrue(await h.heartbeat('tab',dict(nonce=nonce)))
+            self.assertFalse(await h.heartbeat('tab',dict(nonce=nonce)))
             self.assertEqual(len(calls),1)
             await h.command(dict(packet(),session_id='tab'))
             self.assertEqual(calls[-1]['op'],'command')
