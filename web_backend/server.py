@@ -379,7 +379,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Fresh front camera required for map updating')
                     if len(photos.value['photos']) >= 1000:
                         raise ValueError('Photo index full; delete unneeded photos before map updating')
-                result = await editor.hardware.command(data, wait=kind in ('zone_add', 'zone_delete', 'teach', 'transport_record', 'recover_stop', 'reset_map', 'update_plan'))
+            # Command completion must not block live map/pose refresh during ROS restart.
+            result = await editor.hardware.command(data, wait=kind in ('zone_add', 'zone_delete', 'teach', 'transport_record', 'recover_stop', 'reset_map', 'update_plan'))
+            async with editor.lock:
                 if 'zones' in result:
                     editor.zones = result['zones']
             await editor.emit('zones' if 'zones' in result else 'state')

@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import threading
+from time import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -42,6 +43,15 @@ def robot_at(root):
 
 
 class MapResetTest(unittest.TestCase):
+    def test_reset_survives_passive_ui_release_but_honors_explicit_stop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            c = robot_at(Path(directory)).control
+            c.phase = 'resetting_map'
+            self.assertEqual(c.receive(dict(op='stop', passive=True))['status'], 'ignored')
+            c.request_stop.assert_not_called()
+            self.assertEqual(c.receive(dict(op='stop'))['status'], 'stopping')
+            c.request_stop.assert_called_once()
+
     def test_live_updates_keep_map_identity_localization_and_costmap_feedback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -121,6 +131,43 @@ class MapResetTest(unittest.TestCase):
 
 
 class LiveMapAPITest(unittest.IsolatedAsyncioTestCase):
+    async def test_map_and_pose_stream_while_reset_command_is_pending(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            grid = demo_map()
+            atomic_json(root / 'ros' / 'map.json', grid)
+            app = create_app(root / 'ui', stations_path=root / 'stations.json', hardware_dir=root / 'ros')
+            started, release = asyncio.Event(), asyncio.Event()
+            async def reset(*args, **kwargs):
+                started.set()
+                await release.wait()
+                return dict(status='completed', mapping_mode=True)
+            async with TestClient(TestServer(app)) as client:
+                with patch.object(app[EDITOR].hardware, 'command', side_effect=reset):
+                    pending = asyncio.create_task(client.post('/api/commands', json=dict(type='reset_map', confirmed=True, map_id=grid['map_id'], expected_revision=0)))
+                    try:
+                        await asyncio.wait_for(started.wait(), 2)
+                        grid = {**grid, 'map_id': 'slam-fresh-session'}
+                        atomic_json(root / 'ros' / 'map.json', grid)
+                        pose = dict(x_m=0., y_m=0., yaw_rad=0.)
+                        atomic_json(root / 'ros' / 'state.json', dict(map_id=grid['map_id'], frame='map', pose=pose, stamp_s=time(), pose_stamp_s=time()))
+                        atomic_json(root / 'ros' / 'control.json', dict(phase='resetting_map', stamp_s=time()))
+                        atomic_json(root / 'ros' / 'zones.json', dict(map_id=grid['map_id'], revision=0, zones=[]))
+                        for _ in range(40):
+                            info = await (await client.get('/api/map')).json()
+                            if info['map_id'] == grid['map_id']:
+                                break
+                            await asyncio.sleep(.05)
+                        self.assertEqual(info['map_id'], grid['map_id'])
+                        state = await (await client.get('/api/state')).json()
+                        self.assertEqual(state['navigation']['pose'], pose)
+                        self.assertEqual(state['phase'], 'resetting_map')
+                        self.assertFalse(pending.done())
+                    finally:
+                        release.set()
+                        response = await pending
+                        self.assertEqual(response.status, 200)
+
     async def test_new_revision_refreshes_png_without_changing_map_session(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
