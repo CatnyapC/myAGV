@@ -129,7 +129,15 @@ No history: for each clearly misaligned axis, start at the supplied max_step_mm
 Use smaller moves when already near the GOAL. With history, estimate the needed
 move from observed response; reduce near the goal or after overshoot. Never exceed
 the supplied max_step_mm or 2 mm per axis. Return both
-zeros only when horizontal target positions match both GOAL views. Ignore vertical
+zeros only when horizontal target positions match both GOAL views.
+For each camera separately, estimate the SAME feature's horizontal center as
+x/image_width in GOAL and CURRENT. Error = CURRENT minus GOAL: negative means
+negative motion, positive means positive motion. Arm-camera error controls x_mm;
+front-camera error controls y_mm. Never cancel one camera's error with the other.
+An axis may be zero only when its absolute image error is at most 0.01 of width.
+A previous correction or little visible change is NOT evidence of alignment;
+always compare CURRENT with GOAL again. If uncertain, return null, never zero.
+Ignore vertical
 position, scale, background changes and missing gripper when comparing alignment.
 For a nonzero correction use at least 0.1 mm. Return null only if the target or its
 matching feature cannot be identified reliably. Do not guess through occlusion.
