@@ -45,6 +45,27 @@ def packet(**values):
 
 
 class ControlTest(unittest.TestCase):
+    def test_go_needs_no_arm_or_transport_pose(self):
+        for arm in (None, Mock()):
+            with self.subTest(arm_online=arm is not None):
+                c = fake_control()
+                c.arm, c.arm_homed = arm, False
+                c.angles, c.arm_stamp, c.arm_error, c.goal = None, 0, '', None
+                c.config['transport_angles'] = None
+                c.deadline = time.monotonic() + .45
+                c.fold = Mock(side_effect=AssertionError('Go must not move the arm'))
+                self.assertTrue(c.snapshot()['navigation_ready'])
+                c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=math.pi / 2)))
+                c.fold.assert_not_called()
+                c.robot.nav.go_to.assert_called_once_with(dict(x_m=1, y_m=2, yaw_deg=90))
+                c.robot.zero.assert_called_once()
+                self.assertFalse(c.base_enabled)
+                c.localized = False
+                self.assertFalse(c.snapshot()['navigation_ready'])
+                with self.assertRaisesRegex(RuntimeError, 'localization'):
+                    c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=0)))
+                self.assertEqual(c.robot.nav.go_to.call_count, 1)
+
     def test_manual_arm_step_sets_absolute_mode_before_target(self):
         c = fake_control()
         c.arm.get_coords_info.side_effect = [[200,0,0], [201,0,0]]

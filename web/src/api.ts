@@ -33,7 +33,7 @@ export type HardwareState = {
   transport_angles?: number[]; clearance_m: number; zones_ready: boolean; planner_footprint_ready: boolean; stop_confirmed: boolean;
 };
 
-export function hardwareBlocks(state?: HardwareState): string[] {
+export function hardwareBlocks(state?: HardwareState, requireArm = true): string[] {
   if (!state) return ['Controller unavailable'];
   const reasons: string[] = [];
   if (state.phase === 'fault') reasons.push('Verify stopped hardware and clear the fault');
@@ -42,9 +42,11 @@ export function hardwareBlocks(state?: HardwareState): string[] {
   if (!state.sensors_ready) reasons.push('Waiting for fresh LiDAR and odometry');
   if (!state.exclusive) reasons.push('Close competing chassis controllers');
   if (!state.localized) reasons.push('Confirm the robot position and heading on the map');
-  if (!state.arm_available) reasons.push('Connect P340');
-  else if (!state.arm_homed) reasons.push('Home arm, or confirm already homed');
-  if (!state.transport_angles) reasons.push('Record folded transport pose and measured clearance');
+  if (requireArm) {
+    if (!state.arm_available) reasons.push('Connect P340');
+    else if (!state.arm_homed) reasons.push('Home arm, or confirm already homed');
+    if (!state.transport_angles) reasons.push('Record folded transport pose and measured clearance');
+  }
   if (!state.zones_ready) reasons.push('Waiting for both ROS costmaps');
   if (!state.planner_footprint_ready) reasons.push('Waiting for the measured planner footprint');
   if (!state.navigation_ready && !reasons.length) reasons.push('Controller not ready');

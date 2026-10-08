@@ -52,20 +52,22 @@ the driver watchdog are required for motion.
 5. Fold the arm, set J1=0, and measure a circular clearance radius covering the
    base, folded arm and carried object. Check the measurement box and **Record
    transport pose**. This updates both ROS planner footprints. No transport pose
-   is guessed. Automatic travel remains disabled until this is done.
+   is guessed. Fetch and survey remain disabled until this is done.
 6. Teach a named pickup station at its real base/arm pose (J1=0).
    Existing names require overwrite confirmation; changed station links must be
    reconfirmed. Capture a photo, edit its item, and explicitly associate that station.
 
 Manual BASE driving is supervised and bypasses no-go planning. It uses at most
 0.1 m/s and 0.3 rad/s; PICKUP base motion uses 0.03 m/s and 0.05 rad/s. Releasing
-buttons stops the task. Automatic navigation folds the arm before travel.
+buttons stops the task. Fetch and survey fold the arm before travel.
 
 ## Navigation, no-go zones and Fetch
 
 **Go** sends the selected map-frame goal to move_base. A goal requires current
-localization, measured transport pose, live sensors and both costmaps applying
-the current no-go revision. Unknown/occupied footprint clearance is rejected.
+localization, live sensors, planner footprint clearance and both costmaps applying
+the current no-go revision. Go does not require an online or homed arm or a
+recorded transport pose, and does not move the arm. Unknown/occupied footprint
+clearance is rejected.
 No-go rectangles are rasterized into a derived map. Both global and rolling
 local StaticLayers consume it; published full costmaps are checked for virtual
 obstacles. The original map is preserved. Recovery rotations are disabled.

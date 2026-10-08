@@ -25,6 +25,14 @@ test('hardware action locks explain calibration, faults and unavailable feedback
     driver_watchdog: true, exclusive: true, sensors_ready: true, transport_angles: [0,10,20],
     clearance_m: .25, zones_ready: true, planner_footprint_ready: true, stop_confirmed: true };
   assert.deepEqual(hardwareBlocks(state), []);
+  for (const arm_available of [false, true]) {
+    const baseOnly = { ...state, arm_available, arm_homed: false, transport_angles: undefined };
+    assert.deepEqual(hardwareBlocks(baseOnly, false), []);
+    assert.ok(hardwareBlocks(baseOnly).length > 0);
+    assert.ok(hardwareBlocks({ ...baseOnly, localized: false }, false).some(s => s.includes('robot position')));
+    assert.ok(hardwareBlocks({ ...baseOnly, planner_footprint_ready: false }, false).some(s => s.includes('planner footprint')));
+    assert.ok(hardwareBlocks({ ...baseOnly, navigation_ready: false }, false).includes('Controller not ready'));
+  }
   const missing = hardwareBlocks({ ...state, navigation_ready: false, arm_homed: false, transport_angles: undefined });
   assert.ok(missing.some(s => s.includes('Home arm')));
   assert.ok(missing.some(s => s.includes('measured clearance')));

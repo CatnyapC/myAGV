@@ -99,7 +99,7 @@ export function App() {
   const selectedPhoto = photos?.photos.find(p => p.id === selectedPhotoId) ?? null;
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
   const hardwareReasons = !connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware);
-  const goReasons = [...hardwareReasons, ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
+  const goReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)), ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
   const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
 
   const reload = useCallback(async () => {

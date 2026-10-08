@@ -33,7 +33,7 @@ class Control:
         self.lock_file = (self.directory / 'control.lock').open('a')
         fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         self.boot_id = str(uuid.uuid4())
-        self.phase, self.status = 'idle', 'Ready; initialize localization and arm before automatic travel'
+        self.phase, self.status = 'idle', 'Ready; initialize localization before automatic travel'
         self.task_id = self.owner = None
         self.deadline = 0
         self.stop_epoch = 0
@@ -452,8 +452,6 @@ class Control:
         elif kind == 'navigate':
             pose = validate_pose(packet['goal'])
             pose = dict(x_m=pose['x_m'], y_m=pose['y_m'], yaw_deg=math.degrees(pose['yaw_rad']))
-            self.travel_guard(pose)
-            self.fold()
             self.go(pose)
         elif kind == 'fetch':
             self.fetch(packet)
@@ -530,7 +528,6 @@ class Control:
             self.arm_step(key[0], 1 if key[1] == '+' else -1, pickup=mode == 'PICKUP')
 
     def snapshot(self):
-        transport = self.config['transport_angles'] is not None
         ready = self.robot.driver_watchdog and self.robot.exclusive and self.robot.sensors_ready()
         return dict(boot_id=self.boot_id, stop_epoch=self.stop_epoch, stamp_s=time.time(), phase=self.phase, status=self.status,
                     task_id=self.task_id, arm_available=self.arm is not None, arm_homed=self.arm_homed,
@@ -539,7 +536,7 @@ class Control:
                     clearance_m=self.config['clearance_m'], localized=self.localized,
                     driver_watchdog=self.robot.driver_watchdog, exclusive=self.robot.exclusive,
                     sensors_ready=self.robot.sensors_ready(), motion_available=ready,
-                    navigation_ready=ready and transport and self.arm is not None and self.arm_homed and self.localized and self.robot.zones_ready() and self.robot.clearance_ready(self.config['clearance_m']),
+                    navigation_ready=ready and self.localized and self.robot.zones_ready() and self.robot.clearance_ready(self.config['clearance_m']),
                     costmap_feedback=self.robot.costmap_received, layers_configured=self.robot.layers_ok,
                     planner_footprint_ready=self.robot.clearance_ready(self.config['clearance_m']),
                     zones_ready=self.robot.zones_ready(), zone_revision=self.robot.zones['revision'] if self.robot.zones else -1,

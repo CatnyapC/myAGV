@@ -2,7 +2,7 @@ import { useState, type PointerEvent } from 'react';
 import { Button } from './ui';
 import type { Origin, Stations } from './mapGeometry';
 
-import type { HardwareState } from './api';
+import { hardwareBlocks, type HardwareState } from './api';
 export type { HardwareState } from './api';
 export type HeldInput = { mode: string; key: string } | null;
 
@@ -72,7 +72,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     <label className="setting-row">Folded clearance radius (m)<input type="number" min=".15" max="1" step=".01" value={radius} disabled={!idle} onChange={e => { setRadius(e.target.value); setMeasured(false); }} /></label>
     <label><input type="checkbox" checked={measured} disabled={!idle} onChange={e => setMeasured(e.target.checked)} /> Arm folded, J1=0; measured radius encloses base, arm and payload</label>
     <Button disabled={!idle || !state?.arm_homed || !measured} onClick={() => void command('transport_record', { clearance_m: Number(radius), measured })}>Record transport pose</Button>
-    <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before automatic travel'}</span>
+    <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before Fetch or survey'}</span>
     <label className="setting-row">Station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>
     <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => {
       const previous = stations[name.trim()];
@@ -91,7 +91,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
       <div className="action-line">
         <Button disabled={!idle || !goal || survey.length >= 20} onClick={() => goal && setSurvey(old => [...old, goal])}>Add goal</Button>
         <Button disabled={!idle} onClick={() => setSurvey([])}>Clear queue</Button>
-        <Button disabled={!idle || !state?.navigation_ready || !survey.length} onClick={() => void command('survey', { goals: survey })}>Run survey</Button>
+        <Button disabled={!idle || hardwareBlocks(state).length > 0 || !survey.length} onClick={() => void command('survey', { goals: survey })}>Run survey</Button>
       </div><span className="muted">{survey.map((p,i) => `${i+1}: (${p.x_m.toFixed(2)}, ${p.y_m.toFixed(2)})`).join(' · ')}</span>
     </details>
   </details>;
