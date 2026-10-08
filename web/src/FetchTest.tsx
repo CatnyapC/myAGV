@@ -80,8 +80,8 @@ export function FetchTest(props: {
     </>}
     <span className="muted">Shared with Fetch · compressed photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
     <div className="action-line">
-      <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>Preview one round</Button>
-      <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>Align here</Button>
+      <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
+      <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
     <span className="muted">Preview: no movement. Align: arm X/Y only, up to 8 corrections; base and gripper stay still.</span>
