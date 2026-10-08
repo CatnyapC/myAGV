@@ -93,7 +93,7 @@ export function PhotoEditor(props: {
         {!photo ? <><label className="setting-row">Phone photo<input type="file" accept="image/png,image/jpeg,image/webp" disabled={!props.enabled || busy} onChange={e => setFile(e.target.files?.[0] ?? null)} /></label>
           <span className="muted">LLM generates name and appearance after import · no map point</span></> : <>
           {photo.available && <img className="photo-preview" src={photo.image_url} alt="Stored photo" />}
-          <span className="muted">{photo.kind === 'reference' ? 'Phone reference · review LLM features before saving' : 'Synthetic observation · simulated capture pose'}</span>
+          {photo.kind === 'observation' && <span className="muted">Synthetic observation · simulated capture pose</span>}
           <Button disabled={!props.enabled || busy || !photo.available} onClick={() => setDescribeRequested(true)}>
             {describeRequested && busy ? 'Generating description…' : 'Generate with LLM'}</Button>
           {photo.kind === 'observation' && <details><summary className="muted">Capture metadata</summary><div className="photo-metadata">
