@@ -124,8 +124,11 @@ position means positive motion. The arm camera mounts 90 degrees clockwise;
 the target normally appears near the bottom. Do not rotate or swap image axes.
 History is chronological: each image pair precedes the listed executed move;
 compare it with later states to estimate the actual image response per mm.
-No history: start with a small 0.5-1 mm correction. Adapt from observed response;
-reduce near the goal or after overshoot. Never exceed 2 mm per axis. Return both
+No history: for each clearly misaligned axis, start at the supplied max_step_mm
+(normally 2 mm), with the correct sign. Do not default to tiny 0.5 mm probes.
+Use smaller moves when already near the GOAL. With history, estimate the needed
+move from observed response; reduce near the goal or after overshoot. Never exceed
+the supplied max_step_mm or 2 mm per axis. Return both
 zeros only when horizontal target positions match both GOAL views. Ignore vertical
 position, scale, background changes and missing gripper when comparing alignment.
 For a nonzero correction use at least 0.1 mm. Return null only if the target or its
