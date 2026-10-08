@@ -15,6 +15,8 @@ from robot_control import Stopped
 from test_item_locations import open_map
 from test_robot_control import fake_control
 from web_backend.item_locations import DEFAULT_CONFIG, approach_step, catalog_signature
+from web_backend.map_data import local_to_world
+from web_backend.simulation import global_costmap
 from web_backend.photos import PhotoIndex, demo_frame
 from web_backend.server import EDITOR, create_app
 from web_backend.storage import atomic_bytes, atomic_json
@@ -37,6 +39,16 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         goal, estimate = approach_step(proposal, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
         self.assertAlmostEqual(goal['x_m'], 2.2)
         self.assertAlmostEqual(estimate['x_m'], 3.5)
+        with patch('web_backend.item_locations.global_costmap', wraps=global_costmap) as inflate:
+            approach_step(proposal, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+            self.assertLess(len(inflate.call_args.args[0]['cells']), 200)
+        rotated = {**grid, 'origin': dict(x_m=2, y_m=1, yaw_rad=1.1)}
+        x, y = local_to_world([2, 3], rotated['origin'])
+        rotated_goal, _ = approach_step(proposal, dict(base_pose=dict(x_m=x, y_m=y, yaw_rad=1.1)),
+                                       rotated, [], rotated, ITEM, .25, DEFAULT_CONFIG)
+        expected = local_to_world([2.2, 3], rotated['origin'])
+        self.assertAlmostEqual(rotated_goal['x_m'], expected[0])
+        self.assertAlmostEqual(rotated_goal['y_m'], expected[1])
         for change in (dict(seen=False), dict(forward_m=.21), dict(turn_deg=16), dict(forward_m=True),
                        dict(confidence=.69), dict(distance_m=float('nan')), dict(distance_m=.8),
                        dict(arrived=True), dict(forward_m=0), dict(bearing_deg=30), dict(extra='grasp')):

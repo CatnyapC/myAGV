@@ -167,7 +167,19 @@ def approach_step(result, photo, grid, zones, costmap, item, radius, config):
     yaw = pose['yaw_rad'] + math.radians(turn)
     goal = dict(x_m=pose['x_m'] + forward * math.cos(yaw), y_m=pose['y_m'] + forward * math.sin(yaw),
                 yaw_rad=math.atan2(math.sin(yaw), math.cos(yaw)))
-    _, safe = approach_grid(grid, zones, costmap, radius)
+    # A 20 cm step needs only its swept footprint, not inflation of the entire room.
+    points = [world_to_local([p['x_m'], p['y_m']], grid['origin']) for p in (pose, goal)]
+    r, margin = grid['resolution_m'], radius + 3 * grid['resolution_m']
+    lo = [max(0, math.floor((min(p[axis] for p in points) - margin) / r)) for axis in (0, 1)]
+    hi = [min(size, math.ceil((max(p[axis] for p in points) + margin) / r))
+          for axis, size in enumerate((grid['width'], grid['height']))]
+    if any(b <= a for a, b in zip(lo, hi)):
+        raise ValueError('Item approach outside map')
+    x, y = local_to_world([lo[0] * r, lo[1] * r], grid['origin'])
+    local = {**grid, 'width': hi[0] - lo[0], 'height': hi[1] - lo[1],
+             'origin': dict(x_m=x, y_m=y, yaw_rad=grid['origin']['yaw_rad']),
+             'cells': [c for row in range(lo[1], hi[1]) for c in grid['cells'][row * grid['width'] + lo[0]:row * grid['width'] + hi[0]]]}
+    _, safe = approach_grid(local, zones, costmap, radius)
     if any(safe['cells'][cell_index(safe, point)] != 0 for point in (pose, goal)):
         raise ValueError('Item approach endpoint lacks clearance')
     if not segment_clear(safe, [pose['x_m'], pose['y_m']], [goal['x_m'], goal['y_m']]):
