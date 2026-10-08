@@ -329,6 +329,22 @@ class ControlTest(unittest.TestCase):
 
 
 class IPCtest(unittest.IsolatedAsyncioTestCase):
+    async def test_next_challenge_does_not_invalidate_a_delayed_valid_reply(self):
+        h = Hardware('unused')
+        with patch('web_backend.hardware.time.monotonic', return_value=10):
+            first = h.challenge('tab')
+        with patch('web_backend.hardware.time.monotonic', return_value=10.15):
+            self.assertEqual(h.challenge('tab'), first)
+        with patch('web_backend.hardware.time.monotonic', return_value=10.2):
+            self.assertTrue(await h.heartbeat('tab', dict(nonce=first['nonce'])))
+            self.assertFalse(await h.heartbeat('tab', dict(nonce=first['nonce'])))
+            self.assertFalse(await h.heartbeat('tab', {}))
+            second = h.challenge('tab')
+            self.assertNotEqual(second['nonce'], first['nonce'])
+        with patch('web_backend.hardware.time.monotonic', return_value=10.51):
+            self.assertFalse(await h.heartbeat('tab', dict(nonce=second['nonce'])))
+            self.assertNotEqual(h.challenge('tab')['nonce'], second['nonce'])
+
     async def test_challenge_replay_disconnect_and_no_socket_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             h=Hardware(tmp)

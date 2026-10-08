@@ -73,15 +73,17 @@ class Hardware:
             raise RuntimeError('Hardware controller unavailable; stop unconfirmed') from exc
 
     def challenge(self, session):
-        nonce = str(uuid.uuid4())
         previous = self.sessions.get(session, {})
+        if previous.get('nonce') and 0 <= time.monotonic() - previous['issued'] <= .3:
+            return dict(type='lease', session_id=session, nonce=previous['nonce'])
+        nonce = str(uuid.uuid4())
         self.sessions[session] = dict(nonce=nonce, issued=time.monotonic(), ack=previous.get('ack', 0))
         return dict(type='lease', session_id=session, nonce=nonce)
 
     async def heartbeat(self, session, message):
         state = self.sessions.get(session)
         now = time.monotonic()
-        if not state or message.get('nonce') != state.get('nonce') or not 0 <= now - state['issued'] <= .3:
+        if not state or not state.get('nonce') or message.get('nonce') != state['nonce'] or not 0 <= now - state['issued'] <= .3:
             return False
         state['nonce'], state['ack'] = None, now
         if session == self.owner and self.control:

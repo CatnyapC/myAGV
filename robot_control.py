@@ -363,6 +363,9 @@ class Control:
     def finish(self, packet, result):
         command_id = packet['id']
         self.results[command_id] = dict(id=command_id, **result)
+        print(json.dumps(dict(event='command_result', time_s=time.time(), type=packet.get('type'),
+                              **({'goal': packet['goal']} if 'goal' in packet else {}),
+                              **self.results[command_id]), allow_nan=False), flush=True)
         while len(self.results) > 200:
             old, _ = self.results.popitem(last=False)
             self.requests.pop(old, None)
