@@ -137,3 +137,8 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .hardware-controls[open] > * { margin-top: 8px; }
 .hardware-controls input[type="number"] { max-width: 90px; }
 .hardware-controls summary { cursor: pointer; }
+
+.map-updates { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--gray-6); flex-shrink: 0; max-height: 40%; overflow: auto; }
+.map-updates details[open] > * { margin-top: 6px; }
+.map-updates summary { cursor: pointer; }
+.map-updates input[type="number"] { max-width: 90px; }

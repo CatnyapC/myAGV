@@ -18,7 +18,6 @@ import uuid
 from navigation import arm_deadline, load_stations, pickup_angles, save_station, validate_angles, wait_arm
 from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
-from robot_survey import update_goals
 from web_backend.map_data import validate_rectangle
 from web_backend.photos import digest_station
 from web_backend.simulation import validate_pose
@@ -644,24 +643,14 @@ class Control:
         return {}
 
     def plan_update(self, packet):
-        start = self.robot.nav.get_pose(timeout=.1)
-        self.travel_guard(start)
-        if packet.get('goals') is not None:
-            goals = packet['goals']
-            if not isinstance(goals, list) or not 1 <= len(goals) <= 20:
-                raise ValueError('Select 1..20 viewing poses')
-            poses = [validate_pose(p) for p in goals]
-            for pose in poses:
-                self.travel_guard(pose)
-            return dict(goals=poses, capped=False, spacing_m=packet.get('spacing_m', 1))
-        with self.robot.lock:
-            grid = self.robot.costmaps['global'][3]
-            derived = self.robot.derived
-        plan = update_goals(grid, start, self.config['clearance_m'], packet.get('spacing_m', 1))
-        plan['goals'] = [p for p in plan['goals'] if footprint_clear(derived, p, self.config['clearance_m'])]
-        if not plan['goals']:
-            raise ValueError('No reachable viewing poses')
-        return plan
+        goals = packet.get('goals')
+        if not isinstance(goals, list) or not 1 <= len(goals) <= 20:
+            raise ValueError('Select 1..20 viewing poses')
+        poses = [validate_pose(p) for p in goals]
+        self.travel_guard(self.robot.nav.get_pose(timeout=.1))
+        for pose in poses:
+            self.travel_guard(pose)
+        return dict(goals=poses, capped=False)
 
     def wait_update(self):
         update = self.map_update

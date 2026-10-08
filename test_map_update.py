@@ -12,10 +12,8 @@ import uuid
 from aiohttp.test_utils import TestClient, TestServer
 
 from robot_control import Stopped, UpdatePaused
-from robot_safety import footprint_clear
-from robot_survey import update_goals
 from test_robot_control import fake_control, packet
-from web_backend.map_data import demo_map, local_to_world, world_to_local
+from web_backend.map_data import demo_map
 from web_backend.photos import PhotoIndex, demo_frame
 from web_backend.resolve import target_preview
 from web_backend.server import EDITOR, create_app
@@ -23,28 +21,20 @@ from web_backend.storage import atomic_json
 
 
 class MapUpdateTest(unittest.TestCase):
-    def test_connected_clearance_unknown_rotation_and_bounded_sampling(self):
-        grid = dict(width=60, height=40, resolution_m=.1, origin=dict(x_m=3, y_m=-2, yaw_rad=.4),
-                    cells=[0] * 2400)
-        for y in range(40):
-            grid['cells'][y * 60 + 30] = -1  # Disconnected region must never enter the plan.
-        x, y = local_to_world([1.5, 2], grid['origin'])
-        start = dict(x_m=x, y_m=y)
-        plan = update_goals(grid, start, .25, .5, limit=20)
-        self.assertTrue(plan['capped'])
-        self.assertEqual(len(plan['goals']), 20)
-        for pose in plan['goals']:
-            self.assertTrue(footprint_clear(grid, pose, .25))
-            self.assertLess(world_to_local([pose['x_m'], pose['y_m']], grid['origin'])[0], 3)
-        self.assertGreater(max(world_to_local([p['x_m'], p['y_m']], grid['origin'])[1] for p in plan['goals']), 2.5)
-        for bad in (0, float('nan'), True, 4):
+    def test_updates_require_manual_points_and_validate_each_pose(self):
+        c = fake_control()
+        c.travel_guard = Mock()
+        poses = [dict(x_m=1, y_m=2, yaw_rad=.5), dict(x_m=2, y_m=3, yaw_rad=1)]
+        self.assertEqual(c.plan_update({'goals': poses}), dict(goals=poses, capped=False))
+        self.assertEqual([call.args[0] for call in c.travel_guard.call_args_list[1:]], poses)
+        for goals in (None, [], {}, poses * 11, [dict(x_m=float('nan'), y_m=0, yaw_rad=0)]):
             with self.assertRaises(ValueError):
-                update_goals(grid, start, .25, bad)
+                c.plan_update({'goals': goals})
         with self.assertRaises(ValueError):
-            update_goals(grid, dict(x_m=100, y_m=100), .25)
-        blocked = {**grid, 'cells': [100] * 2400}
-        with self.assertRaises(ValueError):
-            update_goals(blocked, start, .25)
+            c.plan_update({})
+        c.travel_guard.side_effect = [None, ValueError('Blocked goal')]
+        with self.assertRaisesRegex(ValueError, 'Blocked goal'):
+            c.plan_update({'goals': poses})
 
     def test_window_expiry_pauses_and_owner_explicitly_starts_new_window(self):
         c = fake_control()
@@ -78,7 +68,7 @@ class MapUpdateTest(unittest.TestCase):
         c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
         c.owner, c.task_id, c.deadline = 'tab', 'updating', time.monotonic() + .45
         poses = [dict(x_m=1, y_m=1, yaw_rad=0), dict(x_m=2, y_m=1, yaw_rad=math.pi / 2)]
-        c.plan_update = Mock(return_value=dict(goals=poses, capped=False, spacing_m=1))
+        c.plan_update = Mock(return_value=dict(goals=poses, capped=False))
         c.fold = Mock()
         dispatched = []
         def go(pose):
@@ -163,13 +153,13 @@ class MapUpdateAPITest(unittest.IsolatedAsyncioTestCase):
             hardware.sessions['tab'] = dict(ack=time.monotonic())
             hardware.rpc = AsyncMock(return_value=dict(status='accepted'))
             data = dict(id=str(uuid.uuid4()), type='map_update', session_id='tab',
-                        map_id=grid['map_id'], expected_revision=app[EDITOR].zones['revision'], limit_s=60, spacing_m=1)
+                        map_id=grid['map_id'], expected_revision=app[EDITOR].zones['revision'], limit_s=60, goals=[dict(x_m=1, y_m=1, yaw_rad=0)])
             async with TestClient(TestServer(app)) as client:
                 self.assertEqual((await client.post('/api/commands', json=data)).status, 400)
                 hardware.cameras['front'] = dict(stamp_s=time.time(), url='camera')
                 self.assertEqual((await client.post('/api/commands', json=data)).status, 200)
                 self.assertEqual(hardware.rpc.call_args.args[0]['limit_s'], 60)
-                self.assertEqual(hardware.rpc.call_args.args[0]['spacing_m'], 1)
+                self.assertEqual(hardware.rpc.call_args.args[0]['goals'], data['goals'])
                 hardware.control.update(phase='update_paused', map_update=dict(active=True))
                 capture_id = str(uuid.uuid4())
                 capture_path = bridge / 'captures' / capture_id

@@ -15,20 +15,6 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
   const [name, setName] = useState('');
   const [radius, setRadius] = useState(String(state?.clearance_m ?? .25));
   const [measured, setMeasured] = useState(false);
-  const [survey, setSurvey] = useState<Origin[]>([]);
-  const [automatic, setAutomatic] = useState(true);
-  const [minutes, setMinutes] = useState('10');
-  const [spacing, setSpacing] = useState('1');
-  const [updating, setUpdating] = useState(false);
-  const update = state?.map_update;
-  const paused = state?.phase === 'update_paused';
-  const validUpdate = Number.isFinite(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 60 && Number.isFinite(Number(spacing)) && Number(spacing) >= .5 && Number(spacing) <= 3;
-  const updateArgs = { limit_s: Number(minutes) * 60, spacing_m: Number(spacing), ...(!automatic ? { goals: survey } : {}) };
-  const updateCommand = async (type: string) => {
-    setUpdating(true);
-    try { await command(type, type === 'update_start' || type === 'update_pause' ? { task_id: state?.task_id } : updateArgs); }
-    finally { setUpdating(false); }
-  };
   const [confirmation, setConfirmation] = useState<{ type: string; message: string; values?: Record<string, unknown> } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const idle = connected && state?.phase === 'idle';
@@ -101,23 +87,39 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
       <Button disabled={!connected} onClick={() => void command('confirm', { stage: state?.phase, task_id: state?.task_id })}>{review ? 'Confirm grasp alignment' : 'Confirm possession and return'}</Button>
       <Button variant="danger" onClick={stop}>Abort / STOP</Button>
     </div>}
-    <details open><summary>MAP UPDATES</summary>
-      <label><input type="checkbox" checked={automatic} disabled={!idle || updating} onChange={e => setAutomatic(e.target.checked)} /> Reachable area automatically</label>
-      <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
-      <label className="setting-row">Viewing spacing (m)<input type="number" min=".5" max="3" step=".1" value={spacing} disabled={!idle || updating || !automatic} onChange={e => setSpacing(e.target.value)} /></label>
-      <span className="muted">Repeat observations refresh the map. Time limit pauses updating and retains all records.</span>
-      <div className="action-line">
-        <Button disabled={!idle || updating || !validUpdate || hardwareBlocks(state).length > 0 || (!automatic && !survey.length)} onClick={() => void updateCommand('update_plan')}>Preview update points</Button>
-        <Button variant="default" disabled={!connected || updating || (!paused && (!idle || !validUpdate || hardwareBlocks(state).length > 0 || (!automatic && !survey.length)))} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>开始更新</Button>
-        <Button disabled={!connected || updating || !update?.active || paused} onClick={() => void updateCommand('update_pause')}>暂停更新</Button>
-      </div>
-      {update && <span role="status" className="muted">{update.state === 'planned' ? 'Planned' : paused ? 'Updating paused' : update.active ? 'Updating' : 'Updates interrupted'} · {update.goals.length} views · round {update.round} · {update.completed}/{update.goals.length} · {update.captures} captures{update.active && ` · ${Math.floor(update.remaining_s / 60)}:${String(update.remaining_s % 60).padStart(2, '0')} left`}{update.capped && ' · bounded area sampling'}</span>}
-      {!automatic && <>
-      <div className="action-line">
-        <Button disabled={!idle || !goal || survey.length >= 20} onClick={() => goal && setSurvey(old => [...old, goal])}>Add goal</Button>
-        <Button disabled={!idle} onClick={() => setSurvey([])}>Clear queue</Button>
-      </div><span className="muted">{survey.map((p,i) => `${i+1}: (${p.x_m.toFixed(2)}, ${p.y_m.toFixed(2)})`).join(' · ')}</span>
-      </>}
-    </details>
   </details>;
+}
+
+export function MapUpdateControls({ state, connected, goal, command }: Pick<Props, 'state' | 'connected' | 'goal' | 'command'>) {
+  const [survey, setSurvey] = useState<Origin[]>([]);
+  const [minutes, setMinutes] = useState('10');
+  const [updating, setUpdating] = useState(false);
+  const update = state?.map_update;
+  const paused = state?.phase === 'update_paused';
+  const idle = connected && state?.phase === 'idle';
+  const validUpdate = Number.isFinite(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 60;
+  const cannotPlan = !idle || updating || !validUpdate || hardwareBlocks(state).length > 0 || !survey.length;
+  const updateCommand = async (type: string) => {
+    setUpdating(true);
+    try { await command(type, type === 'update_start' || type === 'update_pause'
+      ? { task_id: state?.task_id } : { limit_s: Number(minutes) * 60, goals: survey }); }
+    finally { setUpdating(false); }
+  };
+  return <div className="map-updates">
+    <div className="action-line">
+      <Button variant="default" disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start updates</Button>
+      <Button disabled={!connected || updating || !update?.active || paused} onClick={() => void updateCommand('update_pause')}>Pause updates</Button>
+    </div>
+    <details><summary>Manual update points · {survey.length} views</summary>
+      <span className="muted">Select a map goal and heading, then add it to the queue. Updates repeat these points until paused.</span>
+      <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
+      <div className="action-line">
+        <Button disabled={!idle || updating || !goal || survey.length >= 20} onClick={() => goal && setSurvey(old => [...old, goal])}>Add goal</Button>
+        <Button disabled={!idle || updating} onClick={() => setSurvey([])}>Clear queue</Button>
+        <Button disabled={cannotPlan} onClick={() => void updateCommand('update_plan')}>Preview points</Button>
+      </div>
+      <span className="muted">{survey.map((p,i) => `${i+1}: (${p.x_m.toFixed(2)}, ${p.y_m.toFixed(2)})`).join(' · ')}</span>
+    </details>
+    {update && <span role="status" className="muted">{update.state === 'planned' ? 'Planned' : paused ? 'Updating paused' : update.active ? 'Updating' : 'Updates interrupted'} · {update.goals.length} views · round {update.round} · {update.completed}/{update.goals.length} · {update.captures} captures{update.active && ` · ${Math.floor(update.remaining_s / 60)}:${String(update.remaining_s % 60).padStart(2, '0')} left`}</span>}
+  </div>;
 }
