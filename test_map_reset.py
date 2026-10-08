@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import threading
+import time as clock
 from time import time
 from types import SimpleNamespace
 import unittest
@@ -33,6 +34,7 @@ def robot_at(root):
     robot.grid = demo_map()
     robot.zones = dict(map_id=robot.grid['map_id'], revision=0, zones=[])
     robot.costmaps = {}
+    robot.map_saved, robot.costmap_saved = None, 0
     robot.control = Control.__new__(Control)
     c = robot.control
     c.robot, c.directory = robot, robot.directory
@@ -43,6 +45,20 @@ def robot_at(root):
 
 
 class MapResetTest(unittest.TestCase):
+    def test_map_writer_retains_costmap_sample_age_and_skips_stale_feedback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            robot = robot_at(Path(directory))
+            robot.set_map(robot.source, robot.grid, robot.zones)
+            received = clock.monotonic() - .7
+            robot.costmaps['global'] = (received, 0, True, robot.grid)
+            robot.write_maps()
+            saved = json.loads((robot.directory / 'global_costmap.json').read_text())
+            self.assertAlmostEqual(time() - saved['stamp_s'], .7, delta=.2)
+            robot.costmaps['global'] = (clock.monotonic() - 5, 0, True, robot.grid)
+            with patch('robot_ros.atomic_json') as write:
+                robot.write_maps()
+                write.assert_not_called()
+
     def test_slam_pose_auto_confirmation_requires_map_pose_and_fresh_sensors(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -98,6 +114,7 @@ class MapResetTest(unittest.TestCase):
                 self.assertEqual(robot.published_at, published_at)
                 robot.receive_map(robot.source)
                 self.assertEqual(robot.grid['revision'], 2)
+                robot.write_maps()
                 self.assertEqual(json.loads((robot.directory / 'map.json').read_text())['cells'], grid['cells'])
                 atomic_json(robot.control.zones_path, robot.zones)
                 robot.control.stations_path.write_text('old stations')

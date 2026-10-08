@@ -46,6 +46,7 @@ class RobotROS:
         self.costmaps = {}
         self.costmap_received = {}
         self.costmap_saved = 0
+        self.map_saved = None
         self.scan = None
         self.path = []
         self.path_at = 0
@@ -127,7 +128,6 @@ class RobotROS:
                                 path.rename(backup / path.name)
                         zones = dict(map_id=map_id, revision=0, zones=[])
                 self.set_map(message, grid, zones)
-                atomic_json(self.directory / 'map.json', grid)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.grid = None
             self.control.request_stop(str(exc))
@@ -152,7 +152,6 @@ class RobotROS:
                 self.published_at = time.monotonic()
                 self.costmaps = {}
         self.maps.publish(message)
-        atomic_json(self.directory / 'navigation_map.json', {**derived, 'zone_revision': zones['revision']})
 
     def receive_costmap(self, name, message):
         if message.header.frame_id != 'map' or message.info.width * message.info.height > 2_000_000:
@@ -171,10 +170,24 @@ class RobotROS:
         with self.lock:
             if published == self.published_at and time.monotonic() > published + .4 and -.1 <= age <= 2:
                 self.costmaps[name] = (time.monotonic(), revision, valid, grid)
-        if name == 'global' and self.grid and time.monotonic() - self.costmap_saved > .5:
-            self.costmap_saved = time.monotonic()
-            atomic_json(self.directory / 'global_costmap.json', {**grid, 'map_id': self.grid['map_id'],
-                        'revision': revision, 'zone_revision': revision, 'stamp_s': time.time()})
+
+    def write_maps(self):
+        with self.lock:
+            grid, derived, zones = self.grid, self.derived, self.zones
+            global_map = self.costmaps.get('global')
+        if not grid or not derived or not zones:
+            return
+        key = grid['map_id'], grid['revision'], zones['revision']
+        if self.map_saved != key:
+            atomic_json(self.directory / 'map.json', grid)
+            atomic_json(self.directory / 'navigation_map.json', {**derived, 'zone_revision': zones['revision']})
+            self.map_saved = key
+        if (global_map and fresh(global_map[0], time.monotonic(), 2)
+                and global_map[1] == zones['revision'] and global_map[0] != self.costmap_saved):
+            atomic_json(self.directory / 'global_costmap.json', {**global_map[3], 'map_id': grid['map_id'],
+                        'revision': global_map[1], 'zone_revision': global_map[1],
+                        'stamp_s': time.time() - (time.monotonic() - global_map[0])})
+            self.costmap_saved = global_map[0]
 
     def zones_ready(self):
         now = time.monotonic()

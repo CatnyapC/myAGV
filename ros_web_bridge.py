@@ -134,6 +134,14 @@ def main():
                 rospy.logwarn_throttle(10, 'ROS planner check pending: %s', exc)
             time.sleep(1)
 
+    def map_snapshots():
+        while not rospy.is_shutdown():
+            try:
+                robot.write_maps()
+            except Exception as exc:
+                rospy.logerr_throttle(5, 'Map snapshot error: %s', exc)
+            time.sleep(.2)
+
     def snapshots():
         while not rospy.is_shutdown():
             try:
@@ -161,6 +169,7 @@ def main():
         if device:
             threading.Thread(target=camera, args=(camera_id, device), daemon=True).start()
     threading.Thread(target=monitor, daemon=True).start()
+    threading.Thread(target=map_snapshots, daemon=True).start()
     threading.Thread(target=snapshots, daemon=True).start()
     control.run()
 
