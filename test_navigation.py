@@ -253,6 +253,17 @@ class NavigationTest(unittest.TestCase):
         # jump across the entire heading acceptance window.
         self.assertLess(turn_min / 5, 2 * params[prefix + "yaw_goal_tolerance"])
 
+    def test_web_arrival_tolerance_keeps_strict_default(self):
+        self.nav.client.get_state.return_value = 3
+        self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + .09,
+                                             yaw_deg=POSE['yaw_deg'] + 8)
+        self.nav.go_to(POSE, position_tolerance=.10, yaw_tolerance=10)
+        with self.assertRaisesRegex(RuntimeError, 'tolerance'):
+            self.nav.go_to(POSE)
+        self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + .11)
+        with self.assertRaisesRegex(RuntimeError, 'tolerance'):
+            self.nav.go_to(POSE, position_tolerance=.10, yaw_tolerance=10)
+
     def test_timeout_cancels_and_waits_for_ack(self):
         self.nav.client.get_state.return_value = 1
         self.nav.client.cancel_goal.side_effect = lambda: setattr(self.nav.client.get_state, "return_value", 2)

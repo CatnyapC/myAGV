@@ -47,8 +47,8 @@
         acc_lim_y: 0.2
         acc_lim_theta: 0.3
         holonomic_robot: false
-        yaw_goal_tolerance: 0.05
-        xy_goal_tolerance: 0.03
+        yaw_goal_tolerance: 0.12
+        xy_goal_tolerance: 0.08
         trans_stopped_vel: 0.005
         theta_stopped_vel: 0.01
         latch_xy_goal_tolerance: true

@@ -224,12 +224,14 @@ class Navigation:
             time.sleep(0.1)
         raise RuntimeError("Navigation cancellation unconfirmed; use hardware stop")
 
-    def go_to(self, pose, timeout=120):
+    def go_to(self, pose, timeout=120, *, position_tolerance=0.05, yaw_tolerance=5):
         pose = validate_pose(pose)
         if getattr(self, 'guard', None):
             self.guard(pose)
         if not number(timeout) or timeout <= 0:
             raise ValueError("Navigation timeout must be positive and finite")
+        if not all(number(v) and v > 0 for v in (position_tolerance, yaw_tolerance)):
+            raise ValueError("Arrival tolerances must be positive and finite")
         if not self.client.wait_for_server(self.ros.Duration(5)):
             raise RuntimeError("move_base unavailable")
         self.get_pose()  # Refuse motion without current localization.
@@ -261,8 +263,9 @@ class Navigation:
                     actual = self.get_pose()
                     distance = math.hypot(actual["x_m"] - pose["x_m"], actual["y_m"] - pose["y_m"])
                     angle = abs((actual["yaw_deg"] - pose["yaw_deg"] + 180) % 360 - 180)
-                    if distance > 0.05 or angle > 5:
-                        raise RuntimeError("Arrival outside 5 cm / 5 degree tolerance")
+                    if distance > position_tolerance or angle > yaw_tolerance:
+                        raise RuntimeError("Arrival outside %g cm / %g degree tolerance" %
+                                           (position_tolerance * 100, yaw_tolerance))
                     return
                 time.sleep(0.05)
             raise TimeoutError("Navigation timed out")

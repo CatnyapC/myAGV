@@ -140,7 +140,8 @@ class ControlTest(unittest.TestCase):
                 self.assertTrue(c.snapshot()['navigation_ready'])
                 c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=math.pi / 2)))
                 c.fold.assert_not_called()
-                c.robot.nav.go_to.assert_called_once_with(dict(x_m=1, y_m=2, yaw_deg=90))
+                c.robot.nav.go_to.assert_called_once_with(dict(x_m=1, y_m=2, yaw_deg=90),
+                                                         position_tolerance=.10, yaw_tolerance=10)
                 c.robot.zero.assert_called_once()
                 self.assertFalse(c.base_enabled)
                 c.localized = False

@@ -420,7 +420,7 @@ class Control:
         self.phase, self.status, self.goal = 'navigating', 'Navigating', pose
         self.base_enabled = True
         try:
-            self.robot.nav.go_to(pose)
+            self.robot.nav.go_to(pose, position_tolerance=.10, yaw_tolerance=10)
         finally:
             self.base_enabled = False
             self.robot.zero()
