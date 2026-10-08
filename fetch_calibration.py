@@ -2,6 +2,8 @@
 import base64
 import math
 
+FETCH_VISION_TIMEOUT_S = 30
+
 
 def calibration_config(value):
     if value is None:

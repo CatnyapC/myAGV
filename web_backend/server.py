@@ -777,8 +777,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     entry.update(status='returned')
                     response = dict(id=handled, result=result)
                 except (web.HTTPException, OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
-                    entry.update(status='error', error=str(exc))
-                    response = dict(id=handled, error=str(exc))
+                    error = exc.text if isinstance(exc, web.HTTPException) else str(exc)
+                    entry.update(status='error', error=error)
+                    response = dict(id=handled, error=error)
                     if photo is not None:
                         async with photo_lock:
                             if any(p['id'] == photo['id'] for p in photos.value['photos']):

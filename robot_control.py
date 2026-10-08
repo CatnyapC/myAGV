@@ -16,7 +16,7 @@ import time
 import uuid
 
 from navigation import arm_deadline, load_stations, pickup_angles, save_station, validate_angles, wait_arm
-from fetch_calibration import alignment_command, calibration_config, pickup_delta
+from fetch_calibration import FETCH_VISION_TIMEOUT_S, alignment_command, calibration_config, pickup_delta
 from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
 from web_backend.map_data import validate_rectangle
@@ -902,12 +902,12 @@ class Control:
                 images = {camera: self.capture(camera, vision=True)['image'] for camera in ('front', 'arm')}
                 request_id = str(uuid.uuid4())
                 atomic_json(request_path, dict(id=request_id, boot_id=self.boot_id, task_id=self.task_id,
-                    stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + 20,
+                    stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + FETCH_VISION_TIMEOUT_S + 5,
                     item=packet['vision_item'], images=images, history=history,
                     round=round_index + 1, preview=packet.get('preview', False), limits=config,
                     prompt=packet.get('fetch_settings', {}).get('prompt')))
                 self.status = 'Round %d: waiting for LLM' % (round_index + 1)
-                end = time.monotonic() + 20
+                end = time.monotonic() + FETCH_VISION_TIMEOUT_S + 5
                 while True:
                     current()
                     try:

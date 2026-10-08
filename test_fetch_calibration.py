@@ -84,6 +84,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         with patch('web_backend.resolve.request_json', provider):
             await locate_pickup(images, dict(name='cup', appearance='red'), 'fake-key', images, history, prompt='Edited prompt', trace=trace)
         body = provider.call_args.args[0]
+        self.assertEqual(provider.call_args.args[2], 30)
         self.assertEqual(body['reasoning'], {'enabled': False})
         self.assertEqual(body['max_tokens'], 64)
         self.assertTrue(body['response_format']['json_schema']['strict'])
@@ -105,6 +106,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             requests = []
 
             def respond(path, value):
+                self.assertGreater(value['expires_at_s'] - time.time(), 34)
                 requests.append(value)
                 atomic_json(path, value)
                 atomic_json(c.directory / 'fetch_vision_response.json', {'id': value['id'], 'result': next(results)})
