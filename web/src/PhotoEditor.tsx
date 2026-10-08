@@ -31,7 +31,7 @@ async function normalizedPng(file: File): Promise<Blob> {
 }
 
 export function PhotoEditor(props: {
-  photo: Photo | null; index: PhotoIndex; stations: Stations; enabled: boolean;
+  photo: Photo | null; index: PhotoIndex; stations: Stations; enabled: boolean; autoDescribe: boolean;
   onClose: () => void; onChange: (index: PhotoIndex, addedId?: string) => void; onBusy: (value: boolean) => void; onStop: () => void;
 }) {
   const currentItem = props.index.items.find(i => i.id === props.photo?.item_id);
@@ -44,7 +44,7 @@ export function PhotoEditor(props: {
   const [stationConfirmed, setStationConfirmed] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [describeRequested, setDescribeRequested] = useState<{ name?: string } | null>(props.photo?.kind === 'reference' && !currentItem?.appearance ? {} : null);
+  const [describeRequested, setDescribeRequested] = useState<{ name?: string } | null>(props.autoDescribe ? {} : null);
   useEffect(() => { if (!props.enabled) setDescribeRequested(null); }, [props.enabled]);
   useEffect(() => {
     if (!describeRequested || !props.photo || !props.enabled) return;

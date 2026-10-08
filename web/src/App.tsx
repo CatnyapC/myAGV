@@ -57,7 +57,7 @@ export function App() {
   const [stations, setStations] = useState<Stations>({});
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState('');
-  const [photoMode, setPhotoMode] = useState<'import' | 'edit' | null>(null);
+  const [photoMode, setPhotoMode] = useState<'import' | 'edit' | 'uploaded' | null>(null);
   const [requestText, setRequestText] = useState('');
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -135,7 +135,7 @@ export function App() {
     }
   }, [resolution, photos?.revision, packet?.info.map_id, savedSettings?.revision]);
   useEffect(() => {
-    if (selectedPhotoId && photos && !photos.photos.some(p => p.id === selectedPhotoId)) { setSelectedPhotoId(null); if (photoMode === 'edit') setPhotoMode(null); }
+    if (selectedPhotoId && photos && !photos.photos.some(p => p.id === selectedPhotoId)) { setSelectedPhotoId(null); if (photoMode !== 'import') setPhotoMode(null); }
     if (selectedItemId && photos && !photos.items.some(i => i.id === selectedItemId)) setSelectedItemId('');
   }, [photos, selectedPhotoId, selectedItemId, photoMode]);
 
@@ -316,7 +316,7 @@ export function App() {
     const id = addedId ?? selectedPhotoId;
     setSelectedPhotoId(id);
     setSelectedItemId(index.photos.find(p => p.id === id)?.item_id ?? '');
-    if (addedId) setPhotoMode('edit');
+    if (addedId) setPhotoMode(index.photos.find(p => p.id === addedId)?.kind === 'reference' ? 'uploaded' : 'edit');
   }
   async function capture(camera_id: 'front' | 'arm') {
     if (!canEdit || !packet || !photos || busy) return;
@@ -529,7 +529,7 @@ export function App() {
       })}
     </div>
     </div>
-    {photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId} photo={photoMode === 'edit' ? selectedPhoto : null}
+    {photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId} photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
       index={photos} stations={stations} enabled={canEdit} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}
     <Dialog.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
       <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="settings-dialog">
