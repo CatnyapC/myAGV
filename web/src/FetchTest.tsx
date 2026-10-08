@@ -5,9 +5,10 @@ import { Button } from './ui';
 type FetchSettings = { revision: number; values: { max_step_mm: number; max_total_mm: number; prompt: string } };
 type Part = { type: string; text?: string; image_url?: { url: string } };
 type Round = {
-  id: string; round: number; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
+  id: string; round: number; mode?: 'grasp' | 'approach'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
   model?: string; messages?: [{ content: string }, { content: Part[] }];
   result_json?: string; limited_mm?: { X: number; Y: number }; error?: string;
+  base_command?: { forward_m: number; turn_deg: number }; corrected_location?: { x_m: number; y_m: number; uncertainty_m: number };
 };
 
 export function FetchTest(props: {
@@ -91,10 +92,12 @@ export function FetchTest(props: {
     {rounds.map(round => {
       const parts = round.messages?.[1].content ?? [];
       return <article className="fetch-round" key={round.id}>
-        <header><strong>Round {round.round}</strong><span>{round.preview ? 'Preview' : 'Align'} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
+        <header><strong>Round {round.round}</strong><span>{round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
         <span className="muted">{new Date(round.started_at_s * 1000).toLocaleTimeString()} · {round.model}</span>
         {round.result_json && <pre>LLM: {round.result_json}</pre>}
         {round.limited_mm && <span>Limited suggestion: X {round.limited_mm.X} mm · Y {round.limited_mm.Y} mm</span>}
+        {round.base_command && <span>Base suggestion: forward {(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
+        {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}
         <span className="muted">Request log; movement completion appears in TASK. History labels show previously executed commands.</span>
         {round.error && <span role="alert" className="muted">{round.error}</span>}
         <div className="fetch-log-images">{parts.map((part, i) => part.image_url && <figure key={i}>

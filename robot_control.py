@@ -21,6 +21,7 @@ from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
 from web_backend.map_data import validate_rectangle
 from web_backend.photos import digest_station
+from web_backend.item_locations import approach_step, location_config
 from web_backend.simulation import validate_pose
 from web_backend.storage import atomic_json
 
@@ -441,12 +442,12 @@ class Control:
                     packet = self.queue.get_nowait()
                     self.finish(packet, dict(status='cancelled', error='Cancelled before execution'))
 
-    def go(self, pose):
+    def go(self, pose, precise=False):
         self.travel_guard(pose)
         self.phase, self.status, self.goal = 'navigating', 'Navigating', pose
         self.base_enabled = True
         try:
-            self.robot.nav.go_to(pose, position_tolerance=.10, yaw_tolerance=10)
+            self.robot.nav.go_to(pose, position_tolerance=.03 if precise else .10, yaw_tolerance=5 if precise else 10)
         finally:
             self.base_enabled = False
             self.robot.zero()
@@ -707,6 +708,8 @@ class Control:
             self.go(pose)
         elif kind == 'fetch':
             self.fetch(packet)
+        elif kind == 'approach_item':
+            return self.approach_item(packet)
         elif kind == 'update_plan':
             self.map_update = {**self.plan_update(packet), 'active': False, 'state': 'planned',
                                'map_id': self.robot.grid['map_id'], 'completed': 0, 'round': 0, 'captures': 0, 'remaining_s': 0}
@@ -798,6 +801,77 @@ class Control:
                     update['round'] += 1
         finally:
             update['active'], update['state'] = False, 'interrupted'
+
+    def approach_item(self, packet):
+        config = location_config(packet['location_config'])
+        item, estimate = packet['vision_item'], packet['estimate']
+        map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
+        request_path = self.directory / 'fetch_vision_request.json'
+        response_path = self.directory / 'fetch_vision_response.json'
+        history = []
+
+        def current():
+            if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+                raise Stopped('Item approach cancelled or lease expired')
+            if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
+                raise ValueError('Map or no-go zones changed during item approach')
+            self.travel_guard(self.robot.nav.get_pose())
+
+        try:
+            for round_index in range(16):
+                current()
+                self.phase, self.status = 'approaching_item', 'Item approach round %d/16: stopped camera check' % (round_index + 1)
+                self.base_enabled = False
+                self.robot.zero()
+                self.robot.nav.wait_stopped()
+                capture = self.capture('front', vision=True, update_key='approach:%s:%d' % (self.task_id, round_index))
+                pose = capture['base_pose']
+                request_id = str(uuid.uuid4())
+                atomic_json(request_path, dict(id=request_id, mode='approach', boot_id=self.boot_id, task_id=self.task_id,
+                    stop_epoch=self.stop_epoch, map_id=map_id, zone_revision=revision, expires_at_s=time.time() + 20,
+                    item=item, estimate=estimate, reference_photo_id=packet['reference_photo_id'], base_pose=pose, capture_id=capture['capture_id'],
+                    images=dict(front=capture['image']), history=history, round=round_index + 1,
+                    clearance_m=self.config['clearance_m'], catalog_signature=packet['catalog_signature']))
+                end = time.monotonic() + 20
+                while True:
+                    current()
+                    try:
+                        response = json.loads(response_path.read_text())
+                    except (OSError, ValueError):
+                        response = {}
+                    if response.get('id') == request_id:
+                        if response.get('error'):
+                            raise RuntimeError(response['error'])
+                        break
+                    if time.monotonic() >= end:
+                        raise RuntimeError('Item approach vision timed out')
+                    time.sleep(.05)
+                current()
+                feedback = self.robot.nav.get_pose()
+                feedback = dict(feedback, yaw_rad=math.radians(feedback['yaw_deg']))
+                yaw_error = math.atan2(math.sin(feedback['yaw_rad'] - pose['yaw_rad']), math.cos(feedback['yaw_rad'] - pose['yaw_rad']))
+                if math.hypot(feedback['x_m'] - pose['x_m'], feedback['y_m'] - pose['y_m']) > .03 or abs(yaw_error) > math.radians(5):
+                    raise RuntimeError('Base pose changed after approach photo')
+                costmap = self.robot.costmaps['global'][3]
+                goal, corrected = approach_step(response['result'], dict(base_pose=pose), self.robot.grid,
+                    self.robot.zones['zones'], costmap, item, self.config['clearance_m'], config)
+                estimate = dict(corrected, base_pose=pose)
+                if goal is None:
+                    return dict(rounds=round_index + 1, estimate=corrected)
+                if round_index == 15:
+                    raise RuntimeError('Item approach did not converge after 16 rounds')
+                self.go(dict(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad'])), precise=True)
+                current()
+                self.robot.nav.wait_stopped()
+                after = self.robot.nav.get_pose()
+                after = dict(after, yaw_rad=math.radians(after['yaw_deg']))
+                history.append(dict(images=dict(front=capture['image']), base_pose=pose, after_pose=after,
+                                    commanded={k: response['result'][k] for k in ('forward_m', 'turn_deg')}, estimate=corrected))
+        finally:
+            self.base_enabled = False
+            self.robot.zero()
+            request_path.unlink(missing_ok=True)
+            response_path.unlink(missing_ok=True)
 
     def calibrate_fetch(self, packet, config):
         config = calibration_config(config)
@@ -928,6 +1002,7 @@ class Control:
         if update and update.get('active'):
             update['remaining_s'] = max(0, math.ceil(update['deadline'] - time.monotonic()))
         return dict(boot_id=self.boot_id, stop_epoch=self.stop_epoch, stamp_s=time.time(), phase=self.phase, status=self.status, map_update=update,
+                    item_approach_available=True,
                     task_id=self.task_id, arm_available=self.arm is not None, arm_homed=self.arm_homed,
                     arm_angles=self.angles if fresh(self.arm_stamp, time.monotonic(), 2) else None,
                     arm_error=self.arm_error, transport_angles=self.config['transport_angles'],

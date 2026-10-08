@@ -35,6 +35,7 @@ export type HardwareState = {
     completed: number; round: number; captures: number; remaining_s: number; capped: boolean };
   mapping_mode?: boolean;
   small_obstacle_m?: number;
+  item_approach_available?: boolean;
 };
 
 export function hardwareBlocks(state?: HardwareState, requireArm = true): string[] {

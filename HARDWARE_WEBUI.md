@@ -297,6 +297,24 @@ occupied ROS costmap cells and disconnected regions, and leaves space for the
 chassis and estimate uncertainty. Low-confidence estimates cannot provide a goal.
 **Resolve** can also select this approach. Fetch and grasping are unchanged.
 
+After **Go** reaches the observation point, select the item pin and use **Refine
+approach** in the map panel. The item must be visible in the front camera. This
+base-only task makes at most 16 stopped camera checks, with at most 15 adjustments:
+each moves forward by at most 0.20 m and turns by at most 15 degrees. Every step
+uses fresh localization, LiDAR, odometry and ROS costmaps, and checks the entire
+short segment against inflated obstacles, unknown space and no-go zones. It keeps
+the configured stand-off plus uncertainty and movement tolerance.
+
+Refinement shares Fetch's compressed-camera acquisition, vision request/response
+channel, provider and **LLM ROUNDS** log. It sends the original item observation, all executed movement records,
+measured before/after poses, the latest two previous images and the current image.
+Each accepted answer saves a new map estimate on that round's acquisition photo;
+the item pin and preview update automatically. Arrival needs a geometric check of
+distance and heading in addition to the LLM's answer. Lost/ambiguous items, unsafe
+suggestions, lack of progress, timeout, stale sensors or exhausted rounds stop the
+task. STOP, disconnect, map/no-go changes and pose drift invalidate pending moves;
+late answers after cancellation are discarded. No arm or gripper command is sent.
+
 **Map actions > Estimate item positions** retries existing front observations.
 Missing credentials, malformed results and STOP/map changes retain the photos
 without applying a location result. Simulator fixtures are analyzed only on
@@ -312,7 +330,8 @@ before restarting `myagv-api`:
 
 Camera yaw is positive left from chassis forward; offsets are chassis forward/left
 in meters. A single RGB image supplies approximate depth, not a measured object
-position. This version uses the newest observation, not multi-view triangulation.
+position. Refinement uses viewpoint history to ask the LLM for a better estimate;
+it does not perform calibrated geometric triangulation or prove grasp readiness.
 
 Run in Bash on the robot:
 

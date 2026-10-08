@@ -19,7 +19,7 @@ from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
 from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
-from .item_locations import approach_goal, catalog_signature, estimate_items, location_config
+from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, refine_approach
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off')
@@ -495,6 +495,22 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     data = {**data, 'type': 'zones', 'zones': current}
                 if kind == 'teach' and data.get('overwrite') is True:
                     data = {**data, 'station_digest': digest_station(data['expected_station'])}
+                if kind == 'approach_item':
+                    if not llm_key or data.get('index_revision') != photos.value['revision']:
+                        raise ValueError('Configured LLM and current photo index required for approach')
+                    snapshot = photos.snapshot(editor.grid['map_id'])
+                    item = next((i for i in snapshot['items'] if i['id'] == data.get('item_id')), None)
+                    estimate = next((e for e in snapshot['locations'] if e['item_id'] == data.get('item_id')), None)
+                    if not item or not estimate or estimate['confidence'] < .7:
+                        raise ValueError('Current confident item location required for approach')
+                    if not editor.hardware.control.get('item_approach_available'):
+                        raise ValueError('Restart robot controller to enable item approach')
+                    if not editor.hardware.cameras.get('front') or not editor.hardware.control.get('navigation_ready'):
+                        raise ValueError('Fresh front camera and navigation readiness required')
+                    data = {**data, 'vision_item': {k: item[k] for k in ('id', 'name', 'appearance')},
+                            'estimate': estimate, 'location_config': location_calibration,
+                            'reference_photo_id': estimate['photo_id'],
+                            'catalog_signature': catalog_signature(photos.value['items'])}
                 if kind in ('fetch', 'fetch_test'):
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')
@@ -691,9 +707,14 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
             def current(value):
                 control = editor.hardware.control
-                return (control.get('phase') == 'calibrating' and control.get('boot_id') == value['boot_id']
+                approach = value.get('mode') == 'approach'
+                return (control.get('phase') == ('approaching_item' if approach else 'calibrating') and control.get('boot_id') == value['boot_id']
                         and control.get('task_id') == value['task_id'] and control.get('stop_epoch') == value['stop_epoch']
-                        and editor.grid['map_id'] == value['map_id'] and time.time() < value['expires_at_s'])
+                        and editor.grid['map_id'] == value['map_id'] and time.time() < value['expires_at_s']
+                        and (not approach or (editor.zones['revision'] == value['zone_revision']
+                             and control.get('zone_revision') == value['zone_revision']
+                             and (editor.hardware.grid or {}).get('map_id') == value['map_id']
+                             and catalog_signature(photos.value['items']) == value['catalog_signature'])))
 
             while True:
                 await asyncio.sleep(.1)
@@ -707,27 +728,63 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 if fetch_log.get('task_id') != value['task_id']:
                     fetch_log.update(task_id=value['task_id'], rounds=[])
                 entry = dict(id=handled, round=value.get('round', len(fetch_log['rounds']) + 1),
-                             preview=value.get('preview', False), status='requesting', started_at_s=time.time())
-                fetch_log['rounds'] = (fetch_log['rounds'] + [entry])[-9:]
+                             mode=value.get('mode', 'grasp'), preview=value.get('preview', False), status='requesting', started_at_s=time.time())
+                fetch_log['rounds'] = (fetch_log['rounds'] + [entry])[-16:]
                 fetch_log['revision'] += 1
                 started = time.monotonic()
+                photo = None
                 try:
                     if not llm_key:
                         raise ValueError('OpenRouter key unavailable for fetch calibration')
                     if resolve_lock.locked():
                         raise ValueError('Another LLM request is running; retry fetch explicitly')
                     async with resolve_lock:
-                        goal = {camera: 'data:image/jpeg;base64,' + base64.b64encode(
-                            await asyncio.to_thread(photos.image_path(value['item']['goal'][camera]).with_suffix('.jpg').read_bytes)
-                        ).decode('ascii') for camera in ('front', 'arm')}
-                        fetch_log['revision'] += 1
-                        result = await locate_pickup(value['images'], value['item'], llm_key, goal, value['history'],
-                                                     prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'))
-                    entry.update(status='returned', limited_mm=alignment_command(result, value.get('limits')))
+                        if value.get('mode') == 'approach':
+                            async with photo_lock:
+                                photo = await ingest_capture(value['capture_id'])
+                                if photo['base_pose'] != value['base_pose'] or not current(value):
+                                    raise ValueError('Item approach acquisition or task changed')
+                                photos.set_locations(photo['id'], dict(status='running', catalog_signature=value['catalog_signature'], estimates=[]), photos.value['revision'])
+                            reference = next((p for p in photos.value['photos'] if p['id'] == value['reference_photo_id']
+                                              and p.get('map_id') == value['map_id'] and p.get('current', True)), None)
+                            if reference is None:
+                                raise ValueError('Original item observation unavailable')
+                            image_path = photos.image_path(reference['id'])
+                            mime = 'jpeg' if image_path.with_suffix('.jpg').is_file() else 'png'
+                            image_path = image_path.with_suffix('.jpg') if mime == 'jpeg' else image_path
+                            reference_image = 'data:image/' + mime + ';base64,' + base64.b64encode(await asyncio.to_thread(image_path.read_bytes)).decode('ascii')
+                            result = await refine_approach(value, llm_key, location_calibration,
+                                dict(image=reference_image, base_pose=reference['base_pose']), trace=entry)
+                            await asyncio.to_thread(editor.hardware.refresh)
+                            if not current(value):
+                                raise ValueError('Item approach stopped or changed during vision request')
+                            goal, corrected = await asyncio.to_thread(approach_step, result, photo, editor.grid, editor.zones['zones'],
+                                editor.hardware.costmap(), value['item'], value['clearance_m'], location_calibration)
+                            async with photo_lock:
+                                if not current(value) or await asyncio.to_thread(load_json, request_path, {}) != value:
+                                    raise ValueError('Item approach stopped or catalog changed')
+                                photos.set_locations(photo['id'], dict(status='complete', catalog_signature=value['catalog_signature'], estimates=[corrected]), photos.value['revision'])
+                            entry.update(corrected_location=corrected, base_command={k: result[k] for k in ('forward_m', 'turn_deg')})
+                            await editor.emit('photos')
+                        else:
+                            goal = {camera: 'data:image/jpeg;base64,' + base64.b64encode(
+                                await asyncio.to_thread(photos.image_path(value['item']['goal'][camera]).with_suffix('.jpg').read_bytes)
+                            ).decode('ascii') for camera in ('front', 'arm')}
+                            fetch_log['revision'] += 1
+                            result = await locate_pickup(value['images'], value['item'], llm_key, goal, value['history'],
+                                                         prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'))
+                            entry.update(limited_mm=alignment_command(result, value.get('limits')))
+                    entry.update(status='returned')
                     response = dict(id=handled, result=result)
-                except (web.HTTPException, OSError, ValueError, KeyError, TypeError) as exc:
+                except (web.HTTPException, OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
                     entry.update(status='error', error=str(exc))
                     response = dict(id=handled, error=str(exc))
+                    if photo is not None:
+                        async with photo_lock:
+                            if any(p['id'] == photo['id'] for p in photos.value['photos']):
+                                photos.set_locations(photo['id'], dict(status='error' if current(value) else 'cancelled',
+                                    catalog_signature=value['catalog_signature'], estimates=[], error=str(exc)[:300]), photos.value['revision'])
+                        await editor.emit('photos')
                 finally:
                     entry['elapsed_s'] = round(time.monotonic() - started, 2)
                     fetch_log['revision'] += 1

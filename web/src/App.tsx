@@ -104,6 +104,12 @@ export function App() {
   const selectedPhoto = photos?.photos.find(p => p.id === selectedPhotoId) ?? null;
   const locationPhotos = photos?.photos.filter(p => p.kind === 'observation' && p.map_id === packet?.info.map_id && p.current !== false) ?? [];
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
+  const selectedLocation = photos?.locations?.find(location => location.item_id === selectedItemId);
+  const approachReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)),
+    ...(!selectedLocation || selectedLocation.confidence < .7 ? ['Select a confident item position'] : []),
+    ...(state?.llm?.status !== 'configured' ? ['Configure LLM'] : []), ...(!state?.cameras?.front ? ['Fresh front camera required'] : []),
+    ...(!state?.hardware?.item_approach_available ? ['Restart robot controller to enable approach'] : []),
+    ...(busy ? ['Current request running'] : [])];
   const hardwareReasons = !connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware);
   const goReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)), ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
   const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : !selectedItem.observation_current ? ['Confirm this item in a current observation'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : state?.llm?.status === 'configured' && !selectedItem.grasp_goal_ready ? ['Record correct-grasp views in the item editor'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
@@ -515,6 +521,12 @@ export function App() {
           <span className="muted location-status" role="status">Estimating item positions…</span>}
         {locationPhotos.some(p => p.location_analysis?.status === 'error') &&
           <span className="muted location-status" role="status">Position estimation failed; retry in Map actions.</span>}
+        {state?.demo === false && selectedLocation && <div className="action-line location-status">
+          <span className="muted">{selectedLocation.name} · Go to the observation point, then refine · max 16 rounds.</span>
+          <Button disabled={approachReasons.length > 0} title={approachReasons.join('; ')} onClick={() => void hardwareCommand('approach_item', {
+            item_id: selectedItemId, index_revision: photos?.revision,
+          })}>Refine approach</Button>
+        </div>}
         {state?.demo === false && <MapUpdateControls state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} />}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
           <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"

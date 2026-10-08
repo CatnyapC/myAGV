@@ -62,8 +62,9 @@ def main():
             if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
                 raise RuntimeError('Arm moved during acquisition')
             metadata = dict(metadata, arm_angles_deg=after)
-        if vision:
-            return dict(image=vision_image(frame, cv2))
+        compressed = vision_image(frame, cv2) if vision or grasp_goal else None
+        if vision and update_key is None:
+            return dict(image=compressed)
         if not persist:
             return {}
         if update_key is not None:
@@ -74,11 +75,12 @@ def main():
         capture_id = str(uuid.uuid4())
         metadata = dict(metadata, capture_id=capture_id)
         atomic_bytes(directory / 'captures' / (capture_id + '.png'), encoded.tobytes())
-        if grasp_goal:
-            jpeg = base64.b64decode(vision_image(frame, cv2).split(',', 1)[1])
+        if grasp_goal or vision:
+            jpeg = base64.b64decode(compressed.split(',', 1)[1])
             atomic_bytes(directory / 'captures' / (capture_id + '.jpg'), jpeg)
         atomic_json(directory / 'captures' / (capture_id + '.json'), metadata)
-        return dict(capture_id=capture_id)
+        return dict(capture_id=capture_id, **(dict(image=compressed, base_pose=metadata['base_pose'],
+                    captured_at_s=metadata['captured_at_s']) if vision else {}))
 
     control = Control(robot, directory, capture)
     robot.nav.approach_settings = (.3, .03, control.config['clearance_m'])
