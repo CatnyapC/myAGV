@@ -106,6 +106,19 @@ class MapUpdateTest(unittest.TestCase):
         self.assertFalse(c.map_update['active'])
         self.assertEqual(c.map_update['state'], 'interrupted')
 
+    def test_navigation_guard_enforces_window_even_without_ros_timer(self):
+        c = fake_control()
+        c.deadline = time.monotonic() + .45
+        c.base_enabled = True
+        c.map_update = dict(active=True, map_id='map', zone_revision=2,
+                            deadline=time.monotonic() - 1, pause_requested=False)
+        with self.assertRaises(UpdatePaused):
+            c.travel_guard(dict(x_m=1, y_m=1, yaw_deg=0))
+        self.assertFalse(c.base_enabled)
+        c.robot.zero.assert_called_once()
+        c.robot.nav.client.cancel_all_goals.assert_called_once()
+        c.robot.validate_goal.assert_not_called()
+
     def test_refresh_preserves_history_without_inheriting_moving_item_identity(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

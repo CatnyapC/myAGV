@@ -276,6 +276,11 @@ class Control:
         if update and update['active']:
             if not self.robot.grid or self.robot.grid['map_id'] != update['map_id'] or self.robot.zones['revision'] != update['zone_revision']:
                 raise Stopped('Update map or no-go revision changed')
+            if not update['pause_requested'] and time.monotonic() >= update['deadline']:
+                update['pause_requested'], update['pause_reason'] = True, 'Update time limit reached; map retained'
+                self.base_enabled = False
+                self.robot.zero()
+                self.robot.nav.client.cancel_all_goals()
             if update['pause_requested']:
                 raise UpdatePaused()
         if not self.localized:
