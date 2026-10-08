@@ -11,7 +11,7 @@ import uuid
 from unittest.mock import AsyncMock, Mock, call, patch
 from aiohttp.test_utils import TestClient, TestServer
 
-from fetch_calibration import alignment_command, calibration_config, pickup_delta, vision_image
+from fetch_calibration import alignment_command, calibration_config, pickup_delta, position_alignment, vision_image
 from test_robot_control import fake_control
 from web_backend.resolve import locate_pickup
 from web_backend.map_data import demo_map
@@ -40,6 +40,17 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             c.calibrate_fetch.assert_not_called()
         c.arm.set_coords.assert_not_called()
         c.arm.set_angles.assert_not_called()
+
+    def test_image_positions_convert_to_bounded_moves(self):
+        p = dict(arm_goal=.56, arm_current=.30, front_goal=.50, front_current=.50)
+        self.assertEqual(position_alignment(p, None, []), dict(x_mm=-2, y_mm=0))
+        self.assertEqual(position_alignment(dict(p, arm_current=.8, front_current=.3), None, []), dict(x_mm=2, y_mm=-2))
+        self.assertEqual(position_alignment(dict(p, arm_current=.57), None, []), dict(x_mm=0, y_mm=0))
+        previous = dict(positions=dict(p, arm_current=.60), commanded_mm=dict(X=2, Y=0))
+        self.assertEqual(position_alignment(dict(p, arm_current=.58), None, [previous]), dict(x_mm=2, y_mm=0))
+        for value in (None, True, float('nan'), -0.1, 1.1):
+            with self.assertRaises(ValueError):
+                position_alignment(dict(p, arm_current=value), None, [])
 
     def test_grasp_height_records_only_measured_z_without_motion_or_capture(self):
         c = fake_control()
@@ -78,7 +89,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_minimal_provider_request(self):
         images = dict(front='data:image/jpeg;base64,AQ==', arm='data:image/jpeg;base64,Ag==')
-        provider = AsyncMock(return_value={'x_mm': 0, 'y_mm': 0})
+        provider = AsyncMock(return_value=dict(arm_goal=.5, arm_current=.5, front_goal=.5, front_current=.5))
         history = [dict(images=images, commanded_mm=dict(X=1, Y=-1))] * 2
         trace = {}
         with patch('web_backend.resolve.request_json', provider):
@@ -94,7 +105,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any('GOAL' in label for label in labels))
         self.assertTrue(any('"X": 1' in label and '"Y": -1' in label for label in labels))
         self.assertEqual(trace['messages'][0]['content'], 'Edited prompt')
-        self.assertEqual(json.loads(trace['result_json']), {'x_mm': 0, 'y_mm': 0})
+        self.assertEqual(json.loads(trace['result_json']), provider.return_value)
 
     def test_closed_loop_recaptures_and_missing_target_stops(self):
         c = fake_control()
@@ -161,7 +172,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             async def provider(body, key, timeout):
                 entered.set()
                 await release.wait()
-                return dict(x_mm=2, y_mm=-1)
+                return dict(arm_goal=.5, arm_current=.7, front_goal=.5, front_current=.3)
 
             with patch('web_backend.server.load_key', return_value=('configured', 'private-test-key')), patch('web_backend.resolve.request_json', side_effect=provider):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
@@ -210,7 +221,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(.025)
                     entry = log['rounds'][0]
                     self.assertEqual(entry['status'], 'returned')
-                    self.assertEqual(json.loads(entry['result_json']), dict(x_mm=2, y_mm=-1))
+                    self.assertEqual(json.loads(entry['result_json']), dict(arm_goal=.5, arm_current=.7, front_goal=.5, front_current=.3))
                     self.assertEqual(entry['limited_mm'], dict(X=.5, Y=-.5))
                     self.assertEqual(entry['messages'][0]['content'], values['prompt'])
                 restarted = create_app(ui, root / 'stations.json', hardware_dir=bridge)

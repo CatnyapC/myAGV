@@ -40,6 +40,32 @@ def alignment_command(result, config):
     return moves
 
 
+def position_alignment(positions, config, history):
+    config = calibration_config(config)
+    fields = ('arm_goal', 'arm_current', 'front_goal', 'front_current')
+    if not isinstance(positions, dict) or set(positions) != set(fields):
+        raise ValueError('Invalid target image positions')
+    for value in positions.values():
+        if value is None:
+            raise ValueError('Pickup target missing or ambiguous')
+        if type(value) not in (float, int) or not math.isfinite(value) or not 0 <= value <= 1:
+            raise ValueError('Invalid target image position')
+    moves = {}
+    for camera, axis in (('arm', 'X'), ('front', 'Y')):
+        error = positions[camera + '_current'] - positions[camera + '_goal']
+        step = config['max_step_mm'] * min(1, abs(error) / .05)
+        if history and history[-1].get('positions'):
+            previous = history[-1]
+            change = positions[camera + '_current'] - previous['positions'][camera + '_current']
+            executed = previous['commanded_mm'][axis]
+            if abs(change) >= .01 and change * executed < 0:
+                step = abs(error * executed / change)
+        step = min(config['max_step_mm'], max(.1, step))
+        moves[axis.lower() + '_mm'] = 0 if abs(error) <= .010001 else round(math.copysign(step, error), 3)
+    alignment_command(moves, config)
+    return moves
+
+
 def pickup_delta(axis, delta):
     """J1=90: logical forward/right maps to native +Y/-X."""
     if axis not in ('X', 'Y', 'Z'):
