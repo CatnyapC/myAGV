@@ -884,7 +884,8 @@ class Control:
         start = self.robot.nav.get_odom_pose()
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         target = math.radians(start['yaw_deg'] - degrees)
-        end = time.monotonic() + 5
+        speed = .015
+        end = time.monotonic() + abs(math.radians(degrees)) / speed
         try:
             while True:
                 pose = self.robot.nav.get_odom_pose()
@@ -893,12 +894,13 @@ class Control:
                 self.travel_guard(self.robot.nav.get_pose())
                 error = math.atan2(math.sin(target - math.radians(pose['yaw_deg'])),
                                    math.cos(target - math.radians(pose['yaw_deg'])))
-                if abs(error) <= math.radians(.05):
+                if abs(error) <= math.radians(.15) or error * degrees >= 0:
                     return
                 if time.monotonic() >= end:
-                    raise TimeoutError('Fetch base rotation did not reach target')
+                    self.status = 'Rotation pulse finished; rechecking camera alignment'
+                    return
                 self.base_enabled = True
-                self.robot.velocity = (0, 0, math.copysign(min(.015, max(.005, abs(error) * .7)), error))
+                self.robot.velocity = (0, 0, -math.copysign(speed, degrees))
                 self.robot.velocity_at = time.monotonic()
                 time.sleep(.05)
         finally:

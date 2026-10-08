@@ -78,6 +78,21 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, 'Fresh odometry'):
             nav.get_odom_pose()
 
+    def test_rotation_pulse_expires_without_aborting_visual_loop(self):
+        c = fake_control()
+        c.travel_guard = Mock()
+        c.robot.nav.get_odom_pose.return_value = dict(x_m=0, y_m=0, yaw_deg=0)
+        now = [0.0]
+        def tick(seconds):
+            now[0] += seconds
+        with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
+            c.turn_fetch(2)
+        self.assertLess(now[0], 2.4)
+        self.assertEqual(c.robot.velocity, (0, 0, -.015))
+        self.assertFalse(c.base_enabled)
+        c.robot.zero.assert_called()
+        self.assertIn('rechecking', c.status)
+
     def test_grasp_height_records_only_measured_z_without_motion_or_capture(self):
         c = fake_control()
         c.arm.get_coords_info.return_value = [111, 222, 12.5]
