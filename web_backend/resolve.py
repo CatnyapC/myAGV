@@ -114,6 +114,18 @@ Return only the requested JSON. ''' + instruction),
 
 PICKUP_PROMPT = """Compare CURRENT with saved GOAL images and return the next bounded arm correction.
 Output only {"x_mm":number|null,"y_mm":number|null}. No explanation.
+Physical setup and logical task axes:
+The arm base is mounted facing the vehicle's LEFT, rotated 90 degrees
+counterclockwise relative to the vehicle. At arm joint J1=90 degrees, the arm
+faces vehicle FORWARD. The item is in front of the vehicle during pickup.
+The camera atop the arm is mounted with a 90-degree CLOCKWISE rotation. In this
+mounted view, the item enters the BOTTOM of the image; the gripper is outside
+its field of view. Arm-camera image X measures forward/back alignment:
+logical arm X = vehicle base Y (forward/back).
+The vehicle's front camera measures left/right alignment using image X:
+logical arm Y = vehicle base X (left/right).
+These are the task's logical axis labels, not SDK-native Cartesian coordinates;
+return logical x_mm/y_mm only. The controller handles hardware-axis conversion.
 The gripper is NEVER visible. GOAL already records correct alignment above grasp
 height. Do not search for the gripper or judge whether the item is fully graspable.
 
