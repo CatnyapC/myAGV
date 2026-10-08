@@ -1,4 +1,4 @@
-"""Loopback-only Demo API. No robot motion or ROS connection is available."""
+"""Loopback WebUI API with demo simulation or read-only ROS snapshots."""
 import argparse
 import asyncio
 from contextlib import suppress
