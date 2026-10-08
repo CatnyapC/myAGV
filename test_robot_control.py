@@ -54,6 +54,38 @@ def packet(**values):
 
 
 class ControlTest(unittest.TestCase):
+    def test_idle_ui_reload_preserves_homing_but_active_reload_still_stops(self):
+        c = fake_control()
+        c.request_stop = Mock()
+        self.assertEqual(c.receive(dict(op='stop', passive=True))['status'], 'ignored')
+        c.request_stop.assert_not_called()
+        self.assertTrue(c.arm_homed)
+        c.require_arm()
+        self.assertEqual(c.receive(dict(op='stop'))['status'], 'stopping')
+        c.request_stop.assert_called_once()
+        for change in ('phase', 'executing', 'stopping', 'stop_pending', 'base_enabled', 'queue'):
+            with self.subTest(change=change):
+                c = fake_control()
+                c.request_stop = Mock()
+                if change == 'queue':
+                    c.queue.put(packet())
+                else:
+                    setattr(c, change, 'working' if change == 'phase' else True)
+                self.assertEqual(c.receive(dict(op='stop', passive=True))['status'], 'stopping')
+                c.request_stop.assert_called_once()
+
+    def test_ui_reload_stop_keeps_homing_only_with_confirmed_feedback(self):
+        for feedback in ([0, 0, 0], TimeoutError('P340 unavailable')):
+            with self.subTest(feedback=feedback):
+                c = fake_control()
+                c.phase = 'working'
+                with patch('robot_control.arm_deadline', return_value=nullcontext()), patch(
+                        'robot_control.wait_arm', side_effect=[feedback]):
+                    c.receive(dict(op='stop', passive=True))
+                    c.stop_hardware(c.stop_pending)
+                self.assertEqual(c.arm_homed, isinstance(feedback, list))
+                self.assertEqual(c.phase, 'idle' if c.arm_homed else 'fault')
+
     def test_teleop_goal_capture_preserves_control_and_never_uses_arm(self):
         c = fake_control()
         c.phase, c.arm, c.arm_homed, c.deadline = 'teleop', None, False, 0

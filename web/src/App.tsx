@@ -11,6 +11,7 @@ import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
 import { HardwareControls, MapUpdateControls, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { FetchTest } from './FetchTest';
+import { loadPhotoSelection, savePhotoSelection } from './photoSelection';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
 type State = { hardware?: HardwareState; robot_id: string; demo: boolean; phase: string; navigation: Navigation; cameras?: Partial<Record<'front' | 'arm', { url: string; stamp_s: number }>>; llm: { model: string; status: string; reasoning_effort: string } };
@@ -58,8 +59,8 @@ export function App() {
   const [goalText, setGoalText] = useState(['', '', '0']);
   const [photos, setPhotos] = useState<PhotoIndex | null>(null);
   const [stations, setStations] = useState<Stations>({});
-  const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
-  const [selectedItemId, setSelectedItemId] = useState('');
+  const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(() => loadPhotoSelection().photoId);
+  const [selectedItemId, setSelectedItemId] = useState(() => loadPhotoSelection().itemId);
   const [photoMode, setPhotoMode] = useState<'import' | 'edit' | 'uploaded' | null>(null);
   const [requestText, setRequestText] = useState('');
   const [resolution, setResolution] = useState<Resolution | null>(null);
@@ -155,6 +156,10 @@ export function App() {
     if (selectedPhotoId && photos && !photos.photos.some(p => p.id === selectedPhotoId)) { setSelectedPhotoId(null); if (photoMode !== 'import') setPhotoMode(null); }
     if (selectedItemId && photos && !photos.items.some(i => i.id === selectedItemId)) setSelectedItemId('');
   }, [photos, selectedPhotoId, selectedItemId, photoMode]);
+
+  useEffect(() => {
+    savePhotoSelection(selectedItemId, selectedPhotoId);
+  }, [selectedItemId, selectedPhotoId]);
 
   useEffect(() => {
     let disposed = false, timer: ReturnType<typeof setTimeout>, socket: WebSocket | null = null;

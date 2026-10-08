@@ -123,6 +123,9 @@ class Control:
         if kind == 'stop':
             if packet.get('passive') is True and self.phase in ('teleop', 'handoff', 'resetting_map'):
                 return dict(status='ignored', reason='Map reset keeps hardware stopped' if self.phase == 'resetting_map' else 'TELEOP owns hardware')
+            if (packet.get('passive') is True and self.phase == 'idle' and not self.executing
+                    and not self.stopping and not self.stop_pending and not self.base_enabled and self.queue.empty()):
+                return dict(status='ignored', reason='Hardware already idle')
             self.request_stop(packet.get('reason', 'Stopped'))
             return dict(status='stopping')
         if kind == 'teleop':

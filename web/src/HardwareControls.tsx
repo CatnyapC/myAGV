@@ -56,7 +56,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     <div className="action-line">
       <Button disabled={!idle || !state?.arm_available || !state.arm_homed || !state.transport_angles} onClick={() => void command('transport')}>Transport pose</Button>
       <Button disabled={!idle || !state?.arm_available} onClick={() => setConfirmation({ type: 'home', message: 'Home the real arm now? Clear its full travel area.' })}>Home arm</Button>
-      <Button disabled={!idle || !state?.arm_available} onClick={() => setConfirmation({ type: 'confirm_homed', message: 'Confirm the arm has already completed homing since power-on?' })}>Already homed</Button>
+      <Button disabled={!idle || !state?.arm_available || state.arm_homed} onClick={() => setConfirmation({ type: 'confirm_homed', message: 'Confirm the arm has already completed homing since power-on?' })}>{state?.arm_homed ? 'Arm homed ✓' : 'Already homed'}</Button>
     </div>
     <span className="muted">P340 {state?.arm_angles?.map(v => `${v.toFixed(1)}°`).join(' / ') || state?.arm_error || 'Feedback unavailable'}</span>
     <label className="setting-row">Manual mode<select value={mode} disabled={!idle} onChange={e => { hold(null); setMode(e.target.value); }}>
