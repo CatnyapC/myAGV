@@ -8,6 +8,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from web_backend.photos import PhotoIndex, demo_frame, validate_png
 from web_backend.server import EDITOR, create_app
@@ -73,6 +74,65 @@ class PhotoIndexTest(unittest.TestCase):
 
 
 class PhotoAPITest(unittest.IsolatedAsyncioTestCase):
+    async def test_llm_description_is_validated_draft_and_rejects_stale_results(self):
+        from web_backend.resolve import MODEL
+        import base64
+
+        image = demo_frame('arm')
+        result = dict(name='Red cup', appearance='Red cylindrical cup with a handle')
+        mode, entered, release = 'ok', asyncio.Event(), asyncio.Event()
+
+        async def provider(request):
+            body = await request.json()
+            self.assertEqual(request.headers['Authorization'], 'Bearer fake-server-key')
+            self.assertEqual(body['model'], MODEL)
+            self.assertEqual(body['reasoning'], dict(enabled=False))
+            content = body['messages'][1]['content']
+            self.assertEqual(base64.b64decode(content[1]['image_url']['url'].split(',', 1)[1]), image)
+            self.assertEqual(body['response_format']['json_schema']['name'], 'photo_description')
+            if mode == 'stall':
+                entered.set()
+                await release.wait()
+            if mode == 'failure':
+                return web.Response(status=401, text='fake-server-key')
+            value = dict(name='Cup', appearance='x' * 1001) if mode == 'invalid' else result
+            return web.json_response(dict(choices=[dict(finish_reason='stop', message=dict(content=json.dumps(value)))]))
+
+        mock = web.Application()
+        mock.router.add_post('/chat', provider)
+        with tempfile.TemporaryDirectory() as directory:
+            stations = Path(directory) / 'stations.json'
+            stations.write_text('{}')
+            async with TestServer(mock) as upstream:
+                with patch('web_backend.server.load_key', return_value=('configured', 'fake-server-key')), patch('web_backend.resolve.API_URL', str(upstream.make_url('/chat'))):
+                    app = create_app(directory, stations)
+                    async with TestClient(TestServer(app)) as client:
+                        uploaded = await (await client.post('/api/photos/reference?expected_revision=0', data=image, headers={'Content-Type': 'image/png'})).json()
+                        url = f"/api/photos/{uploaded['added_id']}/describe"
+                        for mode, status in (('ok', 200), ('invalid', 502), ('failure', 502)):
+                            response = await client.post(url, json=dict(expected_revision=1))
+                            self.assertEqual(response.status, status, await response.text())
+                            body = await response.json()
+                            if status == 200:
+                                self.assertEqual(body, {**result, 'model': MODEL})
+                            else:
+                                self.assertNotIn('fake-server-key', json.dumps(body))
+                        self.assertEqual(await (await client.get('/api/items')).json(), {k: v for k, v in uploaded.items() if k != 'added_id'})
+                        self.assertEqual((await client.post(url, json=dict(expected_revision=0))).status, 400)
+                        self.assertEqual((await client.post('/api/photos/missing/describe', json=dict(expected_revision=1))).status, 404)
+                        mode = 'stall'
+                        pending = asyncio.create_task(client.post(url, json=dict(expected_revision=1)))
+                        try:
+                            await asyncio.wait_for(entered.wait(), 1)
+                            self.assertEqual((await client.post(url, json=dict(expected_revision=1))).status, 429)
+                            self.assertEqual((await client.post('/api/stop')).status, 200)
+                        finally:
+                            release.set()
+                        self.assertEqual((await pending).status, 409)
+                with patch('web_backend.server.load_key', return_value=('not_configured', '')):
+                    async with TestClient(TestServer(create_app(directory, stations))) as client:
+                        self.assertEqual((await client.post(url, json=dict(expected_revision=1))).status, 503)
+
     async def test_upload_capture_time_and_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             stations = Path(directory) / 'stations.json'

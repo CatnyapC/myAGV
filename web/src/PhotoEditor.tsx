@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { api } from './api';
@@ -44,6 +44,24 @@ export function PhotoEditor(props: {
   const [stationConfirmed, setStationConfirmed] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [describeRequested, setDescribeRequested] = useState(props.photo?.kind === 'reference' && !currentItem?.appearance);
+  useEffect(() => { if (!props.enabled) setDescribeRequested(false); }, [props.enabled]);
+  useEffect(() => {
+    if (!describeRequested || !props.photo || !props.enabled) return;
+    const controller = new AbortController();
+    setBusy(true); props.onBusy(true); setError('');
+    void api<{ name: string; appearance: string }>(`/api/photos/${props.photo.id}/describe`, {
+      method: 'POST', signal: controller.signal, body: JSON.stringify({ expected_revision: revision }),
+    }).then(result => {
+      if (controller.signal.aborted) return;
+      setItemId(id => id || 'new'); setName(value => value.trim() ? value : result.name); setAppearance(result.appearance);
+    }).catch(failure => {
+      if (!controller.signal.aborted) setError((failure as Error).message);
+    }).finally(() => {
+      if (!controller.signal.aborted) { setDescribeRequested(false); setBusy(false); props.onBusy(false); }
+    });
+    return () => { controller.abort(); setBusy(false); props.onBusy(false); };
+  }, [describeRequested, props.photo?.id, props.enabled]);
   async function mutate(remove = false) {
     if (!props.enabled || busy) return;
     setBusy(true); props.onBusy(true); setError('');
@@ -73,9 +91,11 @@ export function PhotoEditor(props: {
       <Dialog.Description className="sr-only">Reference features and confirmed observation association</Dialog.Description>
       <div className="settings-body">
         {!photo ? <><label className="setting-row">Phone photo<input type="file" accept="image/png,image/jpeg,image/webp" disabled={!props.enabled || busy} onChange={e => setFile(e.target.files?.[0] ?? null)} /></label>
-          <span className="muted">Reference only · no map point</span></> : <>
+          <span className="muted">LLM generates name and appearance after import · no map point</span></> : <>
           {photo.available && <img className="photo-preview" src={photo.image_url} alt="Stored photo" />}
-          <span className="muted">{photo.kind === 'reference' ? 'Phone reference · manual features' : 'Synthetic observation · simulated capture pose'}</span>
+          <span className="muted">{photo.kind === 'reference' ? 'Phone reference · review LLM features before saving' : 'Synthetic observation · simulated capture pose'}</span>
+          <Button disabled={!props.enabled || busy || !photo.available} onClick={() => setDescribeRequested(true)}>
+            {describeRequested && busy ? 'Generating description…' : 'Generate with LLM'}</Button>
           {photo.kind === 'observation' && <details><summary className="muted">Capture metadata</summary><div className="photo-metadata">
             <span>{new Date(photo.captured_at_s * 1000).toLocaleString()} · {photo.camera_id}</span>
             <span>X {photo.base_pose.x_m.toFixed(2)} m · Y {photo.base_pose.y_m.toFixed(2)} m · θ {(photo.base_pose.yaw_rad * 180 / Math.PI).toFixed(0)}°</span>
@@ -99,7 +119,7 @@ export function PhotoEditor(props: {
         {photo ? <Button disabled={!props.enabled || busy} onClick={() => void mutate(true)}>Delete photo</Button> : <span />}
         <Button variant="danger" onClick={props.onStop}>STOP</Button>
         <Button variant="default" disabled={!props.enabled || busy || (!photo && !file) || (Boolean(photo) && Boolean(itemId) && (!name.trim() || (stationNeedsConfirmation && !stationConfirmed)))}
-          onClick={() => void mutate()}>{busy ? 'Saving…' : !photo ? 'Import reference' : photo.kind === 'observation' && itemId ? 'Confirm association' : 'Save'}</Button>
+          onClick={() => void mutate()}>{busy ? describeRequested ? 'Generating…' : 'Saving…' : !photo ? 'Import reference' : photo.kind === 'observation' && itemId ? 'Confirm association' : 'Save'}</Button>
       </footer>
     </Dialog.Content></Dialog.Portal></Dialog.Root>;
 }
