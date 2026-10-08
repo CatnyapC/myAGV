@@ -31,7 +31,7 @@ async function normalizedPng(file: File): Promise<Blob> {
 
 export function PhotoEditor(props: {
   photo: Photo | null; index: PhotoIndex; stations: Stations; enabled: boolean; autoDescribe: boolean;
-  goalCaptureEnabled: boolean; onCaptureGoal: (itemId: string, revision: number, step: 'height' | 'goal') => Promise<PhotoIndex>;
+  goalCaptureReason: string; onCaptureGoal: (itemId: string, revision: number, step: 'height' | 'goal') => Promise<PhotoIndex>;
   onClose: () => void; onChange: (index: PhotoIndex, addedId?: string) => void; onBusy: (value: boolean) => void; onStop: () => void;
 }) {
   const currentItem = props.index.items.find(i => i.id === props.photo?.item_id);
@@ -93,6 +93,9 @@ export function PhotoEditor(props: {
   const photo = props.photo;
   const editingItem = props.index.items.find(i => i.id === itemId);
   const stationNeedsConfirmation = Boolean(station) && (editingItem?.station_link?.name !== station || editingItem?.station_status !== 'ready');
+  const recordReason = props.goalCaptureReason || (!props.enabled ? 'Photo editing is unavailable.' : busy ? 'Wait for the current request.'
+    : !name.trim() ? 'Enter the item name.' : stationNeedsConfirmation && !stationConfirmed ? 'Confirm the station association above.' : '');
+  const goalReason = recordReason || (editingItem?.grasp_z_mm == null ? 'Save the current grasp Z first.' : '');
   return <section className="photo-page" aria-label={photo ? 'Edit item' : 'Import item photo'}>
       <header className="photo-page-header">
         <Button variant="ghost" className="icon" aria-label="Back to OPERATE" autoFocus disabled={busy} onClick={props.onClose}><ArrowLeft size={18} /></Button>
@@ -124,13 +127,14 @@ export function PhotoEditor(props: {
             {editingItem && !['ready', 'none'].includes(editingItem.station_status) && <span className="muted">Station link {editingItem.station_status}</span>}
             <div className="section-divider" /><span className="subheading">1. GRASP HEIGHT</span>
             <span className="muted">Manually grasp this item, then record the current arm Z coordinate.</span>
-            <Button disabled={!props.enabled || !props.goalCaptureEnabled || busy || !name.trim() || (stationNeedsConfirmation && !stationConfirmed)}
+            <Button disabled={Boolean(recordReason)} title={recordReason}
               onClick={() => void mutate(false, 'height')}>Save current grasp Z</Button>
             <span className="muted">{editingItem?.grasp_z_mm != null ? `Grasp Z saved: ${editingItem.grasp_z_mm.toFixed(1)} mm` : 'Grasp height not recorded yet.'}</span>
             <span className="muted">Next, return to OPERATE controls, release the item in place, and raise the arm to the alignment position above the saved grasp height so adjustments will not knock over the item. Then return here to save both camera views.</span>
             <span className="subheading">2. ALIGNMENT CAMERA GOAL</span>
-            <Button disabled={!props.enabled || !props.goalCaptureEnabled || busy || !name.trim() || editingItem?.grasp_z_mm == null || (stationNeedsConfirmation && !stationConfirmed)}
+            <Button disabled={Boolean(goalReason)} title={goalReason} aria-describedby={goalReason ? 'grasp-capture-reason' : undefined}
               onClick={() => void mutate(false, 'goal')}><Camera size={15} />Save item & capture both cameras</Button>
+            {goalReason && <span id="grasp-capture-reason" role="status" className="muted">{goalReason}</span>}
             <span className="muted">{editingItem?.grasp_goal_ready ? 'Alignment views saved.' : editingItem?.grasp_goal ? 'Saved views unavailable; capture both cameras again.' : 'No alignment goal saved yet.'}</span>
             {editingItem?.grasp_goal && <div className="grasp-goal-views">{(['front', 'arm'] as const).map(camera => {
               const goalPhoto = props.index.photos.find(p => p.id === editingItem.grasp_goal?.[camera]);
