@@ -2,12 +2,8 @@ import { useState, type PointerEvent } from 'react';
 import { Button } from './ui';
 import type { Origin, Stations } from './mapGeometry';
 
-export type HardwareState = {
-  stop_epoch: number; phase: string; status: string; task_id?: string; arm_available: boolean; arm_homed: boolean;
-  arm_angles?: number[]; arm_error?: string; navigation_ready: boolean; motion_available: boolean;
-  localized: boolean; driver_watchdog: boolean; exclusive: boolean; sensors_ready: boolean;
-  transport_angles?: number[]; clearance_m: number; zones_ready: boolean; stop_confirmed: boolean;
-};
+import type { HardwareState } from './api';
+export type { HardwareState } from './api';
 export type HeldInput = { mode: string; key: string } | null;
 
 type Props = { stations: Stations; state?: HardwareState; connected: boolean; goal: Origin | null;
@@ -39,12 +35,12 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     {state?.phase === 'fault' && <div role="alert"><strong>Stop unconfirmed · motion locked</strong>
       <Button disabled={!connected} onClick={() => { if (window.confirm('Have you physically verified that the base and arm have stopped? This clears the fault and resets homing confirmation.')) void command('recover_stop', { confirmed: true }); }}>Verify stopped and clear fault</Button>
     </div>}
-    <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Localization ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
+    <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Pose confirmed ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
     <div className="action-line">
       <Button disabled={!idle || !goal} onClick={() => void command('initial_pose', { goal })}>Set pose from goal</Button>
-      <Button disabled={!idle} onClick={() => void command('confirm_localization')}>Confirm localization</Button>
+      <Button disabled={!idle} onClick={() => void command('confirm_localization')}>Confirm map pose</Button>
     </div>
-    <span className="muted">Confirm only after matching robot heading and position against the map.</span>
+    <span className="muted">Pose confirmation is a manual check: the map marker must match the real robot position and heading. Confirmations reset when the controller restarts.</span>
     <div className="action-line">
       <Button disabled={!idle || state?.arm_available} onClick={() => void command('connect_arm')}>Connect P340</Button>
       <Button disabled={!idle || !state?.arm_available} onClick={() => { if (window.confirm('Home the real arm now? Clear its full travel area.')) void command('home'); }}>Home arm</Button>

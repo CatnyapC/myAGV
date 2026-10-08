@@ -6,7 +6,7 @@ import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu,
 import { MapView, rectangleCorners } from './MapView';
 import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
-import { api, commandId } from './api';
+import { api, commandId, hardwareBlocks } from './api';
 import { HardwareControls, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
@@ -96,6 +96,9 @@ export function App() {
   const costmapReady = navigation?.costmap.ready && navigation.costmap.applied_zone_revision === zones?.revision;
   const selectedPhoto = photos?.photos.find(p => p.id === selectedPhotoId) ?? null;
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
+  const hardwareReasons = !connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware);
+  const goReasons = [...hardwareReasons, ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
+  const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -486,12 +489,17 @@ export function App() {
         <div className="goal-inputs">{['X (m)', 'Y (m)', 'θ (°)'].map((label, i) => <label key={label}>{label}<input type="number" step={i === 2 ? '5' : '.05'}
           min={i === 2 ? -180 : undefined} max={i === 2 ? 180 : undefined} placeholder={i === 2 ? '0' : 'Map click'} value={goalText[i]}
           disabled={!canLayout || busy} onChange={e => setGoalText(old => old.map((v, n) => n === i ? e.target.value : v))} /></label>)}</div>
-        <div className="action-line"><Button variant="default" className="button-simulate" disabled={!state?.demo || !canEdit || !goalValid || !costmapReady || busy}
-          onClick={() => void simulationCommand('navigate')}><Play size={16} /> Simulate</Button>
-          <Button variant="default" disabled={state?.demo || !canEdit || !goalValid || !state?.hardware?.navigation_ready || busy} onClick={() => void simulationCommand('navigate')}><Crosshair size={16} /> Go</Button>
-          <Button variant="default" disabled={state?.demo || !canEdit || !state?.hardware?.navigation_ready || selectedItem?.station_status !== 'ready' || busy}
+        <div className="action-line">{state?.demo ? <Button variant="default" className="button-simulate" disabled={!canEdit || !goalValid || !costmapReady || busy}
+          onClick={() => void simulationCommand('navigate')}><Play size={16} /> Simulate</Button> : <>
+          <Button variant="default" disabled={goReasons.length > 0} title={goReasons.join('; ')} onClick={() => void simulationCommand('navigate')}><Crosshair size={16} /> Go</Button>
+          <Button variant="default" disabled={fetchReasons.length > 0} title={fetchReasons.join('; ')}
             onClick={() => void hardwareCommand('fetch', { item_id: selectedItemId, index_revision: photos?.revision })}><Hand size={16} /> Fetch</Button>
+          </>}
           <Button disabled={!connected || state?.phase === 'idle'} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
+        {state?.demo === false && <div className="muted" role="status">
+          {goReasons.length > 0 && <p>Go needs: {goReasons.join('; ')}.</p>}
+          {fetchReasons.length > 0 && <p>Fetch needs: {fetchReasons.join('; ')}.</p>}
+        </div>}
         <div className="section-divider" />
         <span className="subheading">NO-GO ZONES</span>
         <div className="zone-list">{zones?.zones.length ? zones.zones.map((zone, i) => <button key={zone.id}
