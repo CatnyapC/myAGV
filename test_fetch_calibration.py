@@ -93,6 +93,14 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(c.base_enabled)
         c.robot.zero.assert_called()
         self.assertIn('rechecking', c.status)
+        now[0] = 0
+        with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
+            c.turn_fetch(2, dict(turn_speed_rad_s=.02, turn_duration_scale=.5))
+        self.assertGreaterEqual(now[0], .87)
+        self.assertLess(now[0], .93)
+        self.assertEqual(c.robot.velocity, (0, 0, -.02))
+        self.assertEqual(qualitative_alignment(dict(arm='aligned_perfectly', front='right_medium'),
+            dict(turn_step_deg=1)), dict(x_mm=0, turn_deg=.5))
 
     def test_grasp_height_records_only_measured_z_without_motion_or_capture(self):
         c = fake_control()
@@ -178,7 +186,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
             self.assertEqual(c.capture.call_args_list, [call('front', vision=True), call('arm', vision=True)] * 3)
             c.arm_step.assert_called_once_with('X', 1, pickup=True, distance=1)
-            c.turn_fetch.assert_called_once_with(2)
+            c.turn_fetch.assert_called_once_with(2, calibration_config(None))
             self.assertEqual(requests[1]['history'][0]['commanded'], {'X': 0, 'turn_deg': 2})
             self.assertFalse(list(c.directory.iterdir()))
             c.arm_step.reset_mock()

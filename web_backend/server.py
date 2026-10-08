@@ -153,14 +153,15 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         values=dict(**calibration_config(None), prompt=PICKUP_PROMPT)))
 
     def validate_fetch_settings(values):
-        if not isinstance(values, dict) or set(values) != {'max_step_mm', 'max_total_mm', 'prompt'}:
+        if (not isinstance(values, dict) or not {'max_step_mm', 'max_total_mm', 'prompt'} <= set(values)
+                or set(values) - (set(calibration_config(None)) | {'prompt'})):
             raise ValueError('Invalid fetch settings')
         limits = calibration_config(values)
         if not isinstance(values['prompt'], str) or not 1 <= len(values['prompt'].strip()) <= 8000:
             raise ValueError('Fetch prompt needs 1..8000 characters')
         return dict(**limits, prompt=values['prompt'].strip())
 
-    validate_fetch_settings(fetch_settings['values'])
+    fetch_settings['values'] = validate_fetch_settings(fetch_settings['values'])
     # ponytail: latest task only, memory-only logs; persist when long-term comparison is needed.
     fetch_log = dict(revision=0, rounds=[])
 

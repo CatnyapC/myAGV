@@ -878,14 +878,15 @@ class Control:
             request_path.unlink(missing_ok=True)
             response_path.unlink(missing_ok=True)
 
-    def turn_fetch(self, degrees):
+    def turn_fetch(self, degrees, config=None):
+        config = calibration_config(config)
         number(degrees, -2, 2, 'Fetch base turn')
         self.robot.nav.wait_stopped()
         start = self.robot.nav.get_odom_pose()
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         target = math.radians(start['yaw_deg'] - degrees)
-        speed = .015
-        end = time.monotonic() + .8 * abs(math.radians(degrees)) / speed
+        speed = config['turn_speed_rad_s']
+        end = time.monotonic() + config['turn_duration_scale'] * abs(math.radians(degrees)) / speed
         try:
             while True:
                 pose = self.robot.nav.get_odom_pose()
@@ -969,7 +970,7 @@ class Control:
                         raise ValueError('Fetch rotation budget exhausted')
                     current()
                     self.status = 'Aligning left/right with base rotation'
-                    self.turn_fetch(moves['turn_deg'])
+                    self.turn_fetch(moves['turn_deg'], config)
                     moves['X'] = 0  # Rotation changes the arm view; recapture before advancing.
                 travel += abs(moves['X'])
                 if travel > config['max_total_mm']:

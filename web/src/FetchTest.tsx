@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { Button } from './ui';
 
-type FetchSettings = { revision: number; values: { max_step_mm: number; max_total_mm: number; prompt: string } };
+type FetchSettings = { revision: number; values: { max_step_mm: number; max_total_mm: number; turn_speed_rad_s: number; turn_duration_scale: number; turn_step_deg: number; prompt: string } };
 type Part = { type: string; text?: string; image_url?: { url: string } };
 type Round = {
   id: string; round: number; mode?: 'grasp' | 'approach'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
@@ -74,12 +74,21 @@ export function FetchTest(props: {
         <label>Total arm X (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_total_mm: Number(event.target.value) })} /></label>
       </div>
+      <div className="goal-inputs">
+        <label>Turn speed (rad/s)<input type="number" min={0.005} max={0.1} step={0.001} value={draft.turn_speed_rad_s}
+          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, turn_speed_rad_s: Number(event.target.value) })} /></label>
+        <label>Turn duration (%)<input type="number" min={10} max={150} step={5} value={Math.round(draft.turn_duration_scale * 100)}
+          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, turn_duration_scale: Number(event.target.value) / 100 })} /></label>
+        <label>Large turn (°)<input type="number" min={0.4} max={2} step={0.1} value={draft.turn_step_deg}
+          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, turn_step_deg: Number(event.target.value) })} /></label>
+      </div>
+      <span className="muted">Base large / medium / small: {draft.turn_step_deg}° / {draft.turn_step_deg / 2}° / {draft.turn_step_deg / 4}°. Large pulse ≈{(draft.turn_duration_scale * draft.turn_step_deg * Math.PI / 180 / draft.turn_speed_rad_s).toFixed(2)} s. Save or press ALIGN to apply next run.</span>
       <label className="photo-field">Calibration prompt<textarea className="fetch-prompt" rows={10} maxLength={8000} value={draft.prompt}
         disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, prompt: event.target.value })} /></label>
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">LLM: left/right + large/medium/small. Steps: arm X 2/1/0.5 mm (capped by setting); base 2/1/0.5°. Both aligned_perfectly = done; otherwise continue. Unknown stops.</span>
+    <span className="muted">LLM: left/right + large/medium/small. Arm X 2/1/0.5 mm (capped by setting); base uses the settings above. Both aligned_perfectly = done; otherwise continue. Unknown stops.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>

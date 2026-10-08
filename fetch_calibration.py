@@ -10,7 +10,9 @@ def calibration_config(value):
         value = {}
     if not isinstance(value, dict):
         raise ValueError('Invalid fetch_calibration configuration')
-    result = {key: value.get(key, default) for key, default in (('max_step_mm', 2), ('max_total_mm', 20))}
+    result = {key: value.get(key, default) for key, default in (
+        ('max_step_mm', 2), ('max_total_mm', 20), ('turn_speed_rad_s', .015),
+        ('turn_duration_scale', .8), ('turn_step_deg', 2))}
     for key in result:
         number = result.get(key)
         if type(number) not in (int, float) or not math.isfinite(number):
@@ -19,6 +21,9 @@ def calibration_config(value):
         raise ValueError('Invalid fetch alignment step limit')
     if not result['max_step_mm'] <= result['max_total_mm'] <= 30:
         raise ValueError('Invalid fetch alignment travel budget')
+    for key, low, high in (('turn_speed_rad_s', .005, .1), ('turn_duration_scale', .1, 1.5), ('turn_step_deg', .4, 2)):
+        if not low <= result[key] <= high:
+            raise ValueError('Invalid fetch calibration: ' + key)
     return result
 
 
@@ -53,8 +58,8 @@ def qualitative_alignment(result, config):
             raise ValueError('Pickup target missing or ambiguous: ' + camera)
         if not isinstance(label, str) or label not in steps:
             raise ValueError('Invalid visual alignment label')
-        limit = config['max_step_mm'] if camera == 'arm' else 2
-        step = steps[label]
+        limit = config['max_step_mm'] if camera == 'arm' else config['turn_step_deg']
+        step = steps[label] if camera == 'arm' else steps[label] * config['turn_step_deg'] / 2
         moves[field] = max(-limit, min(limit, step))
     alignment_command(moves, config)
     return moves
