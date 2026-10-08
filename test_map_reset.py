@@ -88,12 +88,14 @@ class MapResetTest(unittest.TestCase):
                 robot.control.localized = True
                 robot.control.request_stop.reset_mock()
                 robot.costmaps = {'global': 'fresh approved feedback'}
+                published_at = robot.published_at
                 grid['cells'][100] = 0 if grid['cells'][100] else 100
                 robot.receive_map(robot.source)
                 self.assertEqual(robot.grid['revision'], 2)
                 self.assertTrue(robot.control.localized)
                 robot.control.request_stop.assert_not_called()
                 self.assertIn('global', robot.costmaps)
+                self.assertEqual(robot.published_at, published_at)
                 robot.receive_map(robot.source)
                 self.assertEqual(robot.grid['revision'], 2)
                 self.assertEqual(json.loads((robot.directory / 'map.json').read_text())['cells'], grid['cells'])

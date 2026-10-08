@@ -148,8 +148,8 @@ class RobotROS:
         with self.lock:
             zones_changed = self.zones != zones
             self.zones, self.derived, self.zone_points = zones, derived, points
-            self.published_at = time.monotonic()
             if zones_changed:
+                self.published_at = time.monotonic()
                 self.costmaps = {}
         self.maps.publish(message)
         atomic_json(self.directory / 'navigation_map.json', {**derived, 'zone_revision': zones['revision']})
