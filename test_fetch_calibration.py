@@ -87,8 +87,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             now[0] += seconds
         with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
             c.turn_fetch(2)
-        self.assertLess(now[0], 4.75)
-        self.assertEqual(c.robot.velocity, (0, 0, -.0075))
+        self.assertLess(now[0], 3.0)
+        self.assertEqual(c.robot.velocity, (0, 0, -.012))
         self.assertFalse(c.base_enabled)
         c.robot.zero.assert_called()
         self.assertIn('rechecking', c.status)
