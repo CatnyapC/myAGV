@@ -164,6 +164,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     fetch_settings['values'] = validate_fetch_settings(fetch_settings['values'])
     # ponytail: latest task only, memory-only logs; persist when long-term comparison is needed.
     fetch_log = dict(revision=0, rounds=[])
+    stopped_fetch_task = None
 
     async def fetch_config(request):
         nonlocal fetch_settings
@@ -615,10 +616,15 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         return web.json_response(reply)
 
     async def stop(request):
+        nonlocal stopped_fetch_task
+        data = await request.json() if request.can_read_body else {}
+        if not isinstance(data, dict) or type(data.get('passive', False)) is not bool:
+            raise ValueError('Invalid stop request')
+        if not data.get('passive'):
+            control = editor.hardware.control if editor.hardware else {}
+            stopped_fetch_task = (control.get('boot_id'), control.get('task_id'))
+            fetch_log.update(revision=fetch_log['revision'] + 1, rounds=[])
         if editor.hardware:
-            data = await request.json() if request.can_read_body else {}
-            if not isinstance(data, dict) or type(data.get('passive', False)) is not bool:
-                raise ValueError('Invalid stop request')
             return web.json_response(await editor.hardware.stop(passive=data.get('passive') is True))
         editor.sim.stop('Stopped')
         await editor.emit('telemetry')
@@ -713,7 +719,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             def current(value):
                 control = editor.hardware.control
                 approach = value.get('mode') == 'approach'
-                return (control.get('phase') == ('approaching_item' if approach else 'calibrating') and control.get('boot_id') == value['boot_id']
+                return ((value['boot_id'], value['task_id']) != stopped_fetch_task
+                        and control.get('phase') == ('approaching_item' if approach else 'calibrating') and control.get('boot_id') == value['boot_id']
                         and control.get('task_id') == value['task_id'] and control.get('stop_epoch') == value['stop_epoch']
                         and editor.grid['map_id'] == value['map_id'] and time.time() < value['expires_at_s']
                         and (not approach or (editor.zones['revision'] == value['zone_revision']

@@ -11,13 +11,13 @@ def calibration_config(value):
     if not isinstance(value, dict):
         raise ValueError('Invalid fetch_calibration configuration')
     result = {key: value.get(key, default) for key, default in (
-        ('max_step_mm', 2), ('max_total_mm', 20), ('turn_speed_rad_s', .015),
+        ('max_step_mm', 10), ('max_total_mm', 20), ('turn_speed_rad_s', .015),
         ('turn_duration_scale', .8), ('turn_step_deg', 2))}
     for key in result:
         number = result.get(key)
         if type(number) not in (int, float) or not math.isfinite(number):
             raise ValueError('Invalid fetch calibration: ' + key)
-    if not .1 <= result['max_step_mm'] <= 2:
+    if not .1 <= result['max_step_mm'] <= 10:
         raise ValueError('Invalid fetch alignment step limit')
     if not result['max_step_mm'] <= result['max_total_mm'] <= 30:
         raise ValueError('Invalid fetch alignment travel budget')
@@ -36,7 +36,7 @@ def alignment_command(result, config):
         delta = result[field]
         if delta is None:
             raise ValueError('Pickup target missing or ambiguous')
-        if type(delta) not in (int, float) or not math.isfinite(delta) or abs(delta) > 2:
+        if type(delta) not in (int, float) or not math.isfinite(delta) or abs(delta) > (10 if axis == 'X' else 2):
             raise ValueError('Invalid model arm adjustment')
         if 0 < abs(delta) < .1:
             raise ValueError('Model arm adjustment is below measurable step size')
@@ -59,7 +59,10 @@ def qualitative_alignment(result, config):
         if not isinstance(label, str) or label not in steps:
             raise ValueError('Invalid visual alignment label')
         limit = config['max_step_mm'] if camera == 'arm' else config['turn_step_deg']
-        step = steps[label] if camera == 'arm' else steps[label] * config['turn_step_deg'] / 2
+        if camera == 'arm':
+            step = math.copysign({2: 10, 1: 5, .5: 1, 0: 0}[abs(steps[label])], steps[label])
+        else:
+            step = steps[label] * config['turn_step_deg'] / 2
         moves[field] = max(-limit, min(limit, step))
     alignment_command(moves, config)
     return moves

@@ -70,7 +70,7 @@ export function FetchTest(props: {
     <span className="muted">Item: {props.itemName || 'Select an item above'} · Align accepts J1 75–105° near the object.</span>
     {draft && <>
       <div className="goal-inputs">
-        <label>Arm X step (mm)<input type="number" min={0.1} max={2} step={0.1} value={draft.max_step_mm}
+        <label>Arm X step (mm)<input type="number" min={0.1} max={10} step={0.1} value={draft.max_step_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_step_mm: Number(event.target.value) })} /></label>
         <label>Total arm X (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_total_mm: Number(event.target.value) })} /></label>
@@ -96,7 +96,7 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">LLM: left/right + large/medium/small. Arm X 2/1/0.5 mm (capped by setting); base uses the settings above. Both aligned_perfectly = done; otherwise continue. Unknown stops.</span>
+    <span className="muted">LLM: left/right + large/medium/small. Arm X 10/5/1 mm (capped by setting); base uses the settings above. Both aligned_perfectly = done; otherwise continue. Unknown stops.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>

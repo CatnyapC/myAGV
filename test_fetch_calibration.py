@@ -54,9 +54,9 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         c.arm.set_angles.assert_not_called()
 
     def test_visual_labels_convert_to_bounded_moves(self):
-        for size, step in (('large', 2), ('medium', 1), ('small', .5)):
-            self.assertEqual(qualitative_alignment(dict(arm='left_' + size, front='right_' + size), None), dict(x_mm=-step, turn_deg=step))
-            self.assertEqual(qualitative_alignment(dict(arm='right_' + size, front='left_' + size), None), dict(x_mm=step, turn_deg=-step))
+        for size, step, arm_step in (('large', 2, 10), ('medium', 1, 5), ('small', .5, 1)):
+            self.assertEqual(qualitative_alignment(dict(arm='left_' + size, front='right_' + size), None), dict(x_mm=-arm_step, turn_deg=step))
+            self.assertEqual(qualitative_alignment(dict(arm='right_' + size, front='left_' + size), None), dict(x_mm=arm_step, turn_deg=-step))
         self.assertEqual(qualitative_alignment(dict(arm='aligned_perfectly', front='aligned_perfectly'), None), dict(x_mm=0, turn_deg=0))
         self.assertEqual(qualitative_alignment(dict(arm='right_large', front='right_large'), dict(max_step_mm=.5)), dict(x_mm=.5, turn_deg=2))
         for label in ('unknown', 'aligned', None, 0, 'right', {}, []):
@@ -128,12 +128,12 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(alignment_command({'x_mm': 0, 'turn_deg': 0}, None), {'X': 0, 'turn_deg': 0})
         self.assertEqual(alignment_command({'x_mm': 2, 'turn_deg': -2}, {'max_step_mm': 1}), {'X': 1, 'turn_deg': -2})
         for bad in (None, {}, {'x_mm': None, 'turn_deg': 0}, {'x_mm': True, 'turn_deg': 0},
-                    {'x_mm': float('nan'), 'turn_deg': 0}, {'x_mm': 2.1, 'turn_deg': 0},
+                    {'x_mm': float('nan'), 'turn_deg': 0}, {'x_mm': 10.1, 'turn_deg': 0},
                     {'x_mm': .05, 'turn_deg': 0}, {'x_mm': 0, 'turn_deg': 0, 'grip': True}):
             with self.assertRaises(ValueError):
                 alignment_command(bad, None)
         with self.assertRaises(ValueError):
-            calibration_config({'max_step_mm': 3})
+            calibration_config({'max_step_mm': 11})
         self.assertEqual(pickup_delta('X', 1), (0, 1, 0))
         self.assertEqual(pickup_delta('Y', 1), (-1, 0, 0))
         cv2 = SimpleNamespace(INTER_AREA=3, IMWRITE_JPEG_QUALITY=1,
@@ -254,7 +254,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 async with TestClient(TestServer(app)) as client:
                     settings = await (await client.get('/api/fetch-settings')).json()
                     values = {**settings['values'], 'max_step_mm': .5, 'prompt': 'Edited prompt'}
-                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values={**values, 'max_step_mm': 3}))).status, 400)
+                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values={**values, 'max_step_mm': 11}))).status, 400)
                     saved = await (await client.put('/api/fetch-settings', json=dict(expected_revision=0, values=values))).json()
                     self.assertEqual(saved['revision'], 1)
                     self.assertEqual(json.loads((ui / 'fetch_settings.json').read_text()), saved)
@@ -303,6 +303,24 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(json.loads(entry['result_json']), dict(arm='right_large', front='left_large'))
                     self.assertEqual(entry['correction'], dict(X=.5, turn_deg=-2))
                     self.assertEqual(entry['messages'][0]['content'], values['prompt'])
+                    entered.clear()
+                    release.clear()
+                    atomic_json(bridge / 'fetch_vision_request.json', dict(value, id='request-2', round=2))
+                    await asyncio.wait_for(entered.wait(), 2)
+                    hardware.stop = AsyncMock(return_value=dict(status='completed'))
+                    self.assertEqual((await client.post('/api/stop')).status, 200)
+                    cleared = await (await client.get('/api/fetch-log')).json()
+                    self.assertEqual(cleared['rounds'], [])
+                    release.set()
+                    for _ in range(40):
+                        finished = await (await client.get('/api/fetch-log')).json()
+                        if finished['revision'] > cleared['revision']:
+                            break
+                        await asyncio.sleep(.025)
+                    self.assertEqual((await (await client.get('/api/fetch-log')).json())['rounds'], [])
+                    self.assertGreater(finished['revision'], cleared['revision'])
+                    response = json.loads((bridge / 'fetch_vision_response.json').read_text())
+                    self.assertNotEqual(response['id'], 'request-2')
                 restarted = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 async with TestClient(TestServer(restarted)) as client:
                     self.assertEqual(await (await client.get('/api/fetch-settings')).json(), saved)
