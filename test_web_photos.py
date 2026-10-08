@@ -5,16 +5,46 @@ import json
 from pathlib import Path
 import tempfile
 import threading
+import time
 import unittest
-from unittest.mock import patch
+import uuid
+from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from web_backend.photos import PhotoIndex, demo_frame, validate_png
+from web_backend.map_data import demo_map
 from web_backend.server import EDITOR, create_app
+from web_backend.storage import atomic_bytes, atomic_json
 
 
 class PhotoIndexTest(unittest.TestCase):
+    def test_grasp_goal_persists_and_deleted_reference_invalidates_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            index = PhotoIndex(root, root / 'stations.json')
+            image = demo_frame('front')
+            reference = index.add(image, dict(kind='reference', source='phone'), 0)
+            index.edit(reference['id'], dict(expected_revision=1, item_id='new', name='cup', confirmed=True), 'map')
+            item_id = index.value['items'][0]['id']
+            cameras = {}
+            for camera in ('front', 'arm'):
+                photo = index.add(image, dict(kind='observation', source='ros', camera_id=camera,
+                    map_id='map', map_revision=0, frame='map', captured_at_s=1,
+                    base_pose=dict(x_m=0, y_m=0, yaw_rad=0)), index.value['revision'])
+                cameras[camera] = photo['id']
+                atomic_bytes(index.image_path(photo['id']).with_suffix('.jpg'), b'jpeg-test')
+            with self.assertRaises(ValueError):
+                index.save_grasp_goal(item_id, {'front': cameras['arm'], 'arm': cameras['front']}, index.value['revision'], 'map')
+            index.save_grasp_goal(item_id, cameras, index.value['revision'], 'map')
+            restarted = PhotoIndex(root, root / 'stations.json')
+            item = restarted.snapshot('map')['items'][0]
+            self.assertTrue(item['grasp_goal_ready'])
+            self.assertEqual(item['grasp_goal'], cameras)
+            restarted.delete(cameras['front'], restarted.value['revision'])
+            self.assertNotIn('grasp_goal', restarted.value['items'][0])
+            self.assertFalse(restarted.image_path(cameras['front']).with_suffix('.jpg').exists())
+
     def test_association_station_guards_and_atomic_storage(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -74,6 +104,53 @@ class PhotoIndexTest(unittest.TestCase):
 
 
 class PhotoAPITest(unittest.IsolatedAsyncioTestCase):
+    async def test_grasp_goal_capture_ingests_both_compressed_views(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bridge, ui = root / 'ros', root / 'ui'
+            grid = {**demo_map(), 'map_id': 'ros-test'}
+            atomic_json(bridge / 'map.json', grid)
+            index = PhotoIndex(ui, root / 'stations.json')
+            image = demo_frame('front')
+            photo = index.add(image, dict(kind='reference', source='phone'), 0)
+            index.edit(photo['id'], dict(expected_revision=1, item_id='new', name='Cup', confirmed=True), grid['map_id'])
+            item_id = index.value['items'][0]['id']
+            app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
+            hardware = app[EDITOR].hardware
+            hardware.refresh = Mock()
+            hardware.control = dict(stamp_s=time.time(), phase='idle')
+
+            async def capture(command, wait):
+                self.assertTrue(wait)
+                self.assertEqual(command['type'], 'capture_grasp_goal')
+                self.assertEqual(command['expected_revision'], app[EDITOR].zones['revision'])
+                captures = {}
+                for camera in ('front', 'arm'):
+                    capture_id = str(uuid.uuid4())
+                    captures[camera] = capture_id
+                    path = bridge / 'captures' / capture_id
+                    atomic_bytes(path.with_suffix('.png'), image)
+                    atomic_bytes(path.with_suffix('.jpg'), camera.encode())
+                    atomic_json(path.with_suffix('.json'), dict(capture_id=capture_id, source='ros',
+                        kind='observation', camera_id=camera, captured_at_s=time.time(),
+                        map_id=grid['map_id'], map_revision=0, frame='map',
+                        base_pose=dict(x_m=0, y_m=0, yaw_rad=0)))
+                return dict(captures=captures)
+
+            hardware.command = AsyncMock(side_effect=capture)
+            async with TestClient(TestServer(app)) as client:
+                response = await client.post('/api/items/grasp-goal', json=dict(item_id=item_id,
+                    map_id=grid['map_id'], expected_revision=2, zone_revision=app[EDITOR].zones['revision']))
+                self.assertEqual(response.status, 200, await response.text())
+                result = await response.json()
+                item = result['items'][0]
+                self.assertTrue(item['grasp_goal_ready'])
+                for camera, photo_id in item['grasp_goal'].items():
+                    self.assertEqual((ui / 'images' / (photo_id + '.jpg')).read_bytes(), camera.encode())
+                    saved = next(p for p in result['photos'] if p['id'] == photo_id)
+                    self.assertEqual((saved['camera_id'], saved['item_id']), (camera, item_id))
+                self.assertEqual(list((bridge / 'captures').iterdir()), [])
+
     async def test_llm_description_is_validated_draft_and_rejects_stale_results(self):
         from web_backend.resolve import MODEL
         import base64

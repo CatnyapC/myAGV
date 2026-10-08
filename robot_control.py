@@ -631,6 +631,15 @@ class Control:
         elif kind == 'capture':
             self.robot.nav.wait_stopped()
             return self.capture(packet['camera_id'])
+        elif kind == 'capture_grasp_goal':
+            self.require_arm()
+            self.robot.nav.wait_stopped()
+            before = wait_arm(self.arm, timeout=3)
+            captures = {camera: self.capture(camera, grasp_goal=True)['capture_id'] for camera in ('front', 'arm')}
+            after = wait_arm(self.arm, timeout=3)
+            if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
+                raise RuntimeError('Arm moved while recording grasp goal')
+            return dict(captures=captures)
         elif kind == 'zones':
             self.robot.nav.wait_stopped()
             zones = packet.get('zones')
@@ -753,6 +762,7 @@ class Control:
         request_path = self.directory / 'fetch_vision_request.json'
         response_path = self.directory / 'fetch_vision_response.json'
         travel = 0
+        history = []
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
 
         def current():
@@ -764,14 +774,14 @@ class Control:
                 raise RuntimeError('Fresh sensors required during fetch alignment')
 
         try:
-            for _ in range(8):
+            for round_index in range(9):
                 current()
                 self.robot.nav.wait_stopped()
                 images = {camera: self.capture(camera, vision=True)['image'] for camera in ('front', 'arm')}
                 request_id = str(uuid.uuid4())
                 atomic_json(request_path, dict(id=request_id, boot_id=self.boot_id, task_id=self.task_id,
                     stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + 20,
-                    item=packet['vision_item'], images=images))
+                    item=packet['vision_item'], images=images, history=history))
                 end = time.monotonic() + 20
                 while True:
                     current()
@@ -789,6 +799,8 @@ class Control:
                     time.sleep(.05)
                 if not any(moves.values()):
                     return
+                if round_index == 8:
+                    raise RuntimeError('Fetch cameras did not converge after 8 corrections')
                 travel += sum(abs(delta) for delta in moves.values())
                 if travel > config['max_total_mm']:
                     raise ValueError('Fetch alignment travel budget exhausted')
@@ -799,7 +811,7 @@ class Control:
                         step = min(1, remaining)
                         self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=step)
                         remaining -= step
-            raise RuntimeError('Fetch cameras did not converge within 8 rounds')
+                history = (history + [dict(images=images, commanded_mm=moves)])[-2:]
         finally:
             request_path.unlink(missing_ok=True)
             response_path.unlink(missing_ok=True)

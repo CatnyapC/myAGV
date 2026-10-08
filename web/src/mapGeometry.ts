@@ -13,7 +13,8 @@ type PhotoBase = { id: string; saved_at_s: number; source: string; image_url: st
 export type Photo = PhotoBase & ({ kind: 'reference' } | {
   kind: 'observation'; captured_at_s: number; camera_id: 'front' | 'arm'; map_id: string; map_revision: number; frame: string; base_pose: Origin;
 });
-export type Item = { id: string; name: string; appearance: string; station_link?: { name: string; map_id: string; digest: string }; station_status: string; fetch_available: false; observation_current: boolean; last_seen_s: number };
+export type Item = { id: string; name: string; appearance: string; station_link?: { name: string; map_id: string; digest: string }; station_status: string; fetch_available: false; observation_current: boolean; last_seen_s: number;
+  grasp_goal?: { front: string; arm: string }; grasp_goal_ready: boolean };
 export type PhotoIndex = { version: number; revision: number; photos: Photo[]; items: Item[] };
 export type Stations = Record<string, { base: { x_m: number; y_m: number; yaw_deg: number }; arm_angles_deg: number[] }>;
 export type Navigation = {

@@ -8,41 +8,33 @@ def calibration_config(value):
         value = {}
     if not isinstance(value, dict):
         raise ValueError('Invalid fetch_calibration configuration')
-    # ponytail: conservative image-width gains; tune against measured mm travel on the robot.
-    result = dict(front_target_x=.5, arm_target_x=.5, tolerance=.025, max_step_mm=2,
-                  max_total_mm=20, front_mm_per_width=20, arm_mm_per_width=20)
-    result.update(value)
-    for key in ('front_target_x', 'arm_target_x', 'tolerance', 'max_step_mm',
-                'max_total_mm', 'front_mm_per_width', 'arm_mm_per_width'):
+    result = {key: value.get(key, default) for key, default in (('max_step_mm', 2), ('max_total_mm', 20))}
+    for key in result:
         number = result.get(key)
         if type(number) not in (int, float) or not math.isfinite(number):
             raise ValueError('Invalid fetch calibration: ' + key)
-    if not all(0 <= result[k] <= 1 for k in ('front_target_x', 'arm_target_x')):
-        raise ValueError('Camera target X must be normalized to 0..1')
-    if not .005 <= result['tolerance'] <= .1 or not 0 < result['max_step_mm'] <= 2:
-        raise ValueError('Invalid fetch alignment tolerance or step limit')
+    if not .1 <= result['max_step_mm'] <= 2:
+        raise ValueError('Invalid fetch alignment step limit')
     if not result['max_step_mm'] <= result['max_total_mm'] <= 30:
         raise ValueError('Invalid fetch alignment travel budget')
-    if not all(0 < abs(result[k]) <= 1000 for k in ('front_mm_per_width', 'arm_mm_per_width')):
-        raise ValueError('Measured signed camera gains must be nonzero')
     return result
 
 
 def alignment_command(result, config):
     config = calibration_config(config)
-    if not isinstance(result, dict) or set(result) != {'front_x', 'arm_x'}:
+    if not isinstance(result, dict) or set(result) != {'x_mm', 'y_mm'}:
         raise ValueError('Invalid model alignment JSON')
     moves = {}
-    for camera, axis in (('arm', 'X'), ('front', 'Y')):
-        x = result[camera + '_x']
-        if x is None:
-            raise ValueError('Pickup target missing or ambiguous in ' + camera + ' camera')
-        if type(x) not in (int, float) or not math.isfinite(x) or not 0 <= x <= 1:
-            raise ValueError('Invalid model camera X')
-        error = x - config[camera + '_target_x']
-        delta = error * config[camera + '_mm_per_width']
+    for field, axis in (('x_mm', 'X'), ('y_mm', 'Y')):
+        delta = result[field]
+        if delta is None:
+            raise ValueError('Pickup target missing or ambiguous')
+        if type(delta) not in (int, float) or not math.isfinite(delta) or abs(delta) > 2:
+            raise ValueError('Invalid model arm adjustment')
+        if 0 < abs(delta) < .1:
+            raise ValueError('Model arm adjustment is below measurable step size')
         limit = config['max_step_mm']
-        moves[axis] = 0 if abs(error) <= config['tolerance'] else max(-limit, min(limit, delta))
+        moves[axis] = max(-limit, min(limit, delta))
     return moves
 
 

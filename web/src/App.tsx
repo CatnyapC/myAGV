@@ -104,7 +104,7 @@ export function App() {
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
   const hardwareReasons = !connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware);
   const goReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)), ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
-  const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : !selectedItem.observation_current ? ['Confirm this item in a current observation'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
+  const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : !selectedItem.observation_current ? ['Confirm this item in a current observation'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : state?.llm?.status === 'configured' && !selectedItem.grasp_goal_ready ? ['Record correct-grasp views in the item editor'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -337,6 +337,19 @@ export function App() {
     } catch (failure) { if (!controller.signal.aborted) setError((failure as Error).message); }
     finally { if (resolutionRequest.current === controller) { resolutionRequest.current = null; setBusy(false); } }
   }
+  useEffect(() => {
+    if (photoMode) setMaximized(current => current && current !== 'operate' ? 'operate' : current);
+  }, [photoMode]);
+
+  async function captureGraspGoal(itemId: string, revision: number) {
+    if (!packet || !zones) throw new Error('Current map unavailable');
+    await controlReady();
+    return api<PhotoIndex>('/api/items/grasp-goal', { method: 'POST', body: JSON.stringify({
+      id: commandId(), item_id: itemId, session_id: session.current, stop_epoch: state?.hardware?.stop_epoch,
+      map_id: packet.info.map_id, expected_revision: revision, zone_revision: zones.revision,
+    }) });
+  }
+
   function photoChanged(index: PhotoIndex, addedId?: string) {
     setPhotos(index);
     const id = addedId ?? selectedPhotoId;
@@ -482,7 +495,7 @@ export function App() {
       </>)}
       {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Capture front observation" title="Capture front observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
       {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Capture arm observation" title="Capture arm observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
-      {panel('operate', <div className="operate-body">
+      {panel('operate', <div className="operate-pages"><div className="operate-body" inert={Boolean(photoMode)} aria-hidden={Boolean(photoMode)}>
         <label className="subheading" htmlFor="item-request">REQUEST</label>
         <form className="request-row" onSubmit={event => { event.preventDefault(); void resolveRequest(); }}>
           <input id="item-request" value={requestText} maxLength={500} placeholder="Bring me the red cup" disabled={!canEdit || busy}
@@ -547,7 +560,11 @@ export function App() {
         <span className="muted enforcement">{state?.demo === false ? costmapReady ? 'ROS global + local no-go applied' : 'ROS no-go enforcement pending' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
         {state?.demo === false && <HardwareControls stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
-      </div>)}
+      </div>{photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId}
+        photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
+        index={photos} stations={stations} enabled={canEditPhotos}
+        goalCaptureEnabled={connected && state?.phase === 'idle' && Boolean(state?.hardware?.arm_homed && state.hardware.localized)}
+        onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}</div>)}
     </main>
     <div className="panel-dividers">
       {!maximized && dividers(layout).map(seam => {
@@ -575,8 +592,6 @@ export function App() {
       })}
     </div>
     </div>
-    {photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId} photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
-      index={photos} stations={stations} enabled={canEditPhotos} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}
     <Dialog.Root open={resetMapOpen} onOpenChange={open => { if (!busy) setResetMapOpen(open); }}>
       <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="settings-dialog">
         <header className="dialog-header"><Dialog.Title>Reset map and rebuild?</Dialog.Title></header>

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import * as Dialog from '@radix-ui/react-dialog';
-import { X } from 'lucide-react';
+import { ArrowLeft, Camera } from 'lucide-react';
 import { api } from './api';
 import { Button } from './ui';
 import type { Photo, PhotoIndex, Stations } from './mapGeometry';
@@ -32,10 +31,11 @@ async function normalizedPng(file: File): Promise<Blob> {
 
 export function PhotoEditor(props: {
   photo: Photo | null; index: PhotoIndex; stations: Stations; enabled: boolean; autoDescribe: boolean;
+  goalCaptureEnabled: boolean; onCaptureGoal: (itemId: string, revision: number) => Promise<PhotoIndex>;
   onClose: () => void; onChange: (index: PhotoIndex, addedId?: string) => void; onBusy: (value: boolean) => void; onStop: () => void;
 }) {
   const currentItem = props.index.items.find(i => i.id === props.photo?.item_id);
-  const [revision] = useState(props.index.revision);
+  const [revision, setRevision] = useState(props.index.revision);
   const [file, setFile] = useState<File | null>(null);
   const [itemId, setItemId] = useState(currentItem?.id ?? (props.photo?.kind === 'reference' ? 'new' : ''));
   const [name, setName] = useState(currentItem?.name ?? '');
@@ -64,7 +64,7 @@ export function PhotoEditor(props: {
     });
     return () => { controller.abort(); setBusy(false); props.onBusy(false); };
   }, [describeRequested, props.photo?.id, props.enabled]);
-  async function mutate(remove = false) {
+  async function mutate(remove = false, graspGoal = false) {
     if (!props.enabled || busy) return;
     setBusy(true); props.onBusy(true); setError('');
     try {
@@ -78,7 +78,14 @@ export function PhotoEditor(props: {
         const result = await api<PhotoIndex>(`/api/photos/${props.photo.id}`, { method: remove ? 'DELETE' : 'PATCH',
           body: JSON.stringify({ expected_revision: revision,
             ...(!remove ? { item_id: itemId, name, appearance, station_name: station, confirmed: true, station_confirmed: stationConfirmed } : {}) }) });
-        props.onChange(result); props.onClose();
+        props.onChange(result); setRevision(result.revision);
+        if (graspGoal) {
+          const savedItemId = result.photos.find(p => p.id === props.photo?.id)?.item_id;
+          if (!savedItemId) throw new Error('Save an item before recording its grasp goal');
+          setItemId(savedItemId);
+          const captured = await props.onCaptureGoal(savedItemId, result.revision);
+          props.onChange(captured); setRevision(captured.revision);
+        } else props.onClose();
       }
     } catch (failure) { setError((failure as Error).message); }
     finally { setBusy(false); props.onBusy(false); }
@@ -86,11 +93,11 @@ export function PhotoEditor(props: {
   const photo = props.photo;
   const editingItem = props.index.items.find(i => i.id === itemId);
   const stationNeedsConfirmation = Boolean(station) && (editingItem?.station_link?.name !== station || editingItem?.station_status !== 'ready');
-  return <Dialog.Root open onOpenChange={open => { if (!open && !busy) props.onClose(); }}><Dialog.Portal>
-    <Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="settings-dialog photo-dialog">
-      <header className="dialog-header"><Dialog.Title>{photo ? 'PHOTO' : 'IMPORT REFERENCE'}</Dialog.Title>
-        <Dialog.Close asChild><Button variant="ghost" className="icon" aria-label="Close photo editor" disabled={busy}><X size={18} /></Button></Dialog.Close></header>
-      <Dialog.Description className="sr-only">Reference features and confirmed observation association</Dialog.Description>
+  return <section className="photo-page" aria-label={photo ? 'Edit item' : 'Import item photo'}>
+      <header className="photo-page-header">
+        <Button variant="ghost" className="icon" aria-label="Back to OPERATE" autoFocus disabled={busy} onClick={props.onClose}><ArrowLeft size={18} /></Button>
+        <h2>{photo ? 'ITEM' : 'IMPORT PHOTO'}</h2>
+      </header>
       <div className="settings-body">
         {!photo ? <><label className="setting-row">Phone photo<input type="file" accept="image/png,image/jpeg,image/webp" disabled={!props.enabled || busy} onChange={e => setFile(e.target.files?.[0] ?? null)} /></label>
           <span className="muted">LLM generates name and appearance after import · no map point</span></> : <>
@@ -114,7 +121,17 @@ export function PhotoEditor(props: {
               {Object.keys(props.stations).map(n => <option key={n} value={n}>{n}</option>)}</select></label>
             {stationNeedsConfirmation && props.stations[station] && <><span className="muted">X {props.stations[station].base.x_m.toFixed(2)} m · Y {props.stations[station].base.y_m.toFixed(2)} m · θ {props.stations[station].base.yaw_deg.toFixed(0)}°</span>
               <label className="setting-row">Confirm station<input type="checkbox" checked={stationConfirmed} disabled={!props.enabled || busy} onChange={e => setStationConfirmed(e.target.checked)} /></label></>}
-            {editingItem && !['ready', 'none'].includes(editingItem.station_status) && <span className="muted">Station link {editingItem.station_status}</span>}</>}
+            {editingItem && !['ready', 'none'].includes(editingItem.station_status) && <span className="muted">Station link {editingItem.station_status}</span>}
+            <div className="section-divider" /><span className="subheading">CORRECT GRASP GOAL</span>
+            <span className="muted">Position the gripper correctly for this item, then save both camera views.</span>
+            <Button disabled={!props.enabled || !props.goalCaptureEnabled || busy || !name.trim() || (stationNeedsConfirmation && !stationConfirmed)}
+              onClick={() => void mutate(false, true)}><Camera size={15} />Save item & capture both cameras</Button>
+            <span className="muted">{editingItem?.grasp_goal_ready ? 'Correct-grasp views saved.' : editingItem?.grasp_goal ? 'Saved views unavailable; capture both cameras again.' : 'No grasp goal saved yet.'}</span>
+            {editingItem?.grasp_goal && <div className="grasp-goal-views">{(['front', 'arm'] as const).map(camera => {
+              const goalPhoto = props.index.photos.find(p => p.id === editingItem.grasp_goal?.[camera]);
+              return goalPhoto?.available && <figure key={camera}><img src={goalPhoto.image_url} alt={`${camera} correct grasp goal`} /><figcaption>{camera.toUpperCase()} GOAL</figcaption></figure>;
+            })}</div>}
+          </>}
         </>}
         {error && <span role="alert" className="muted">{error}</span>}
       </div><footer className="dialog-footer">
@@ -123,5 +140,5 @@ export function PhotoEditor(props: {
         <Button variant="default" disabled={!props.enabled || busy || (!photo && !file) || (Boolean(photo) && Boolean(itemId) && (!name.trim() || (stationNeedsConfirmation && !stationConfirmed)))}
           onClick={() => void mutate()}>{busy ? describeRequested ? 'Generating…' : 'Saving…' : !photo ? 'Import reference' : photo.kind === 'observation' && itemId ? 'Confirm association' : 'Save'}</Button>
       </footer>
-    </Dialog.Content></Dialog.Portal></Dialog.Root>;
+    </section>;
 }

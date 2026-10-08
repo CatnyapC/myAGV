@@ -129,35 +129,40 @@ controls logical arm Y (chassis right/left). A target right of the alignment poi
 commands positive motion on either logical axis. The SDK receives native +Y for
 logical X+, and native -X for logical Y+; images retain their mounted orientation.
 
-Each round sends two JPEGs (longest side at most 480 pixels, quality 60) to the
-configured DeepSeek Flash model through OpenRouter. Thinking is disabled and
-output is capped at 64 tokens: `{"front_x":0.5,"arm_x":0.5}`. Positions are
-normalized to image width; absent/ambiguous targets use `null` and stop Fetch.
-Only these fields are accepted. The controller converts image errors into bounded
-arm targets; the model cannot close the gripper, drive the base or change Z.
+Import and photo/item editing open as a child page inside OPERATE. The upper-left
+back arrow returns to its main controls. Save item & capture both cameras records
+the current, operator-positioned correct grasp without moving the robot. It needs
+an idle, localized robot and homed arm. New items are saved before acquisition.
+The paired goal photos remain in the photo index with a compressed JPEG copy for
+LLM input. Deleting or reassigning either goal photo invalidates that item's goal.
+
+Each round sends current front/arm views, the item's correct-grasp GOAL views and
+the previous two image pairs with their executed X/Y commands. All LLM images are
+JPEGs (longest side at most 480 pixels, quality 60, low detail). The configured
+DeepSeek Flash model uses observed image response to adapt the next correction;
+there is no fixed pixel-to-mm gain or assumed center alignment point. Thinking
+is disabled and output is capped at 64 tokens: `{"x_mm":0.5,"y_mm":-1}`.
+Both zeros mean the current grasp matches both GOAL views. Missing/ambiguous
+targets or goals use `null` and stop Fetch. Only these fields are accepted.
+The controller checks and bounds arm targets; the model cannot close the gripper,
+drive the base or change Z. A configured-LLM Fetch needs a saved goal for the item.
 It recaptures after each correction and stops on malformed output, timeout,
 expired control lease, changed map/zones, missing sensors or non-convergence.
 
-Tune the optional `fetch_calibration` object in `web_runtime/robot_config.json`
-while the bridge is stopped, then restart `myagv-bridge`. Defaults below use a
-conservative 20 mm per full image width; they are starting gains, not measured
-camera geometry. Set target X to the actual gripper alignment point in each view.
-Transport-pose recording preserves these settings. Old J1=0 stations must be
+The optional `fetch_calibration` object in `web_runtime/robot_config.json` sets
+travel limits only. Old pixel target/gain fields are ignored. Transport-pose
+recording preserves these settings. Old J1=0 stations must be
 physically re-taught at J1=90 and their photo associations reconfirmed.
 
 ```json
 "fetch_calibration": {
-  "front_target_x": 0.5,
-  "arm_target_x": 0.5,
-  "front_mm_per_width": 20,
-  "arm_mm_per_width": 20,
-  "tolerance": 0.025,
   "max_step_mm": 2,
   "max_total_mm": 20
 }
 ```
 
-Defaults permit at most eight vision rounds and 20 mm combined travel. Each
+Defaults permit at most eight corrections and 20 mm combined travel. A ninth
+observation verifies the final correction without moving again. Each
 correction is divided into absolute waypoints no larger than 1 mm, with measured
 feedback. Grasp and possession still require the existing operator confirmations.
 

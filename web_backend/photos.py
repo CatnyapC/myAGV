@@ -125,6 +125,16 @@ class PhotoIndex:
                 raise ValueError('Unknown photo kind')
             if photo.get('item_id') and photo['item_id'] not in item_ids:
                 raise ValueError('Photo refers to a missing item')
+        by_id = {p['id']: p for p in value['photos']}
+        for item in value['items']:
+            goal = item.get('grasp_goal')
+            if goal is not None:
+                if not isinstance(goal, dict) or set(goal) != {'front', 'arm'}:
+                    raise ValueError('Invalid grasp goal')
+                for camera, photo_id in goal.items():
+                    photo = by_id.get(photo_id, {})
+                    if photo.get('kind') != 'observation' or photo.get('source') != 'ros' or photo.get('camera_id') != camera or photo.get('item_id') != item['id']:
+                        raise ValueError('Invalid grasp goal camera association')
 
     def stations(self):
         return load_stations(self.stations_path)
@@ -146,6 +156,8 @@ class PhotoIndex:
             item['last_seen_s'] = max((p['captured_at_s'] for p in observations), default=0)
             item['station_status'] = 'none' if not link else 'unavailable' if stations is None else 'map_mismatch' if link['map_id'] != map_id else 'ready' if link['name'] in stations and digest_station(stations[link['name']]) == link['digest'] else 'stale'
             item['fetch_available'] = False  # Task/grasp gates are not part of the photo milestone.
+            goal = item.get('grasp_goal')
+            item['grasp_goal_ready'] = bool(goal) and all(self.image_path(photo_id).is_file() and self.image_path(photo_id).with_suffix('.jpg').is_file() for photo_id in goal.values())
         return value
 
     def image_path(self, photo_id):
@@ -156,6 +168,11 @@ class PhotoIndex:
             raise ValueError('Photo index changed; reload before editing')
 
     def commit(self, value):
+        by_id = {p['id']: p for p in value['photos']}
+        for item in value['items']:
+            if item.get('grasp_goal') and any(by_id.get(photo_id, {}).get('item_id') != item['id']
+                                             for photo_id in item['grasp_goal'].values()):
+                item.pop('grasp_goal')
         value['revision'] = self.value['revision'] + 1
         self.validate(value)
         atomic_json(self.directory / 'photo_index.json', value)
@@ -238,6 +255,24 @@ class PhotoIndex:
         value['items'] = [i for i in value['items'] if i['id'] in used]
         self.commit(value)
 
+    def save_grasp_goal(self, item_id, cameras, revision, map_id):
+        self.check(revision)
+        if not isinstance(cameras, dict) or set(cameras) != {'front', 'arm'}:
+            raise ValueError('Both grasp goal cameras required')
+        value = deepcopy(self.value)
+        item = next((i for i in value['items'] if i['id'] == item_id), None)
+        if item is None:
+            raise ValueError('Save the item before recording its grasp goal')
+        for camera, photo_id in cameras.items():
+            photo = next((p for p in value['photos'] if p['id'] == photo_id), {})
+            if photo.get('kind') != 'observation' or photo.get('source') != 'ros' or photo.get('camera_id') != camera or photo.get('map_id') != map_id:
+                raise ValueError('Measured current-map grasp goal required')
+            if not self.image_path(photo_id).is_file() or not self.image_path(photo_id).with_suffix('.jpg').is_file():
+                raise ValueError('Grasp goal images unavailable')
+            photo.update(item_id=item_id, association_source='manual')
+        item['grasp_goal'] = dict(cameras)
+        self.commit(value)
+
     def delete(self, photo_id, revision):
         self.check(revision)
         value = deepcopy(self.value)
@@ -250,3 +285,5 @@ class PhotoIndex:
         # ponytail: best-effort orphan cleanup; index gates access, add a sweeper for long surveys.
         with suppress(OSError):
             self.image_path(photo_id).unlink()
+        with suppress(OSError):
+            self.image_path(photo_id).with_suffix('.jpg').unlink()

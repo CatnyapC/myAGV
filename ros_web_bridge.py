@@ -1,4 +1,5 @@
 """ROS/serial owner. Web API exchanges snapshots and bounded Unix-socket commands."""
+import base64
 import json
 import math
 import os
@@ -33,7 +34,7 @@ def main():
         p, q = transform.transform.translation, transform.transform.rotation
         return dict(x_m=p.x, y_m=p.y, yaw_rad=math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z)))
 
-    def capture(camera_id, persist=True, update_key=None, vision=False):
+    def capture(camera_id, persist=True, update_key=None, vision=False, grasp_goal=False):
         if camera_id not in ('front', 'arm') or not robot.grid or not control.localized:
             raise ValueError('Camera and confirmed localization required')
         robot.nav.wait_stopped()
@@ -70,6 +71,9 @@ def main():
         capture_id = str(uuid.uuid4())
         metadata = dict(metadata, capture_id=capture_id)
         atomic_bytes(directory / 'captures' / (capture_id + '.png'), encoded.tobytes())
+        if grasp_goal:
+            jpeg = base64.b64decode(vision_image(frame, cv2).split(',', 1)[1])
+            atomic_bytes(directory / 'captures' / (capture_id + '.jpg'), jpeg)
         atomic_json(directory / 'captures' / (capture_id + '.json'), metadata)
         return dict(capture_id=capture_id)
 

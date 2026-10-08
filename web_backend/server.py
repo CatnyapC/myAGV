@@ -1,5 +1,6 @@
 """WebUI API with demo simulation or leased ROS hardware control."""
 import argparse
+import base64
 import asyncio
 from contextlib import suppress
 import json
@@ -14,7 +15,7 @@ from aiohttp import web
 from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
-from .storage import atomic_json
+from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
 from .resolve import MODEL, MODEL_OPTIONS, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
 
@@ -215,6 +216,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             if metadata.get('capture_id') != capture_id or metadata.get('source') != 'ros':
                 raise ValueError('Invalid hardware acquisition')
             added = await asyncio.to_thread(photos.add, path.with_suffix('.png').read_bytes(), metadata, photos.value['revision'])
+        if path.with_suffix('.jpg').is_file():
+            await asyncio.to_thread(atomic_bytes, photos.image_path(added['id']).with_suffix('.jpg'), path.with_suffix('.jpg').read_bytes())
+            path.with_suffix('.jpg').unlink()
         path.with_suffix('.json').unlink(missing_ok=True)
         path.with_suffix('.png').unlink(missing_ok=True)
         return added
@@ -241,6 +245,24 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             added = await asyncio.to_thread(photos.add, image, metadata, data['expected_revision'])
         await editor.emit('photos')
         return web.json_response({**await asyncio.to_thread(photos.snapshot, editor.grid['map_id']), 'added_id': added['id']})
+
+    async def capture_grasp_goal(request):
+        data = await request.json()
+        async with photo_lock:
+            photo_stopped()
+            if not editor.hardware or data['map_id'] != editor.grid['map_id']:
+                raise ValueError('Live hardware on the current map required for grasp goals')
+            photos.check(data['expected_revision'])
+            if not any(i['id'] == data['item_id'] for i in photos.value['items']):
+                raise ValueError('Save the item before recording its grasp goal')
+            if len(photos.value['photos']) > 998:
+                raise ValueError('Photo index needs space for both grasp goal images')
+            command = {**data, 'type': 'capture_grasp_goal', 'expected_revision': data['zone_revision']}
+            result = await editor.hardware.command(command, wait=True)
+            cameras = {camera: (await ingest_capture(result['captures'][camera]))['id'] for camera in ('front', 'arm')}
+            await asyncio.to_thread(photos.save_grasp_goal, data['item_id'], cameras, photos.value['revision'], editor.grid['map_id'])
+        await editor.emit('photos')
+        return web.json_response(await asyncio.to_thread(photos.snapshot, editor.grid['map_id']))
 
     async def photo_edit(request):
         data = await request.json()
@@ -377,8 +399,10 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if not item or item['station_status'] != 'ready' or not item['observation_current']:
                         raise ValueError('Confirmed current-map station association required')
                     link = item['station_link']
+                    if llm_key and not item['grasp_goal_ready']:
+                        raise ValueError('Record this item\'s correct-grasp front and arm views first')
                     data = {**data, 'station': link['name'], 'station_digest': link['digest'],
-                            'vision_item': dict(name=item['name'], appearance=item['appearance']) if llm_key else None}
+                            'vision_item': dict(name=item['name'], appearance=item['appearance'], goal=item['grasp_goal']) if llm_key else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):
                         raise ValueError('Fresh front camera required for map updating')
@@ -537,9 +561,12 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if resolve_lock.locked():
                         raise ValueError('Another LLM request is running; retry fetch explicitly')
                     async with resolve_lock:
-                        result = await locate_pickup(value['images'], value['item'], llm_key)
+                        goal = {camera: 'data:image/jpeg;base64,' + base64.b64encode(
+                            await asyncio.to_thread(photos.image_path(value['item']['goal'][camera]).with_suffix('.jpg').read_bytes)
+                        ).decode('ascii') for camera in ('front', 'arm')}
+                        result = await locate_pickup(value['images'], value['item'], llm_key, goal, value['history'])
                     response = dict(id=handled, result=result)
-                except (web.HTTPException, ValueError, KeyError, TypeError) as exc:
+                except (web.HTTPException, OSError, ValueError, KeyError, TypeError) as exc:
                     response = dict(id=handled, error=str(exc))
                 try:
                     if current(value) and await asyncio.to_thread(load_json, request_path, {}) == value:
@@ -633,6 +660,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app.router.add_get('/api/stations', stations)
     app.router.add_post('/api/photos/reference', reference_upload)
     app.router.add_post('/api/photos/capture', capture_photo)
+    app.router.add_post('/api/items/grasp-goal', capture_grasp_goal)
     app.router.add_patch('/api/photos/{id}', photo_edit)
     app.router.add_delete('/api/photos/{id}', photo_edit)
     app.router.add_get('/api/photos/{id}/image', photo_image)
