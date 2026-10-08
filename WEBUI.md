@@ -23,6 +23,15 @@ binds to all interfaces. On a trusted LAN or phone hotspot, open
 `/api` and WebSocket traffic to the backend; frontend and backend sources stay
 separate. For a built UI only, start just `myagv-api` with PM2.
 
+LAN access requires explicitly allowing the frontend's origin on the backend:
+
+```bash
+MYAGV_WEB_ORIGIN="http://<LAN-IP>:5173" pm2 restart myagv-api --update-env
+```
+
+Replace `<LAN-IP>` with the host's address. Unconfigured LAN hosts and unrelated
+origins remain blocked. This enables the demo only; hardware stays unconnected.
+
 ```bash
 pm2 restart myagv-api myagv-web
 pm2 logs myagv-api --lines 20 --nostream

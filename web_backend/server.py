@@ -4,6 +4,7 @@ import asyncio
 from contextlib import suppress
 import json
 import math
+import os
 from pathlib import Path
 import uuid
 from urllib.parse import urlsplit
@@ -84,7 +85,8 @@ EDITOR = web.AppKey('editor', Editor)
 
 @web.middleware
 async def boundary(request, handler):
-    if request.url.host not in ('localhost', '127.0.0.1', '::1'):
+    lan_origin = os.environ.get('MYAGV_WEB_ORIGIN', '')
+    if request.url.host not in ('localhost', '127.0.0.1', '::1') and f'http://{request.host}' != lan_origin:
         raise web.HTTPForbidden(text='Local demo only')
     origin = request.headers.get('Origin')
     if origin:

@@ -1,13 +1,16 @@
 """Necessary local checks only: coordinates, map raster, API edits and persistence."""
 import json
 import math
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from web_backend.map_data import demo_map, dominant_angle, local_to_world, render_map, world_to_local
-from web_backend.server import DEFAULT_SETTINGS, create_app
+from web_backend.server import DEFAULT_SETTINGS, boundary, create_app
 from web_backend.resolve import MODELS
 
 
@@ -28,6 +31,23 @@ class MapGeometryTest(unittest.TestCase):
 
 
 class EditorAPITest(unittest.IsolatedAsyncioTestCase):
+    async def test_explicit_lan_origin(self):
+        async def handler(request):
+            return web.json_response({'ok': True})
+
+        origin = 'http://192.168.1.20:5173'
+        headers = {'Host': '192.168.1.20:5173', 'Origin': origin}
+        with patch.dict(os.environ, {'MYAGV_WEB_ORIGIN': ''}):
+            with self.assertRaises(web.HTTPForbidden):
+                await boundary(make_mocked_request('GET', '/api/state', headers=headers), handler)
+        with patch.dict(os.environ, {'MYAGV_WEB_ORIGIN': origin}):
+            response = await boundary(make_mocked_request('GET', '/api/state', headers=headers), handler)
+            self.assertEqual(response.status, 200)
+            for invalid in ({'Host': 'evil.test:5173'}, {'Host': '192.168.1.20:5174'},
+                            {'Origin': 'http://evil.test'}, {'Origin': origin.replace('http:', 'https:')}):
+                with self.assertRaises(web.HTTPForbidden):
+                    await boundary(make_mocked_request('GET', '/api/state', headers={**headers, **invalid}), handler)
+
     async def test_edits_revisions_and_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             async with TestClient(TestServer(create_app(directory))) as client:
