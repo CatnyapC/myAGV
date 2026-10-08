@@ -44,10 +44,10 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
 
     def test_visual_labels_convert_to_bounded_moves(self):
         for size, step in (('large', 2), ('medium', 1), ('small', .5)):
-            self.assertEqual(qualitative_alignment(dict(arm='left_' + size, front='right_' + size), None), dict(x_mm=-step, turn_deg=step/2))
-            self.assertEqual(qualitative_alignment(dict(arm='right_' + size, front='left_' + size), None), dict(x_mm=step, turn_deg=-step/2))
+            self.assertEqual(qualitative_alignment(dict(arm='left_' + size, front='right_' + size), None), dict(x_mm=-step, turn_deg=step))
+            self.assertEqual(qualitative_alignment(dict(arm='right_' + size, front='left_' + size), None), dict(x_mm=step, turn_deg=-step))
         self.assertEqual(qualitative_alignment(dict(arm='aligned', front='aligned'), None), dict(x_mm=0, turn_deg=0))
-        self.assertEqual(qualitative_alignment(dict(arm='right_large', front='right_large'), dict(max_step_mm=.5)), dict(x_mm=.5, turn_deg=1))
+        self.assertEqual(qualitative_alignment(dict(arm='right_large', front='right_large'), dict(max_step_mm=.5)), dict(x_mm=.5, turn_deg=2))
         for label in ('unknown', None, 0, 'right', {}, []):
             with self.assertRaises(ValueError):
                 qualitative_alignment(dict(arm=label, front='aligned'), None)
@@ -263,7 +263,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     entry = log['rounds'][0]
                     self.assertEqual(entry['status'], 'returned')
                     self.assertEqual(json.loads(entry['result_json']), dict(arm='right_large', front='left_large'))
-                    self.assertEqual(entry['correction'], dict(X=.5, turn_deg=-1))
+                    self.assertEqual(entry['correction'], dict(X=.5, turn_deg=-2))
                     self.assertEqual(entry['messages'][0]['content'], values['prompt'])
                 restarted = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 async with TestClient(TestServer(restarted)) as client:

@@ -54,7 +54,7 @@ def qualitative_alignment(result, config):
         if not isinstance(label, str) or label not in steps:
             raise ValueError('Invalid visual alignment label')
         limit = config['max_step_mm'] if camera == 'arm' else 2
-        step = steps[label] if camera == 'arm' else steps[label] / 2
+        step = steps[label]
         moves[field] = max(-limit, min(limit, step))
     alignment_command(moves, config)
     return moves
