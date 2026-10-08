@@ -5,7 +5,6 @@ import hashlib
 import json
 import math
 
-from aiohttp import web
 from .map_data import local_to_world, world_to_local
 from .simulation import cell_index, global_costmap, navigation_grid, segment_clear
 
@@ -72,6 +71,7 @@ def project_estimates(result, photo, grid, items, config):
 
 
 async def estimate_items(image, map_image, map_info, photo, items, key, config):
+    from aiohttp import web
     from .resolve import MODEL, request_json
     allowed = [i['id'] for i in items]
     if not allowed:
