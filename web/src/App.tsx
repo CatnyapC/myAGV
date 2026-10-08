@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode, type PointerE
 import * as Dialog from '@radix-ui/react-dialog';
 import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
-import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu, MoreHorizontal, Play, RotateCcw, Search, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
+import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu, MoreHorizontal, Play, Plus, RotateCcw, Search, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
 import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
@@ -465,7 +465,11 @@ export function App() {
           {resolution.status === 'ambiguous' && <div className="candidate-list">{resolution.item_ids.map(id => <Button key={id} disabled={!canEdit || busy} onClick={() => selectItem(id)}>{photos?.items.find(i => i.id === id)?.name}</Button>)}</div>}
         </div>}
         <label className="subheading" htmlFor="item-select">ITEM</label>
-        <select id="item-select" value={selectedItemId} disabled={busy} onChange={e => selectItem(e.target.value)}><option value="">All photos</option>{photos?.items.map(i => <option value={i.id} key={i.id}>{i.name}</option>)}</select>
+        <div className="request-row">
+          <select id="item-select" value={selectedItemId} disabled={busy} onChange={e => selectItem(e.target.value)}><option value="">All photos</option>{photos?.items.map(i => <option value={i.id} key={i.id}>{i.name}</option>)}</select>
+          <Button variant="ghost" className="icon" style={{ color: 'var(--orange-11)' }} aria-label="Import reference photo" title="Import reference photo"
+            disabled={!canEdit || busy || !photos} onClick={() => setPhotoMode('import')}><Plus size={18} /></Button>
+        </div>
         <div className="photo-list">{photos?.photos.length ? [...photos.photos].reverse().filter(p => !selectedItemId || p.item_id === selectedItemId).map(p =>
           <button key={p.id} className={`zone-row ${p.id === selectedPhotoId ? 'selected' : ''}`} onClick={() => selectPhoto(p.id)} title={p.kind === 'reference' ? 'Phone reference · no map point' : 'Captured base observation pose'}>
             <Camera size={14} /><span>{photos.items.find(i => i.id === p.item_id)?.name ?? 'Unlabelled'}</span><span className="row-end">{p.kind === 'reference' ? 'Reference' : p.camera_id}</span>
