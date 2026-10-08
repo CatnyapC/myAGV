@@ -31,7 +31,7 @@ MYAGV_WEB_ORIGIN="http://172.28.13.26:5173" \
 pm2 restart myagv-api --update-env
 ```
 
-The driver patch makes commands expire after 0.5 seconds of wall time. It refuses
+The driver patch uses a wall-clock loop and makes commands expire after 0.5 seconds. It refuses
 unknown source layouts and saves `.before-web-watchdog` beside the source.
 The ROS launch starts map_server, AMCL and move_base. Both costmaps consume
 `/navigation_map`. The move_base output is remapped to `/myagv/input_vel`; only
@@ -53,8 +53,9 @@ the driver watchdog are required for motion.
    base, folded arm and carried object. Check the measurement box and **Record
    transport pose**. This updates both ROS planner footprints. No transport pose
    is guessed. Automatic travel remains disabled until this is done.
-6. Teach a uniquely named pickup station at its real base/arm pose (J1=0).
-   Capture a photo, edit its item, and explicitly associate that station.
+6. Teach a named pickup station at its real base/arm pose (J1=0).
+   Existing names require overwrite confirmation; changed station links must be
+   reconfirmed. Capture a photo, edit its item, and explicitly associate that station.
 
 Manual BASE driving is supervised and bypasses no-go planning. It uses at most
 0.1 m/s and 0.3 rad/s; PICKUP base motion uses 0.03 m/s and 0.05 rad/s. Releasing
@@ -162,3 +163,12 @@ validate camera roles, actual localization, homing, transport envelope, low-spee
 manual motion/release, browser disconnect, STOP, no-go avoidance, pickup alignment
 and both grasp confirmations on the supervised robot. No browser or physical
 motion test is performed by deployment.
+
+## Deployment check (2026-10-08)
+
+The patched chassis driver compiled on the robot. PM2 services started; P340
+reported four joint angles, LiDAR/odometry were fresh, and both ROS costmaps
+reported the active no-go revision. The frontend built and hardware-free tests
+passed. No browser or movement test was run. The arm camera `/dev/video1` was
+absent from the device list; reconnect it before Fetch. Localization, homing and
+transport-envelope confirmation remain operator actions.

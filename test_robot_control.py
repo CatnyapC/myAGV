@@ -101,6 +101,13 @@ class ControlTest(unittest.TestCase):
             c.fetch(data)
         self.assertEqual([x.args[0] for x in c.review.call_args_list], ['review_grasp','verify_grasp'])
         self.assertEqual([x.args[0] for x in c.grip.call_args_list], [100,0,100])
+        c.fold.reset_mock()
+        c.robot.nav.go_to_pickup.reset_mock()
+        c.capture.side_effect = RuntimeError('Arm camera unavailable')
+        with patch('robot_control.load_stations', return_value={'cup':record}), patch('robot_control.wait_arm', return_value=[0,10,20]):
+            with self.assertRaises(RuntimeError): c.fetch(data)
+        c.fold.assert_not_called()
+        c.robot.nav.go_to_pickup.assert_not_called()
 
     def test_review_rejects_wrong_stage_or_task(self):
         c = fake_control()
@@ -126,6 +133,8 @@ class ControlTest(unittest.TestCase):
         src='double angularZ = 0.0;\nlinearX = msg.linear.x;\nros::Rate loop_rate(100);\nmyAGV.execute(linearX, linearY, angularZ);\n\treturn 0;'
         result=patch_driver(src)
         self.assertIn('> 0.5',result)
+        self.assertIn('ros::WallRate loop_rate',result)
+        self.assertEqual(patch_driver(result.replace('ros::WallRate', 'ros::Rate')), result)
         self.assertEqual(patch_driver(result),result)
         with self.assertRaises(ValueError): patch_driver('unknown driver')
 
