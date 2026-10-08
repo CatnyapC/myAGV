@@ -112,6 +112,19 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(c.robot.velocity, (0, 0, -.02))
         self.assertEqual(qualitative_alignment(dict(arm='aligned_perfectly', front='right_medium'),
             dict(turn_step_deg=1)), dict(x_mm=0, turn_deg=.5))
+        settings = dict(turn_s_speed_rad_s=.018, turn_s_duration_s=.2,
+                        turn_m_speed_rad_s=.022, turn_m_duration_s=.4,
+                        turn_l_speed_rad_s=.025, turn_l_duration_s=.7)
+        for size, degrees in (('s', .5), ('m', 1), ('l', 2)):
+            now[0] = 0
+            with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
+                c.turn_fetch(degrees, settings)
+            self.assertAlmostEqual(c.robot.velocity[2], -settings['turn_' + size + '_speed_rad_s'])
+            self.assertGreaterEqual(now[0], settings['turn_' + size + '_duration_s'])
+            self.assertLess(now[0], settings['turn_' + size + '_duration_s'] + .051)
+        for bad in (0, True, float('nan'), 16):
+            with self.assertRaises(ValueError):
+                calibration_config(dict(turn_s_duration_s=bad))
 
     def test_grasp_height_records_only_measured_z_without_motion_or_capture(self):
         c = fake_control()

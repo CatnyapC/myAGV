@@ -892,8 +892,9 @@ class Control:
         start = self.robot.nav.get_odom_pose()
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         target = math.radians(start['yaw_deg'] - degrees)
-        speed = config['turn_speed_rad_s']
-        end = time.monotonic() + config['turn_duration_scale'] * abs(math.radians(degrees)) / speed
+        size = min(('s', 'm', 'l'), key=lambda size: abs(abs(degrees) / config['turn_step_deg'] - {'s': .25, 'm': .5, 'l': 1}[size]))
+        speed = config['turn_' + size + '_speed_rad_s']
+        end = time.monotonic() + config['turn_' + size + '_duration_s']
         try:
             while True:
                 pose = self.robot.nav.get_odom_pose()

@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { Button } from './ui';
 
-type FetchSettings = { revision: number; values: { max_step_mm: number; max_total_mm: number; turn_speed_rad_s: number; turn_duration_scale: number; turn_step_deg: number; prompt: string } };
+type TurnSize = 's' | 'm' | 'l';
+type TurnFields = Record<`turn_${TurnSize}_${'speed_rad_s' | 'duration_s'}`, number>;
+type FetchSettings = { revision: number; values: TurnFields & { max_step_mm: number; max_total_mm: number; turn_speed_rad_s: number; turn_duration_scale: number; turn_step_deg: number; prompt: string } };
 type Part = { type: string; text?: string; image_url?: { url: string } };
 type Round = {
   id: string; round: number; mode?: 'grasp' | 'approach'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
@@ -75,22 +77,17 @@ export function FetchTest(props: {
         <label>Total arm X (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_total_mm: Number(event.target.value) })} /></label>
       </div>
-      <div className="goal-inputs">
-        <label>Turn speed (rad/s)<input type="number" min={0.005} max={0.1} step={0.001} value={draft.turn_speed_rad_s}
-          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, turn_speed_rad_s: Number(event.target.value) })} /></label>
-        <label>Turn duration (%)<input type="number" min={10} max={150} step={5} value={Math.round(draft.turn_duration_scale * 100)}
-          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, turn_duration_scale: Number(event.target.value) / 100 })} /></label>
-        <label>Large turn (°)<input type="number" min={0.4} max={2} step={0.1} value={draft.turn_step_deg}
-          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, turn_step_deg: Number(event.target.value) })} /></label>
-      </div>
-      <span className="muted">Base large / medium / small: {draft.turn_step_deg}° / {draft.turn_step_deg / 2}° / {draft.turn_step_deg / 4}°. Large pulse ≈{(draft.turn_duration_scale * draft.turn_step_deg * Math.PI / 180 / draft.turn_speed_rad_s).toFixed(2)} s. Save or press ALIGN to apply next run.</span>
-      <div className="action-line">{(['s', 'm', 'l'] as const).map(size => <Button key={size}
-        disabled={!props.connected || !props.editable || !props.turnEnabled || pending || !settings}
-        title="Save settings, then rotate right once. No LLM or arm movement."
-        onClick={() => void save(undefined, size)}>{size.toUpperCase()} ↻</Button>)}
-        <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
-      </div>
-      <span className="muted">S / M / L: one right turn using saved settings. No item or LLM required.</span>
+      {(['s', 'm', 'l'] as const).map(size => <div className="goal-inputs" key={size}>
+        <label>{size.toUpperCase()} speed (rad/s)<input type="number" min={0.005} max={0.1} step={0.001} value={draft[`turn_${size}_speed_rad_s`]}
+          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, [`turn_${size}_speed_rad_s`]: Number(event.target.value) })} /></label>
+        <label>{size.toUpperCase()} duration (s)<input type="number" min={0.05} max={15} step={0.05} value={Number(draft[`turn_${size}_duration_s`].toFixed(3))}
+          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, [`turn_${size}_duration_s`]: Number(event.target.value) })} /></label>
+        <Button disabled={!props.connected || !props.editable || !props.turnEnabled || pending || !settings}
+          title="Save settings, then rotate right once. No LLM or arm movement."
+          onClick={() => void save(undefined, size)}>{size.toUpperCase()} ↻ TEST</Button>
+      </div>)}
+      <span className="muted">Independent S / M / L speeds and seconds. Rotation stops early at {draft.turn_step_deg / 4}° / {draft.turn_step_deg / 2}° / {draft.turn_step_deg}°. Tests and ALIGN use the same settings.</span>
+      <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
       <label className="photo-field">Calibration prompt<textarea className="fetch-prompt" rows={10} maxLength={8000} value={draft.prompt}
         disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, prompt: event.target.value })} /></label>
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
@@ -107,7 +104,7 @@ export function FetchTest(props: {
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
     <span className="subheading">LLM ROUNDS</span>
-    {!rounds.length && <span className="muted">No requests yet. Latest task only; logs clear when API restarts.</span>}
+    {!rounds.length && <span className="muted">No requests yet. Latest task only; STOP clears logs.</span>}
     {rounds.map(round => {
       const parts = round.messages?.[1].content ?? [];
       return <article className="fetch-round" key={round.id}>

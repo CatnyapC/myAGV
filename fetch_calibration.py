@@ -24,6 +24,15 @@ def calibration_config(value):
     for key, low, high in (('turn_speed_rad_s', .005, .1), ('turn_duration_scale', .1, 1.5), ('turn_step_deg', .4, 2)):
         if not low <= result[key] <= high:
             raise ValueError('Invalid fetch calibration: ' + key)
+    for size, fraction in (('s', .25), ('m', .5), ('l', 1)):
+        duration = result['turn_duration_scale'] * math.radians(result['turn_step_deg'] * fraction) / result['turn_speed_rad_s']
+        for suffix, default, low, high in (('speed_rad_s', result['turn_speed_rad_s'], .005, .1),
+                                           ('duration_s', max(.05, duration), .05, 15)):
+            key = 'turn_' + size + '_' + suffix
+            number = value.get(key, default)
+            if type(number) not in (int, float) or not math.isfinite(number) or not low <= number <= high:
+                raise ValueError('Invalid fetch calibration: ' + key)
+            result[key] = number
     return result
 
 
