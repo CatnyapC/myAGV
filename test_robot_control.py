@@ -189,6 +189,7 @@ class ControlTest(unittest.TestCase):
             c.watchdog()
             self.assertFalse(c.base_allowed(), fault)
         c = fake_control()
+        c.deadline = 0
         with self.assertRaises(Stopped): c.travel_guard(dict(x_m=0,y_m=0))
         c.deadline = time.monotonic()+.45
         c.localized = False
@@ -277,6 +278,23 @@ class ControlTest(unittest.TestCase):
         self.assertEqual(patch_driver(result.replace('ros::WallRate', 'ros::Rate')), result)
         self.assertEqual(patch_driver(result),result)
         with self.assertRaises(ValueError): patch_driver('unknown driver')
+
+    def test_goal_clearance_does_not_apply_robot_radius_to_ros_inflation_twice(self):
+        robot = RobotROS.__new__(RobotROS)
+        robot.zones_ready = lambda: True
+        grid = dict(width=30, height=30, resolution_m=.1,
+                    origin=dict(x_m=0, y_m=0, yaw_rad=0), cells=[0]*900)
+        robot.derived = grid
+        robot.costmaps = {'global': (time.monotonic(), 0, True, {**grid, 'cells': [80]*900})}
+        goal = dict(x_m=1.5, y_m=1.5)
+        robot.validate_goal(goal, .3)
+        for obstacle in (-1, 100):
+            grid['cells'][15*30+15] = obstacle
+            with self.assertRaisesRegex(ValueError, 'Goal clearance'):
+                robot.validate_goal(goal, .3)
+        robot.zones_ready = lambda: False
+        with self.assertRaisesRegex(RuntimeError, 'both ROS costmaps'):
+            robot.validate_goal(goal, .3)
 
     def test_real_photo_metadata_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:

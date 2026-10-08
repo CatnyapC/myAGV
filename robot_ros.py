@@ -211,7 +211,8 @@ class RobotROS:
     def validate_goal(self, pose, radius):
         if not self.zones_ready():
             raise RuntimeError('Waiting for both ROS costmaps to apply no-go zones')
-        if not footprint_clear(self.derived, pose, radius) or not footprint_clear(self.costmaps['global'][3], pose, radius):
+        # ROS costmaps already inflate obstacles; move_base checks those costs.
+        if not footprint_clear(self.derived, pose, radius):
             raise ValueError('Goal clearance intersects a wall, unknown space or no-go zone')
 
     def stopped(self):
