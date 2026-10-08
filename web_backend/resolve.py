@@ -136,12 +136,19 @@ async def locate_pickup(images, item, key, reference, history, prompt=PICKUP_PRO
         raise ValueError('Invalid alignment stage')
     if stage == 'base':
         fields = ('front',)
-        labels = ['left_large', 'left_medium', 'left_small', 'aligned_perfectly', 'right_small', 'right_medium', 'right_large', 'unknown']
+        labels = ['left_large', 'left_medium', 'left_small', 'aligned_perfectly', 'right_small', 'right_medium', 'right_large', 'aligned_stalled', 'unknown']
         instruction = """ACTIVE STAGE: BASE ONLY. Return {"front":label}.
 Judge the item midpoint against the front image horizontal center. Rough alignment
-is enough: within the central 20% of image width => aligned_perfectly. Do not chase
+is enough: within the central 10% of image width (midpoint 45%-55%) => aligned_perfectly. Do not chase
 small residual offsets. Outside that band report left/right and large/medium/small.
-Uploaded reference identifies the item only. No arm adjustment in this stage."""
+Uploaded reference identifies the item only. No arm adjustment in this stage.
+Only after five EXECUTED rotation rounds (five history images), you may return
+aligned_stalled if CURRENT and the five before-move images show no meaningful
+net reduction in horizontal error, including oscillation around the same offsets.
+If CURRENT is clearly closer, continue corrections; round count alone is NOT a
+reason to stop. aligned_stalled means accept rough base position and proceed to
+arm fine alignment, never that the arm GOAL matches. With fewer than five history
+images, aligned_stalled is forbidden."""
     else:
         fields = ('x', 'y')
         labels = ['minus_large', 'minus_medium', 'minus_small', 'aligned_perfectly', 'plus_small', 'plus_medium', 'plus_large', 'unknown']
@@ -181,7 +188,7 @@ CURRENT error, using history only to avoid repeating an overshoot.
 Return ONLY the two requested labels; no explanation or extra fields."""
     schema = dict(type='object', properties={field: dict(type='string', enum=labels)
                   for field in fields}, required=list(fields), additionalProperties=False)
-    if not isinstance(history, list) or len(history) > 2:
+    if not isinstance(history, list) or len(history) > (5 if stage == 'base' else 2):
         raise ValueError('Invalid fetch calibration history')
     content = [dict(type='text', text=json.dumps(dict(name=item['name'], appearance=item['appearance']), ensure_ascii=False))]
 
@@ -210,7 +217,10 @@ Return ONLY the two requested labels; no explanation or extra fields."""
     if not isinstance(result, dict) or set(result) != set(fields) or any(not isinstance(v, str) or v not in labels for v in result.values()):
         raise ValueError('Invalid alignment stage labels')
     if stage == 'base':
-        moves = qualitative_alignment(dict(arm='aligned_perfectly', front=result['front']), config)
+        if result['front'] == 'aligned_stalled' and len(history) < 5:
+            raise ValueError('Base stagnation requires five executed rotation rounds')
+        front = 'aligned_perfectly' if result['front'] == 'aligned_stalled' else result['front']
+        moves = qualitative_alignment(dict(arm='aligned_perfectly', front=front), config)
     else:
         steps = dict(minus_large=-10, minus_medium=-5, minus_small=-1, aligned_perfectly=0, plus_small=1, plus_medium=5, plus_large=10)
         if 'unknown' in result.values():
@@ -218,7 +228,7 @@ Return ONLY the two requested labels; no explanation or extra fields."""
         moves = {axis + '_mm': max(-config['max_step_mm'], min(config['max_step_mm'], steps[result[axis]])) for axis in fields}
         moves['turn_deg'] = 0
     if trace is not None:
-        trace['aligned_perfectly'] = all(result[field] == 'aligned_perfectly' for field in fields)
+        trace['aligned_perfectly'] = all(result[field] == 'aligned_perfectly' for field in fields) or (stage == 'base' and result['front'] == 'aligned_stalled')
     return moves
 
 

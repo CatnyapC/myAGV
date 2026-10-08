@@ -995,7 +995,7 @@ class Control:
                         step = min(1, remaining)
                         self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=step)
                         remaining -= step
-                history = (history + [dict(images=images, commanded=moves)])[-2:]
+                history = (history + [dict(images=images, commanded=moves)])[-(5 if stage == 'base' else 2):]
             raise RuntimeError('Fetch alignment did not finish both stages')
         finally:
             self.base_enabled = False

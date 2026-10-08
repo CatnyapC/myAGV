@@ -219,6 +219,18 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):
                 c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
 
+    async def test_base_stagnation_requires_five_executed_rounds(self):
+        images = dict(front='data:image/jpeg;base64,AQ==')
+        previous = dict(images=images, commanded=dict(X=0, turn_deg=1))
+        trace = {}
+        with patch('web_backend.resolve.request_json', AsyncMock(return_value=dict(front='aligned_stalled'))):
+            with self.assertRaisesRegex(ValueError, 'five executed'):
+                await locate_pickup(images, dict(name='cup', appearance='red'), 'key', images['front'], [previous] * 4)
+            moves = await locate_pickup(images, dict(name='cup', appearance='red'), 'key', images['front'], [previous] * 5, trace=trace)
+        self.assertEqual(moves, dict(x_mm=0, turn_deg=0))
+        self.assertTrue(trace['aligned_perfectly'])
+        self.assertIn('aligned_stalled', trace['result_json'])
+
     async def test_arm_goal_labels_and_y_direction(self):
         images = dict(arm='data:image/jpeg;base64,AQ==')
         trace = {}
