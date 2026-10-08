@@ -188,6 +188,18 @@ class Navigation:
                 time.sleep(0.05)
         raise RuntimeError("No map -> base_footprint transform; initialize localization first")
 
+    def get_odom_pose(self):
+        sample = self.odom
+        if not sample or not 0 <= time.monotonic() - sample[0] <= .5:
+            raise RuntimeError('Fresh odometry required for rotation')
+        pose = sample[1].pose.pose
+        p, q = pose.position, pose.orientation
+        values = [q.x, q.y, q.z, q.w]
+        if not all(number(v) for v in values) or abs(sum(v*v for v in values) - 1) > .01:
+            raise ValueError('Invalid odometry quaternion')
+        yaw = math.atan2(2 * (q.w*q.z + q.x*q.y), 1 - 2 * (q.y*q.y + q.z*q.z))
+        return validate_pose(dict(x_m=p.x, y_m=p.y, yaw_deg=math.degrees(yaw)))
+
     def wait_stopped(self, timeout=5):
         start = time.monotonic()
         quiet_since = None

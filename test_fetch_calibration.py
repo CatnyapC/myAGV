@@ -9,6 +9,7 @@ import time
 import unittest
 import uuid
 from unittest.mock import AsyncMock, Mock, call, patch
+from navigation import Navigation
 from aiohttp.test_utils import TestClient, TestServer
 
 from fetch_calibration import alignment_command, calibration_config, pickup_delta, qualitative_alignment, vision_image
@@ -43,10 +44,10 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
 
     def test_visual_labels_convert_to_bounded_moves(self):
         for size, step in (('large', 2), ('medium', 1), ('small', .5)):
-            self.assertEqual(qualitative_alignment(dict(arm='left_' + size, front='right_' + size), None), dict(x_mm=-step, turn_deg=step))
-            self.assertEqual(qualitative_alignment(dict(arm='right_' + size, front='left_' + size), None), dict(x_mm=step, turn_deg=-step))
+            self.assertEqual(qualitative_alignment(dict(arm='left_' + size, front='right_' + size), None), dict(x_mm=-step, turn_deg=step/2))
+            self.assertEqual(qualitative_alignment(dict(arm='right_' + size, front='left_' + size), None), dict(x_mm=step, turn_deg=-step/2))
         self.assertEqual(qualitative_alignment(dict(arm='aligned', front='aligned'), None), dict(x_mm=0, turn_deg=0))
-        self.assertEqual(qualitative_alignment(dict(arm='right_large', front='right_large'), dict(max_step_mm=.5)), dict(x_mm=.5, turn_deg=2))
+        self.assertEqual(qualitative_alignment(dict(arm='right_large', front='right_large'), dict(max_step_mm=.5)), dict(x_mm=.5, turn_deg=1))
         for label in ('unknown', None, 0, 'right', {}, []):
             with self.assertRaises(ValueError):
                 qualitative_alignment(dict(arm=label, front='aligned'), None)
@@ -54,7 +55,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
     def test_base_turn_is_clockwise_without_translation_and_stops(self):
         c = fake_control()
         c.travel_guard = Mock()
-        c.robot.nav.get_pose.side_effect = [dict(x_m=0, y_m=0, yaw_deg=0),
+        c.robot.nav.get_odom_pose.side_effect = [dict(x_m=0, y_m=0, yaw_deg=0),
             dict(x_m=0, y_m=0, yaw_deg=0), dict(x_m=0, y_m=0, yaw_deg=-2)]
         with patch('robot_control.time.sleep'):
             c.turn_fetch(2)
@@ -62,10 +63,20 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertLess(c.robot.velocity[2], 0)
         self.assertFalse(c.base_enabled)
         c.robot.zero.assert_called()
-        c.robot.nav.get_pose.side_effect = [dict(x_m=0, y_m=0, yaw_deg=0), dict(x_m=.02, y_m=0, yaw_deg=0)]
+        c.robot.nav.get_odom_pose.side_effect = [dict(x_m=0, y_m=0, yaw_deg=0), dict(x_m=.02, y_m=0, yaw_deg=0)]
         with self.assertRaisesRegex(RuntimeError, 'translated'):
             c.turn_fetch(2)
         self.assertFalse(c.base_enabled)
+
+    def test_rotation_odometry_is_fresh_and_independent_of_map_pose(self):
+        nav = Navigation.__new__(Navigation)
+        pose = SimpleNamespace(position=SimpleNamespace(x=.2, y=.3),
+            orientation=SimpleNamespace(x=0, y=0, z=0, w=1))
+        nav.odom = (time.monotonic(), SimpleNamespace(pose=SimpleNamespace(pose=pose)))
+        self.assertEqual(nav.get_odom_pose(), dict(x_m=.2, y_m=.3, yaw_deg=0))
+        nav.odom = (time.monotonic() - 1, nav.odom[1])
+        with self.assertRaisesRegex(RuntimeError, 'Fresh odometry'):
+            nav.get_odom_pose()
 
     def test_grasp_height_records_only_measured_z_without_motion_or_capture(self):
         c = fake_control()
@@ -246,7 +257,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     entry = log['rounds'][0]
                     self.assertEqual(entry['status'], 'returned')
                     self.assertEqual(json.loads(entry['result_json']), dict(arm='right_large', front='left_large'))
-                    self.assertEqual(entry['correction'], dict(X=.5, turn_deg=-2))
+                    self.assertEqual(entry['correction'], dict(X=.5, turn_deg=-1))
                     self.assertEqual(entry['messages'][0]['content'], values['prompt'])
                 restarted = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 async with TestClient(TestServer(restarted)) as client:

@@ -881,16 +881,16 @@ class Control:
     def turn_fetch(self, degrees):
         number(degrees, -2, 2, 'Fetch base turn')
         self.robot.nav.wait_stopped()
-        start = self.robot.nav.get_pose()
+        start = self.robot.nav.get_odom_pose()
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         target = math.radians(start['yaw_deg'] - degrees)
         end = time.monotonic() + 5
         try:
             while True:
-                pose = self.robot.nav.get_pose()
+                pose = self.robot.nav.get_odom_pose()
                 if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
                     raise Stopped('Map or no-go zones changed during fetch rotation')
-                self.travel_guard(pose)
+                self.travel_guard(self.robot.nav.get_pose())
                 if math.hypot(pose['x_m'] - start['x_m'], pose['y_m'] - start['y_m']) > .01:
                     raise RuntimeError('Base translated during fetch rotation')
                 error = math.atan2(math.sin(target - math.radians(pose['yaw_deg'])),
@@ -900,7 +900,7 @@ class Control:
                 if time.monotonic() >= end:
                     raise TimeoutError('Fetch base rotation did not reach target')
                 self.base_enabled = True
-                self.robot.velocity = (0, 0, math.copysign(min(.04, max(.01, abs(error))), error))
+                self.robot.velocity = (0, 0, math.copysign(min(.015, max(.005, abs(error) * .7)), error))
                 self.robot.velocity_at = time.monotonic()
                 time.sleep(.05)
         finally:

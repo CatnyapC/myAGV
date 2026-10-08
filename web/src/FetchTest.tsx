@@ -79,13 +79,13 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · compressed photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">LLM: left/right + large/medium/small. Steps: arm X 2/1/0.5 mm (capped by setting); base 2/1/0.5°. Aligned = 0; unknown stops.</span>
+    <span className="muted">LLM: left/right + large/medium/small. Steps: arm X 2/1/0.5 mm (capped by setting); base 1/0.5/0.25°. Aligned = 0; unknown stops.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
-    <span className="muted">Preview: no movement. Align: center the item in the front camera by rotating the base; arm X adjusts distance. Up to 32 corrections, ≤2°/turn and ≤45° total. No translation or gripper motion. Rotation runs first, then fresh photos before arm movement.</span>
+    <span className="muted">Preview: no movement. Align: center the item in the front camera by rotating the base; arm X adjusts distance. Up to 32 corrections, ≤1°/turn and ≤45° total. No translation or gripper motion. Rotation runs first, then fresh photos before arm movement.</span>
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
