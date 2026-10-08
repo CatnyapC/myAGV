@@ -1,0 +1,108 @@
+import { useEffect, useRef, useState } from 'react';
+import { api } from './api';
+import { Button } from './ui';
+
+type FetchSettings = { revision: number; values: { max_step_mm: number; max_total_mm: number; prompt: string } };
+type Part = { type: string; text?: string; image_url?: { url: string } };
+type Round = {
+  id: string; round: number; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
+  model?: string; messages?: [{ content: string }, { content: Part[] }];
+  result_json?: string; limited_mm?: { X: number; Y: number }; error?: string;
+};
+
+export function FetchTest(props: {
+  connected: boolean; editable: boolean; reasons: string[]; itemId: string; indexRevision?: number;
+  itemName?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
+}) {
+  const [settings, setSettings] = useState<FetchSettings | null>(null);
+  const [draft, setDraft] = useState<FetchSettings['values'] | null>(null);
+  const [rounds, setRounds] = useState<Round[]>([]);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  const logRevision = useRef(-1);
+  useEffect(() => {
+    if (!props.connected) return;
+    const controller = new AbortController();
+    void api<FetchSettings>('/api/fetch-settings', { signal: controller.signal }).then(value => {
+      if (!controller.signal.aborted) { setSettings(value); setDraft(value.values); }
+    }).catch(failure => { if (!controller.signal.aborted) setError((failure as Error).message); });
+    return () => controller.abort();
+  }, [props.connected]);
+  useEffect(() => {
+    if (!props.connected) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      try {
+        const value = await api<{ revision: number; rounds?: Round[] }>(`/api/fetch-log?after=${logRevision.current}`, { signal: controller.signal });
+        if (!controller.signal.aborted) {
+          logRevision.current = value.revision;
+          if (value.rounds) setRounds(value.rounds);
+        }
+      } catch (failure) { if (!controller.signal.aborted) setError((failure as Error).message); }
+      if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 1000);
+    }
+    // Reconnect may reach a restarted API with the same revision but no prior logs.
+    logRevision.current = -1;
+    void poll();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [props.connected]);
+
+  async function save(preview?: boolean) {
+    if (!settings || !draft || pending) return;
+    setPending(true); setError('');
+    try {
+      const saved = JSON.stringify(draft) === JSON.stringify(settings.values) ? settings : await api<FetchSettings>('/api/fetch-settings', {
+        method: 'PUT', body: JSON.stringify({ expected_revision: settings.revision, values: draft }),
+      });
+      setSettings(saved); setDraft(saved.values);
+      if (preview !== undefined) await props.command('fetch_test', {
+        item_id: props.itemId, index_revision: props.indexRevision, fetch_revision: saved.revision, preview,
+      });
+    } catch (failure) { setError((failure as Error).message); }
+    finally { setPending(false); }
+  }
+  const disabled = pending || !settings || !draft || props.reasons.length > 0;
+  return <section className="fetch-test" aria-label="Grasp calibration test">
+    <div className="section-divider" /><h3 className="subheading">GRASP TEST</h3>
+    <span className="muted">Item: {props.itemName || 'Select an item above'} · position arm at J1 = 90° near the object.</span>
+    {draft && <>
+      <div className="goal-inputs">
+        <label>Step / axis (mm)<input type="number" min={0.1} max={2} step={0.1} value={draft.max_step_mm}
+          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_step_mm: Number(event.target.value) })} /></label>
+        <label>Total X + Y (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
+          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_total_mm: Number(event.target.value) })} /></label>
+      </div>
+      <label className="photo-field">Calibration prompt<textarea className="fetch-prompt" rows={10} maxLength={8000} value={draft.prompt}
+        disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, prompt: event.target.value })} /></label>
+      <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
+    </>}
+    <span className="muted">Shared with Fetch · compressed photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
+    <div className="action-line">
+      <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>Preview one round</Button>
+      <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>Align here</Button>
+      <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
+    </div>
+    <span className="muted">Preview: no movement. Align: arm X/Y only, up to 8 corrections; base and gripper stay still.</span>
+    {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
+    {error && <span role="alert" className="muted">{error}</span>}
+    <span className="subheading">LLM ROUNDS</span>
+    {!rounds.length && <span className="muted">No requests yet. Latest task only; logs clear when API restarts.</span>}
+    {rounds.map(round => {
+      const parts = round.messages?.[1].content ?? [];
+      return <article className="fetch-round" key={round.id}>
+        <header><strong>Round {round.round}</strong><span>{round.preview ? 'Preview' : 'Align'} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
+        <span className="muted">{new Date(round.started_at_s * 1000).toLocaleTimeString()} · {round.model}</span>
+        {round.result_json && <pre>LLM: {round.result_json}</pre>}
+        {round.limited_mm && <span>Limited suggestion: X {round.limited_mm.X} mm · Y {round.limited_mm.Y} mm</span>}
+        <span className="muted">Request log; movement completion appears in TASK. History labels show previously executed commands.</span>
+        {round.error && <span role="alert" className="muted">{round.error}</span>}
+        <div className="fetch-log-images">{parts.map((part, i) => part.image_url && <figure key={i}>
+          <img src={part.image_url.url} alt={parts[i - 1]?.text ?? 'LLM camera input'} />
+          <figcaption>{parts[i - 1]?.text}</figcaption>
+        </figure>)}</div>
+        {round.messages && <details><summary>Sent prompt & item</summary><pre>{round.messages[0].content}</pre><pre>{parts[0]?.text}</pre></details>}
+      </article>;
+    })}
+  </section>;
+}

@@ -640,6 +640,13 @@ class Control:
             if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
                 raise RuntimeError('Arm moved while recording grasp goal')
             return dict(captures=captures)
+        elif kind == 'fetch_test':
+            self.require_arm()
+            if not self.localized or type(packet.get('preview')) is not bool:
+                raise ValueError('Confirmed localization and explicit test mode required')
+            self.robot.nav.wait_stopped()
+            pickup_angles(wait_arm(self.arm, timeout=3))
+            self.calibrate_fetch(packet, packet['fetch_settings'])
         elif kind == 'zones':
             self.robot.nav.wait_stopped()
             zones = packet.get('zones')
@@ -781,7 +788,9 @@ class Control:
                 request_id = str(uuid.uuid4())
                 atomic_json(request_path, dict(id=request_id, boot_id=self.boot_id, task_id=self.task_id,
                     stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + 20,
-                    item=packet['vision_item'], images=images, history=history))
+                    item=packet['vision_item'], images=images, history=history,
+                    round=round_index + 1, preview=packet.get('preview', False), limits=config,
+                    prompt=packet.get('fetch_settings', {}).get('prompt')))
                 end = time.monotonic() + 20
                 while True:
                     current()
@@ -797,7 +806,7 @@ class Control:
                     if time.monotonic() >= end:
                         raise TimeoutError('Fetch vision calibration timed out')
                     time.sleep(.05)
-                if not any(moves.values()):
+                if packet.get('preview') or not any(moves.values()):
                     return
                 if round_index == 8:
                     raise RuntimeError('Fetch cameras did not converge after 8 corrections')
@@ -822,7 +831,7 @@ class Control:
         if station is None or digest_station(station) != packet.get('station_digest'):
             raise ValueError('Station missing or changed; reconfirm item association')
         target = pickup_angles(station['arm_angles_deg'])
-        calibration = self.config.get('fetch_calibration')
+        calibration = packet.get('fetch_settings', self.config.get('fetch_calibration'))
         if packet.get('vision_item'):
             calibration = calibration_config(calibration)
         self.travel_guard(station['base'])

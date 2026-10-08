@@ -3,13 +3,21 @@ from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import asyncio
+import json
+import time
 import unittest
+import uuid
 from unittest.mock import AsyncMock, Mock, call, patch
+from aiohttp.test_utils import TestClient, TestServer
 
 from fetch_calibration import alignment_command, calibration_config, pickup_delta, vision_image
 from test_robot_control import fake_control
 from web_backend.resolve import locate_pickup
-from web_backend.storage import atomic_json
+from web_backend.map_data import demo_map
+from web_backend.photos import PhotoIndex, demo_frame
+from web_backend.server import EDITOR, create_app
+from web_backend.storage import atomic_bytes, atomic_json
 
 
 class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
@@ -43,8 +51,9 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         images = dict(front='data:image/jpeg;base64,AQ==', arm='data:image/jpeg;base64,Ag==')
         provider = AsyncMock(return_value={'x_mm': 0, 'y_mm': 0})
         history = [dict(images=images, commanded_mm=dict(X=1, Y=-1))] * 2
+        trace = {}
         with patch('web_backend.resolve.request_json', provider):
-            await locate_pickup(images, dict(name='cup', appearance='red'), 'fake-key', images, history)
+            await locate_pickup(images, dict(name='cup', appearance='red'), 'fake-key', images, history, prompt='Edited prompt', trace=trace)
         body = provider.call_args.args[0]
         self.assertEqual(body['reasoning'], {'enabled': False})
         self.assertEqual(body['max_tokens'], 64)
@@ -54,6 +63,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         labels = [part['text'] for part in body['messages'][1]['content'] if part['type'] == 'text']
         self.assertTrue(any('GOAL' in label for label in labels))
         self.assertTrue(any('"X": 1' in label and '"Y": -1' in label for label in labels))
+        self.assertEqual(trace['messages'][0]['content'], 'Edited prompt')
+        self.assertEqual(json.loads(trace['result_json']), {'x_mm': 0, 'y_mm': 0})
 
     def test_closed_loop_recaptures_and_missing_target_stops(self):
         c = fake_control()
@@ -88,6 +99,93 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(requests), 9)
             self.assertEqual(c.arm_step.call_count, 8)
             self.assertEqual(len(requests[-1]['history']), 2)
+            c.arm_step.reset_mock()
+            results = iter([{'x_mm': 2, 'y_mm': 1}])
+            with patch('robot_control.atomic_json', side_effect=respond):
+                c.calibrate_fetch({'vision_item': {'name': 'cup'}, 'preview': True}, None)
+            c.arm_step.assert_not_called()
+            self.assertTrue(requests[-1]['preview'])
+
+    async def test_settings_persist_and_live_round_log_records_request_and_response(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bridge, ui = root / 'ros', root / 'ui'
+            grid = {**demo_map(), 'map_id': 'test-map'}
+            atomic_json(bridge / 'map.json', grid)
+            index = PhotoIndex(ui, root / 'stations.json')
+            image = demo_frame('front')
+            reference = index.add(image, dict(kind='reference', source='phone'), 0)
+            index.edit(reference['id'], dict(expected_revision=1, item_id='new', name='Cup', confirmed=True), grid['map_id'])
+            item_id = index.value['items'][0]['id']
+            goal = {}
+            for camera in ('front', 'arm'):
+                photo = index.add(image, dict(kind='observation', source='ros', camera_id=camera,
+                    map_id=grid['map_id'], map_revision=0, frame='map', captured_at_s=time.time(),
+                    base_pose=dict(x_m=0, y_m=0, yaw_rad=0)), index.value['revision'])
+                photo_id = goal[camera] = photo['id']
+                atomic_bytes(ui / 'images' / (photo_id + '.jpg'), camera.encode())
+            index.save_grasp_goal(item_id, goal, index.value['revision'], grid['map_id'])
+            entered, release = asyncio.Event(), asyncio.Event()
+
+            async def provider(body, key, timeout):
+                entered.set()
+                await release.wait()
+                return dict(x_mm=2, y_mm=-1)
+
+            with patch('web_backend.server.load_key', return_value=('configured', 'private-test-key')), patch('web_backend.resolve.request_json', side_effect=provider):
+                app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
+                hardware = app[EDITOR].hardware
+                hardware.refresh = Mock()
+                hardware.control = dict(phase='idle', stamp_s=time.time())
+                async with TestClient(TestServer(app)) as client:
+                    settings = await (await client.get('/api/fetch-settings')).json()
+                    values = {**settings['values'], 'max_step_mm': .5, 'prompt': 'Edited prompt'}
+                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values={**values, 'max_step_mm': 3}))).status, 400)
+                    saved = await (await client.put('/api/fetch-settings', json=dict(expected_revision=0, values=values))).json()
+                    self.assertEqual(saved['revision'], 1)
+                    self.assertEqual(json.loads((ui / 'fetch_settings.json').read_text()), saved)
+                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values=values))).status, 409)
+                    hardware.command = AsyncMock(return_value=dict(status='accepted'))
+                    command = dict(id=str(uuid.uuid4()), type='fetch_test', preview=True, map_id=grid['map_id'],
+                        expected_revision=app[EDITOR].zones['revision'], item_id=item_id, index_revision=index.value['revision'], fetch_revision=1,
+                        fetch_settings=dict(max_step_mm=100))
+                    self.assertEqual((await client.post('/api/commands', json=command)).status, 200)
+                    forwarded = hardware.command.call_args.args[0]
+                    self.assertEqual(forwarded['fetch_settings'], values)
+                    self.assertEqual(forwarded['vision_item']['goal'], goal)
+                    self.assertNotIn('station', forwarded)
+                    command['fetch_revision'] = 0
+                    self.assertEqual((await client.post('/api/commands', json=command)).status, 400)
+                    hardware.control.update(phase='calibrating', boot_id='boot', task_id='task', stop_epoch=0)
+                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=1, values=values))).status, 409)
+                    images = dict(front='data:image/jpeg;base64,AQ==', arm='data:image/jpeg;base64,Ag==')
+                    value = dict(id='request', task_id='task', boot_id='boot', stop_epoch=0, map_id=grid['map_id'],
+                        expires_at_s=time.time()+20, round=1, preview=True, prompt=values['prompt'], limits=values,
+                        images=images, history=[], item=dict(name='Cup', appearance='Red', goal=goal))
+                    atomic_json(bridge / 'fetch_vision_request.json', value)
+                    try:
+                        await asyncio.wait_for(entered.wait(), 2)
+                        log = await (await client.get('/api/fetch-log')).json()
+                        self.assertEqual(log['rounds'][0]['status'], 'requesting')
+                        self.assertEqual(len([p for p in log['rounds'][0]['messages'][1]['content'] if p['type'] == 'image_url']), 4)
+                        self.assertNotIn('private-test-key', json.dumps(log))
+                        self.assertEqual(await (await client.get(f"/api/fetch-log?after={log['revision']}")).json(), dict(revision=log['revision']))
+                    finally:
+                        release.set()
+                    for _ in range(40):
+                        log = await (await client.get('/api/fetch-log')).json()
+                        if log['rounds'][0]['status'] != 'requesting':
+                            break
+                        await asyncio.sleep(.025)
+                    entry = log['rounds'][0]
+                    self.assertEqual(entry['status'], 'returned')
+                    self.assertEqual(json.loads(entry['result_json']), dict(x_mm=2, y_mm=-1))
+                    self.assertEqual(entry['limited_mm'], dict(X=.5, Y=-.5))
+                    self.assertEqual(entry['messages'][0]['content'], values['prompt'])
+                restarted = create_app(ui, root / 'stations.json', hardware_dir=bridge)
+                async with TestClient(TestServer(restarted)) as client:
+                    self.assertEqual(await (await client.get('/api/fetch-settings')).json(), saved)
+                    self.assertEqual((await (await client.get('/api/fetch-log')).json())['rounds'], [])
 
 
 if __name__ == '__main__':

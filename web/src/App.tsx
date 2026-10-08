@@ -10,6 +10,7 @@ import { BatteryStatus } from './BatteryStatus';
 import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
 import { HardwareControls, MapUpdateControls, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
+import { FetchTest } from './FetchTest';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
 type State = { hardware?: HardwareState; robot_id: string; demo: boolean; phase: string; navigation: Navigation; cameras?: Partial<Record<'front' | 'arm', { url: string; stamp_s: number }>>; llm: { model: string; status: string; reasoning_effort: string } };
@@ -560,6 +561,15 @@ export function App() {
         <span className="muted enforcement">{state?.demo === false ? costmapReady ? 'ROS global + local no-go applied' : 'ROS no-go enforcement pending' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
         {state?.demo === false && <HardwareControls stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
+        <FetchTest connected={connected} editable={canEdit && !busy} itemId={selectedItemId} itemName={selectedItem?.name}
+          indexRevision={photos?.revision} command={hardwareCommand} stop={() => void stop()}
+          reasons={[
+            ...(!canEdit || busy ? ['Connect and stop the robot'] : []),
+            ...(state?.demo !== false ? ['Live hardware required'] : []),
+            ...(!state?.hardware?.arm_homed || !state.hardware.localized ? ['Home arm and confirm localization'] : []),
+            ...(state?.llm?.status !== 'configured' ? ['LLM not configured'] : []),
+            ...(!selectedItem?.grasp_goal_ready ? ['Select an item with saved grasp GOAL views'] : []),
+          ]} />
       </div>{photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId}
         photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
         index={photos} stations={stations} enabled={canEditPhotos}

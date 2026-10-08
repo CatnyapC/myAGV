@@ -12,12 +12,13 @@ import uuid
 from urllib.parse import urlsplit
 
 from aiohttp import web
+from fetch_calibration import alignment_command, calibration_config
 from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
-from .resolve import MODEL, MODEL_OPTIONS, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
+from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off')
@@ -147,6 +148,38 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     photo_lock = asyncio.Lock()
     editor.llm['status'], llm_key = load_key()
     resolve_lock = asyncio.Lock()  # ponytail: one request; per-user locks if multi-user control is added.
+    fetch_settings = load_json(editor.directory / 'fetch_settings.json', dict(revision=0,
+        values=dict(**calibration_config(None), prompt=PICKUP_PROMPT)))
+
+    def validate_fetch_settings(values):
+        if not isinstance(values, dict) or set(values) != {'max_step_mm', 'max_total_mm', 'prompt'}:
+            raise ValueError('Invalid fetch settings')
+        limits = calibration_config(values)
+        if not isinstance(values['prompt'], str) or not 1 <= len(values['prompt'].strip()) <= 8000:
+            raise ValueError('Fetch prompt needs 1..8000 characters')
+        return dict(**limits, prompt=values['prompt'].strip())
+
+    validate_fetch_settings(fetch_settings['values'])
+    # ponytail: latest task only, memory-only logs; persist when long-term comparison is needed.
+    fetch_log = dict(revision=0, rounds=[])
+
+    async def fetch_config(request):
+        nonlocal fetch_settings
+        if request.method == 'PUT':
+            data = await request.json()
+            async with editor.lock:
+                if editor.state()['phase'] != 'idle':
+                    raise web.HTTPConflict(text='Stop the robot before changing fetch settings')
+                if type(data.get('expected_revision')) is not int or data['expected_revision'] != fetch_settings['revision']:
+                    raise web.HTTPConflict(text='Fetch settings changed; reload')
+                saved = dict(revision=fetch_settings['revision'] + 1, values=validate_fetch_settings(data['values']))
+                await asyncio.to_thread(atomic_json, editor.directory / 'fetch_settings.json', saved)
+                fetch_settings = saved
+        return web.json_response(fetch_settings)
+
+    async def fetch_rounds(request):
+        return web.json_response(fetch_log if request.query.get('after') != str(fetch_log['revision'])
+                                 else dict(revision=fetch_log['revision']), headers={'Cache-Control': 'no-store'})
 
     def photo_stopped():
         if (editor.sim and editor.sim.phase != 'idle') or (editor.hardware and editor.hardware.control.get('phase') not in ('idle', 'update_paused')):
@@ -392,16 +425,23 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     data = {**data, 'type': 'zones', 'zones': current}
                 if kind == 'teach' and data.get('overwrite') is True:
                     data = {**data, 'station_digest': digest_station(data['expected_station'])}
-                if kind == 'fetch':
+                if kind in ('fetch', 'fetch_test'):
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')
                     item = next((i for i in photos.snapshot(editor.grid['map_id'])['items'] if i['id'] == data.get('item_id')), None)
-                    if not item or item['station_status'] != 'ready' or not item['observation_current']:
+                    if not item or (kind == 'fetch' and (item['station_status'] != 'ready' or not item['observation_current'])):
                         raise ValueError('Confirmed current-map station association required')
-                    link = item['station_link']
+                    if kind == 'fetch_test':
+                        if not llm_key:
+                            raise ValueError('Configure the LLM before testing alignment')
+                        if data.get('fetch_revision') != fetch_settings['revision'] or type(data.get('preview')) is not bool:
+                            raise ValueError('Fetch settings changed or test mode missing; retry')
                     if llm_key and not item['grasp_goal_ready']:
                         raise ValueError('Record this item\'s correct-grasp front and arm views first')
-                    data = {**data, 'station': link['name'], 'station_digest': link['digest'],
+                    if kind == 'fetch':
+                        link = item['station_link']
+                        data = {**data, 'station': link['name'], 'station_digest': link['digest']}
+                    data = {**data, 'fetch_settings': dict(fetch_settings['values']),
                             'vision_item': dict(name=item['name'], appearance=item['appearance'], goal=item['grasp_goal']) if llm_key else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):
@@ -555,6 +595,13 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 except (OSError, ValueError, KeyError, TypeError):
                     continue
                 handled = value['id']
+                if fetch_log.get('task_id') != value['task_id']:
+                    fetch_log.update(task_id=value['task_id'], rounds=[])
+                entry = dict(id=handled, round=value.get('round', len(fetch_log['rounds']) + 1),
+                             preview=value.get('preview', False), status='requesting', started_at_s=time.time())
+                fetch_log['rounds'] = (fetch_log['rounds'] + [entry])[-9:]
+                fetch_log['revision'] += 1
+                started = time.monotonic()
                 try:
                     if not llm_key:
                         raise ValueError('OpenRouter key unavailable for fetch calibration')
@@ -564,13 +611,23 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         goal = {camera: 'data:image/jpeg;base64,' + base64.b64encode(
                             await asyncio.to_thread(photos.image_path(value['item']['goal'][camera]).with_suffix('.jpg').read_bytes)
                         ).decode('ascii') for camera in ('front', 'arm')}
-                        result = await locate_pickup(value['images'], value['item'], llm_key, goal, value['history'])
+                        fetch_log['revision'] += 1
+                        result = await locate_pickup(value['images'], value['item'], llm_key, goal, value['history'],
+                                                     prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'))
+                    entry.update(status='returned', limited_mm=alignment_command(result, value.get('limits')))
                     response = dict(id=handled, result=result)
                 except (web.HTTPException, OSError, ValueError, KeyError, TypeError) as exc:
+                    entry.update(status='error', error=str(exc))
                     response = dict(id=handled, error=str(exc))
+                finally:
+                    entry['elapsed_s'] = round(time.monotonic() - started, 2)
+                    fetch_log['revision'] += 1
                 try:
                     if current(value) and await asyncio.to_thread(load_json, request_path, {}) == value:
                         await asyncio.to_thread(atomic_json, response_path, response)
+                    else:
+                        entry.update(status='discarded', error='Task stopped or changed; response not applied')
+                        fetch_log['revision'] += 1
                 except (OSError, ValueError):
                     continue  # The hardware may have cancelled and removed the request.
 
@@ -673,6 +730,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app.router.add_get('/api/global-costmap.png', costmap_image)
     app.router.add_get('/api/settings', settings)
     app.router.add_put('/api/settings', settings)
+    app.router.add_get('/api/fetch-settings', fetch_config)
+    app.router.add_put('/api/fetch-settings', fetch_config)
+    app.router.add_get('/api/fetch-log', fetch_rounds)
     app.router.add_post('/api/commands', commands)
     app.router.add_post('/api/stop', stop)
     app.router.add_get('/api/events', events)

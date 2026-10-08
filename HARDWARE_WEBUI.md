@@ -149,9 +149,25 @@ drive the base or change Z. A configured-LLM Fetch needs a saved goal for the it
 It recaptures after each correction and stops on malformed output, timeout,
 expired control lease, changed map/zones, missing sensors or non-convergence.
 
-The optional `fetch_calibration` object in `web_runtime/robot_config.json` sets
-travel limits only. Old pixel target/gain fields are ignored. Transport-pose
-recording preserves these settings. Old J1=0 stations must be
+The GRASP TEST section below TASK in OPERATE edits the shared calibration prompt,
+per-axis step limit and combined X/Y travel budget. Save settings applies them to
+normal Fetch; both test buttons save edits before starting. Settings persist in
+`web_runtime/fetch_settings.json`. Preview one round captures current views and
+requests a suggestion without moving. Align here runs the same bounded alignment
+from the current arm pose, with no navigation or gripper command. Both need a
+localized, homed arm at J1=90 and a selected item with saved GOAL views. Testing
+does not require a station association.
+
+LLM ROUNDS displays each round's GOAL, chronological history and current input
+photos, actual sent prompt/item/limits, raw returned JSON, limited suggestion,
+elapsed time and errors. Suggestions do not confirm successful movement; TASK
+shows controller completion or faults. Photos are returned only when the log
+revision changes. Logs hold the latest task's nine rounds in API memory and clear
+on API restart. They contain no provider key.
+
+The optional `fetch_calibration` object in `web_runtime/robot_config.json` remains
+a fallback for commands outside the WebUI. Old pixel target/gain fields are ignored.
+Old J1=0 stations must be
 physically re-taught at J1=90 and their photo associations reconfirmed.
 
 ```json
