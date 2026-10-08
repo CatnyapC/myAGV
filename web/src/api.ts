@@ -31,6 +31,8 @@ export type HardwareState = {
   arm_angles?: number[]; arm_error?: string; navigation_ready: boolean; motion_available: boolean;
   localized: boolean; driver_watchdog: boolean; exclusive: boolean; sensors_ready: boolean;
   transport_angles?: number[]; clearance_m: number; zones_ready: boolean; planner_footprint_ready: boolean; stop_confirmed: boolean;
+  map_update?: { active: boolean; state: string; map_id: string; goals: { x_m: number; y_m: number; yaw_rad: number }[];
+    completed: number; round: number; captures: number; remaining_s: number; capped: boolean };
   mapping_mode?: boolean;
 };
 

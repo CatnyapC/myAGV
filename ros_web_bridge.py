@@ -32,7 +32,7 @@ def main():
         p, q = transform.transform.translation, transform.transform.rotation
         return dict(x_m=p.x, y_m=p.y, yaw_rad=math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z)))
 
-    def capture(camera_id, persist=True):
+    def capture(camera_id, persist=True, update_key=None):
         if camera_id not in ('front', 'arm') or not robot.grid or not control.localized:
             raise ValueError('Camera and confirmed localization required')
         robot.nav.wait_stopped()
@@ -59,6 +59,8 @@ def main():
             metadata = dict(metadata, arm_angles_deg=after)
         if not persist:
             return {}
+        if update_key is not None:
+            metadata = dict(metadata, update_key=update_key, current=True)
         ok, encoded = cv2.imencode('.png', frame)
         if not ok:
             raise RuntimeError('Camera encoding failed')

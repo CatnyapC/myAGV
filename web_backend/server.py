@@ -147,7 +147,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     resolve_lock = asyncio.Lock()  # ponytail: one request; per-user locks if multi-user control is added.
 
     def photo_stopped():
-        if (editor.sim and editor.sim.phase != 'idle') or (editor.hardware and editor.hardware.control.get('phase') != 'idle'):
+        if (editor.sim and editor.sim.phase != 'idle') or (editor.hardware and editor.hardware.control.get('phase') not in ('idle', 'update_paused')):
             raise web.HTTPConflict(text='Photo editing requires a stopped robot')
 
     async def photo_index(request):
@@ -370,11 +370,16 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')
                     item = next((i for i in photos.snapshot(editor.grid['map_id'])['items'] if i['id'] == data.get('item_id')), None)
-                    if not item or item['station_status'] != 'ready':
+                    if not item or item['station_status'] != 'ready' or not item['observation_current']:
                         raise ValueError('Confirmed current-map station association required')
                     link = item['station_link']
                     data = {**data, 'station': link['name'], 'station_digest': link['digest']}
-                result = await editor.hardware.command(data, wait=kind in ('zone_add', 'zone_delete', 'teach', 'transport_record', 'recover_stop', 'reset_map'))
+                if kind in ('map_update', 'update_plan'):
+                    if not editor.hardware.cameras.get('front'):
+                        raise ValueError('Fresh front camera required for map updating')
+                    if len(photos.value['photos']) >= 1000:
+                        raise ValueError('Photo index full; delete unneeded photos before map updating')
+                result = await editor.hardware.command(data, wait=kind in ('zone_add', 'zone_delete', 'teach', 'transport_record', 'recover_stop', 'reset_map', 'update_plan'))
                 if 'zones' in result:
                     editor.zones = result['zones']
             await editor.emit('zones' if 'zones' in result else 'state')
@@ -525,8 +530,11 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                 try:
                                     await ingest_capture(capture_path.stem)
                                     await editor.emit('photos')
-                                except (ValueError, OSError, KeyError):
-                                    pass  # Retain original capture for recovery when storage/index is repaired.
+                                except (ValueError, OSError, KeyError) as exc:
+                                    # Retain acquisition for recovery; never move after failed storage.
+                                    if (editor.hardware.control.get('map_update') or {}).get('active'):
+                                        await editor.hardware.stop('Map update photo storage failed: ' + str(exc))
+                                    break
                     await editor.emit('map' if changed else 'telemetry')
                     continue
                 async with editor.lock:

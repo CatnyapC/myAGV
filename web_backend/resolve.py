@@ -140,7 +140,7 @@ def target_preview(index, stations, item_id):
     """Use confirmed local records only; capture pose is never an object goal."""
     item = next(i for i in index['items'] if i['id'] == item_id)
     observations = [p for p in index['photos'] if p.get('item_id') == item_id and
-                    p['kind'] == 'observation' and p.get('association_source') == 'manual' and p['map_matches'] and p['available']]
+                    p['kind'] == 'observation' and p.get('current', True) and p.get('association_source') == 'manual' and p['map_matches'] and p['available']]
     if not observations:
         return dict(blocked_reason='No confirmed observation on this map')
     photo_id = max(observations, key=lambda p: p['captured_at_s'])['id']

@@ -106,6 +106,10 @@ class PhotoIndex:
                 if not all(isinstance(link.get(k), str) and link[k] for k in ('name', 'map_id', 'digest')):
                     raise ValueError('Invalid station link')
         for photo in value['photos']:
+            if 'current' in photo and type(photo['current']) is not bool:
+                raise ValueError('Invalid observation freshness')
+            if 'update_key' in photo and (photo.get('source') != 'ros' or not isinstance(photo['update_key'], str) or not 1 <= len(photo['update_key']) <= 100):
+                raise ValueError('Invalid map update observation key')
             if type(photo.get('saved_at_s')) not in (int, float) or not math.isfinite(photo['saved_at_s']) or photo['saved_at_s'] <= 0:
                 raise ValueError('Invalid photo timestamp')
             if photo['kind'] == 'reference':
@@ -137,6 +141,9 @@ class PhotoIndex:
             photo['map_matches'] = photo['kind'] == 'reference' or photo['map_id'] == map_id
         for item in value['items']:
             link = item.get('station_link')
+            observations = [p for p in value['photos'] if p.get('item_id') == item['id'] and p['kind'] == 'observation' and p['map_id'] == map_id and p['available']]
+            item['observation_current'] = any(p.get('current', True) for p in observations)
+            item['last_seen_s'] = max((p['captured_at_s'] for p in observations), default=0)
             item['station_status'] = 'none' if not link else 'unavailable' if stations is None else 'map_mismatch' if link['map_id'] != map_id else 'ready' if link['name'] in stations and digest_station(stations[link['name']]) == link['digest'] else 'stale'
             item['fetch_available'] = False  # Task/grasp gates are not part of the photo milestone.
         return value
@@ -162,6 +169,15 @@ class PhotoIndex:
             raise ValueError('Insufficient image storage')
         photo = dict(id=str(uuid.uuid4()), saved_at_s=time.time(), **metadata)
         value = deepcopy(self.value)
+        replaced = []
+        if photo.get('update_key'):
+            for old in list(value['photos']):
+                if old.get('update_key') == photo['update_key'] and old.get('map_id') == photo['map_id'] and old.get('camera_id') == photo['camera_id']:
+                    if old.get('item_id'):
+                        old['current'] = False  # A new image cannot inherit identity of a moving object.
+                    else:
+                        value['photos'].remove(old)
+                        replaced.append(old)
         value['photos'].append(photo)
         self.validate(value)
         path = self.image_path(photo['id'])
@@ -172,6 +188,9 @@ class PhotoIndex:
             with suppress(OSError):
                 path.unlink()
             raise
+        for old in replaced:
+            with suppress(OSError):
+                self.image_path(old['id']).unlink()
         return photo
 
     def edit(self, photo_id, data, map_id):

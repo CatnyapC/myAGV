@@ -9,6 +9,7 @@ export function MapView(props: {
   onDraft: (points: Point[]) => void; onSelect: (id: string | null) => void;
   onGoal: (point: Point) => void;
   photos: Photo[]; selectedPhotoId: string | null; onPhoto: (id: string) => void;
+  update?: { map_id: string; goals: Origin[]; completed: number; active: boolean; state: string };
 }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -23,6 +24,7 @@ export function MapView(props: {
   const target = useRef<L.CircleMarker | null>(null);
   const targetHeading = useRef<L.Polyline | null>(null);
   const observations = useRef<L.LayerGroup | null>(null);
+  const updatePoints = useRef<L.LayerGroup | null>(null);
 
   useEffect(() => {
     if (!host.current) return;
@@ -33,6 +35,7 @@ export function MapView(props: {
     map.current = instance;
     polygons.current = L.layerGroup().addTo(instance);
     observations.current = L.layerGroup().addTo(instance);
+    updatePoints.current = L.layerGroup().addTo(instance);
     path.current = L.polyline([], { color: 'var(--cyan-9)', weight: 2, opacity: .85, interactive: false }).addTo(instance);
     robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 1.8, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
     heading.current = L.polyline([], { color: 'var(--cyan-11)', weight: 1.5, interactive: false }).addTo(instance);
@@ -136,12 +139,12 @@ export function MapView(props: {
     if (!group) return;
     group.clearLayers();
     for (const photo of props.photos) {
-      if (photo.kind !== 'observation' || photo.map_id !== props.info.map_id) continue;
+      if (photo.kind !== 'observation' || photo.map_id !== props.info.map_id || photo.current === false) continue;
       const chosen = photo.id === props.selectedPhotoId;
       const marker = L.circleMarker(toView([photo.base_pose.x_m, photo.base_pose.y_m], props.info.display.origin),
         { radius: chosen ? 6 : 4, color: chosen ? 'var(--cyan-11)' : 'var(--gray-11)', weight: 1.5,
           fillOpacity: .12, dashArray: '2 2', bubblingMouseEvents: false }).addTo(group);
-      const label = document.createElement('span'); label.textContent = `Observation · ${photo.camera_id} · Demo`;
+      const label = document.createElement('span'); label.textContent = `Last observed · ${photo.camera_id} · ${new Date(photo.captured_at_s * 1000).toLocaleString()}${photo.source === 'simulation' ? ' · Demo' : ''}`;
       marker.bindTooltip(label).on('click', () => { if (!latest.current.drawing) latest.current.onPhoto(photo.id); });
       const element = marker.getElement();
       element?.setAttribute('tabindex', '0'); element?.setAttribute('role', 'button'); element?.setAttribute('aria-label', label.textContent);
@@ -150,6 +153,22 @@ export function MapView(props: {
       });
     }
   }, [props.photos, props.selectedPhotoId, props.info]);
+
+  useEffect(() => {
+    const group = updatePoints.current;
+    if (!group) return;
+    group.clearLayers();
+    const update = props.update;
+    if (!update || update.map_id !== props.info.map_id || (!update.active && update.state !== 'planned')) return;
+    update.goals.forEach((pose, i) => {
+      const point = toView([pose.x_m, pose.y_m], props.info.display.origin);
+      const color = i === update.completed ? 'var(--orange-9)' : 'var(--cyan-9)';
+      const label = document.createElement('span'); label.textContent = `Update view ${i + 1} · ${(pose.yaw_rad * 180 / Math.PI).toFixed(0)}°`;
+      L.circleMarker(point, { radius: 3, color, weight: 1, fillOpacity: .25, interactive: false }).addTo(group).bindTooltip(label);
+      L.polyline([point, toView([pose.x_m + .16 * Math.cos(pose.yaw_rad), pose.y_m + .16 * Math.sin(pose.yaw_rad)], props.info.display.origin)],
+        { color, weight: 1, interactive: false }).addTo(group);
+    });
+  }, [props.update, props.info]);
 
   useEffect(() => {
     preview.current?.remove();

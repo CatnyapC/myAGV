@@ -90,6 +90,7 @@ export function App() {
   const angleValid = angleText.trim() !== '' && Number.isFinite(Number(angleText)) && Math.abs(Number(angleText)) <= 180;
   editingSettings.current = settingsDirty || settingsSaving || !angleValid;
   const canEdit = connected && state?.phase === 'idle';
+  const canEditPhotos = connected && (state?.phase === 'idle' || state?.phase === 'update_paused');
   const canLayout = canEdit;
   const canResize = canLayout && !maximized;
   const canMove = canResize && layoutEditing;
@@ -101,7 +102,7 @@ export function App() {
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
   const hardwareReasons = !connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware);
   const goReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)), ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
-  const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
+  const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : !selectedItem.observation_current ? ['Confirm this item in a current observation'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -451,7 +452,7 @@ export function App() {
         {packet ? <MapView info={packet.info} image={packet.image} zones={zones?.zones ?? []} selected={selected}
           drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
           navigation={navigation} goal={goal} connected={connected} showCostmap={showCostmap} focusRobotVersion={focusRobotVersion}
-          photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto}
+          photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto} update={state?.hardware?.map_update}
           onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
           <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"
@@ -487,7 +488,7 @@ export function App() {
         </div>
         <div className="photo-list">{photos?.photos.length ? [...photos.photos].reverse().filter(p => !selectedItemId || p.item_id === selectedItemId).map(p =>
           <button key={p.id} className={`zone-row ${p.id === selectedPhotoId ? 'selected' : ''}`} onClick={() => selectPhoto(p.id)} title={p.kind === 'reference' ? 'Phone reference · no map point' : 'Captured base observation pose'}>
-            <Camera size={14} /><span>{photos.items.find(i => i.id === p.item_id)?.name ?? 'Unlabelled'}</span><span className="row-end">{p.kind === 'reference' ? 'Reference' : p.camera_id}</span>
+            <Camera size={14} /><span>{photos.items.find(i => i.id === p.item_id)?.name ?? 'Unlabelled'}</span><span className="row-end">{p.kind === 'reference' ? 'Reference' : p.current === false ? 'History' : p.camera_id}</span>
           </button>) : <span className="muted">No photos</span>}</div>
         {selectedPhoto && <div className="action-line"><Button onClick={() => setPhotoMode('edit')}>Edit</Button>
           {selectedPhoto.kind === 'observation' && <Button disabled={!canEdit || !selectedPhoto.map_matches || !selectedPhoto.available} onClick={() => {
@@ -557,7 +558,7 @@ export function App() {
     </div>
     </div>
     {photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId} photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
-      index={photos} stations={stations} enabled={canEdit} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}
+      index={photos} stations={stations} enabled={canEditPhotos} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}
     <Dialog.Root open={resetMapOpen} onOpenChange={open => { if (!busy) setResetMapOpen(open); }}>
       <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="settings-dialog">
         <header className="dialog-header"><Dialog.Title>Reset map and rebuild?</Dialog.Title></header>

@@ -18,6 +18,7 @@ import uuid
 from navigation import arm_deadline, load_stations, pickup_angles, save_station, validate_angles, wait_arm
 from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
+from robot_survey import update_goals
 from web_backend.map_data import validate_rectangle
 from web_backend.photos import digest_station
 from web_backend.simulation import validate_pose
@@ -25,6 +26,10 @@ from web_backend.storage import atomic_json
 
 
 class Stopped(BaseException):
+    pass
+
+
+class UpdatePaused(BaseException):
     pass
 
 
@@ -55,6 +60,7 @@ class Control:
         self.teleop_pid = None
         self.goal = None
         self.base_enabled = False
+        self.map_update = None
         self.queue = queue.Queue(maxsize=1)
         self.results, self.requests = OrderedDict(), OrderedDict()
         self.config_path = self.directory.parent / 'robot_config.json'
@@ -153,6 +159,28 @@ class Control:
         command = packet.get('type')
         if command in ('teleop_acquire', 'teleop_release'):
             raise ValueError('TELEOP handoff requires the local socket')
+        if command in ('update_pause', 'update_start'):
+            update = self.map_update
+            if not update or not update['active'] or packet.get('task_id') != self.task_id or packet.get('session_id') != self.owner:
+                raise ValueError('Current map update and owning tab required')
+            if packet.get('map_id') != update['map_id'] or packet.get('expected_revision') != update['zone_revision']:
+                raise ValueError('Map or no-go revision changed')
+            if command == 'update_start':
+                if self.phase != 'update_paused':
+                    raise ValueError('Wait for measured update pause before starting updates')
+                if update['storage_error']:
+                    raise ValueError('Repair photo storage, then STOP and start a new update')
+                if time.monotonic() >= update['deadline']:
+                    update['deadline'] = time.monotonic() + update['limit_s']
+                update['pause_requested'] = False
+            else:
+                update['pause_requested'], update['pause_reason'] = True, 'Map updating paused by operator'
+                self.base_enabled = False
+                self.robot.zero()
+                self.robot.nav.client.cancel_all_goals()
+            self.requests[command_id] = fingerprint
+            self.finish(packet, dict(status='completed'))
+            return self.results[command_id]
         if self.phase in ('review_grasp', 'verify_grasp') and packet.get('session_id') == self.owner:
             if command == 'confirm' and packet.get('task_id') == self.task_id and packet.get('stage') == self.phase:
                 self.confirmation = self.phase
@@ -207,6 +235,12 @@ class Control:
             reason = 'ROS no-go enforcement unavailable'
         if reason:
             self.request_stop(reason)
+        update = self.map_update
+        if update and update['active'] and not update['pause_requested'] and time.monotonic() >= update['deadline']:
+            update['pause_requested'], update['pause_reason'] = True, 'Update time limit reached; map retained'
+            self.base_enabled = False
+            self.robot.zero()
+            self.robot.nav.client.cancel_all_goals()
 
     def base_allowed(self):
         return self.base_enabled and not self.stop_pending and lease_valid(self.deadline, time.monotonic())
@@ -238,6 +272,12 @@ class Control:
     def travel_guard(self, pose):
         if not lease_valid(self.deadline, time.monotonic()) or self.stop_pending:
             raise Stopped('Control lease expired')
+        update = self.map_update
+        if update and update['active']:
+            if not self.robot.grid or self.robot.grid['map_id'] != update['map_id'] or self.robot.zones['revision'] != update['zone_revision']:
+                raise Stopped('Update map or no-go revision changed')
+            if update['pause_requested']:
+                raise UpdatePaused()
         if not self.localized:
             raise RuntimeError('Set and confirm localization first')
         if not self.robot.driver_watchdog or not self.robot.exclusive or not self.robot.sensors_ready():
@@ -263,6 +303,8 @@ class Control:
         # stops issuing targets, even if firmware completes the current waypoint.
         steps = max(1, math.ceil(max(abs(a-b) for a,b in zip(start,target)) / 2))
         for index in range(1, steps+1):
+            if self.map_update and self.map_update['active']:
+                self.wait_update()
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
                 raise Stopped('Arm task lease expired')
             waypoint = [a+(b-a)*index/steps for a,b in zip(start,target)]
@@ -572,6 +614,12 @@ class Control:
             self.go(pose)
         elif kind == 'fetch':
             self.fetch(packet)
+        elif kind == 'update_plan':
+            self.map_update = {**self.plan_update(packet), 'active': False, 'state': 'planned',
+                               'map_id': self.robot.grid['map_id'], 'completed': 0, 'round': 0, 'captures': 0, 'remaining_s': 0}
+            return dict(goals=self.map_update['goals'])
+        elif kind == 'map_update':
+            return self.run_update(packet)
         elif kind == 'survey':
             goals = packet.get('goals')
             if not isinstance(goals, list) or not 1 <= len(goals) <= 20:
@@ -589,6 +637,97 @@ class Control:
         else:
             raise ValueError('Unsupported hardware command')
         return {}
+
+    def plan_update(self, packet):
+        start = self.robot.nav.get_pose(timeout=.1)
+        self.travel_guard(start)
+        if packet.get('goals') is not None:
+            goals = packet['goals']
+            if not isinstance(goals, list) or not 1 <= len(goals) <= 20:
+                raise ValueError('Select 1..20 viewing poses')
+            poses = [validate_pose(p) for p in goals]
+            for pose in poses:
+                self.travel_guard(pose)
+            return dict(goals=poses, capped=False, spacing_m=packet.get('spacing_m', 1))
+        with self.robot.lock:
+            grid = self.robot.costmaps['global'][3]
+            derived = self.robot.derived
+        plan = update_goals(grid, start, self.config['clearance_m'], packet.get('spacing_m', 1))
+        plan['goals'] = [p for p in plan['goals'] if footprint_clear(derived, p, self.config['clearance_m'])]
+        if not plan['goals']:
+            raise ValueError('No reachable viewing poses')
+        return plan
+
+    def wait_update(self):
+        update = self.map_update
+        if not update or not update['active']:
+            return
+        if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+            raise Stopped('Map update control expired')
+        if time.monotonic() >= update['deadline']:
+            update['pause_requested'], update['pause_reason'] = True, 'Update time limit reached; map retained'
+        if not update['pause_requested']:
+            return
+        self.base_enabled = False
+        self.robot.zero()
+        self.robot.nav.cancel()
+        self.robot.nav.wait_stopped()
+        self.angles = wait_arm(self.arm, timeout=3)
+        self.arm_stamp = time.monotonic()
+        self.phase, self.status = 'update_paused', update['pause_reason']
+        update['state'] = 'paused'
+        while update['pause_requested']:
+            if self.stop_pending or not lease_valid(self.deadline, time.monotonic()) or self.robot.ros.is_shutdown():
+                raise Stopped('Map update cancelled while paused')
+            if not self.robot.grid or self.robot.grid['map_id'] != update['map_id'] or self.robot.zones['revision'] != update['zone_revision']:
+                raise Stopped('Update map or no-go revision changed')
+            time.sleep(.05)
+        self.phase, self.status, update['state'] = 'updating_map', 'Updating map observations', 'updating'
+
+    def run_update(self, packet):
+        limit_s = number(packet.get('limit_s', 600), 60, 3600, 'Update window seconds')
+        started = time.monotonic()
+        self.require_arm()
+        if self.config['transport_angles'] is None:
+            raise ValueError('Record folded transport pose before map updating')
+        plan = self.plan_update(packet)
+        self.map_update = update = {**plan, 'map_id': self.robot.grid['map_id'],
+            'zone_revision': self.robot.zones['revision'], 'map_revision': self.robot.grid.get('revision'), 'active': True, 'state': 'updating',
+            'deadline': started + limit_s, 'limit_s': limit_s, 'pause_requested': False,
+            'pause_reason': '', 'storage_error': '', 'completed': 0, 'round': 1, 'captures': 0}
+        try:
+            self.capture('front', persist=False)
+            self.fold()
+            while True:
+                self.wait_update()
+                if update['completed'] == 0 and update['round'] > 1 and update['map_revision'] != self.robot.grid.get('revision'):
+                    try:
+                        update.update(self.plan_update(packet), map_revision=self.robot.grid.get('revision'))
+                    except UpdatePaused:
+                        self.wait_update()
+                        continue
+                pose = update['goals'][update['completed']]
+                try:
+                    self.go(dict(x_m=pose['x_m'], y_m=pose['y_m'], yaw_deg=math.degrees(pose['yaw_rad'])))
+                except UpdatePaused:
+                    self.wait_update()
+                    continue
+                self.wait_update()
+                self.phase, self.status = 'updating_map', 'Refreshing map observation'
+                # Bounded handoff prevents the API/storage backlog from filling the disk.
+                if len(list((self.directory / 'captures').glob('*.json'))) >= 20:
+                    update['storage_error'] = 'Photo import backlog; repair storage before restarting updates'
+                    update['pause_requested'], update['pause_reason'] = True, update['storage_error']
+                    continue
+                key = '%.2f:%.2f:%.2f' % (pose['x_m'], pose['y_m'], pose['yaw_rad'])
+                self.capture('front', update_key=key)
+                update['captures'] += 1
+                update['completed'] += 1
+                if update['completed'] == len(update['goals']):
+                    update['completed'] = 0
+                    update['round'] += 1
+        finally:
+            update['active'], update['state'] = False, 'interrupted'
 
     def fetch(self, packet):
         records = load_stations(self.stations_path)
@@ -646,7 +785,10 @@ class Control:
 
     def snapshot(self):
         ready = self.phase not in ('teleop', 'handoff') and self.robot.driver_watchdog and self.robot.exclusive and self.robot.sensors_ready()
-        return dict(boot_id=self.boot_id, stop_epoch=self.stop_epoch, stamp_s=time.time(), phase=self.phase, status=self.status,
+        update = dict(self.map_update) if self.map_update else None
+        if update and update.get('active'):
+            update['remaining_s'] = max(0, math.ceil(update['deadline'] - time.monotonic()))
+        return dict(boot_id=self.boot_id, stop_epoch=self.stop_epoch, stamp_s=time.time(), phase=self.phase, status=self.status, map_update=update,
                     task_id=self.task_id, arm_available=self.arm is not None, arm_homed=self.arm_homed,
                     arm_angles=self.angles if fresh(self.arm_stamp, time.monotonic(), 2) else None,
                     arm_error=self.arm_error, transport_angles=self.config['transport_angles'],

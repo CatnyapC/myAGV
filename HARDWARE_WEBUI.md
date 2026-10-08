@@ -101,10 +101,28 @@ to confirm possession. Only then does it return and restore the startup pose.
 There is no automatic vision calibration or force-based grasp detection.
 A five-minute review timeout cancels the task.
 
-**Survey** accepts up to 20 explicit viewing goals and captures a stopped front
-observation at each. Completed captures survive a later task cancellation and
-are imported into the photo index. This is a bounded waypoint survey, not
-exploration of unknown space.
+**Map updates** repeatedly refresh observations in the current reachable area.
+Use **Preview update points**, then **Start updating**. **Pause updating** retains
+the current view and all map/photo records. The default window is 10 minutes (1–60 minutes);
+expiry pauses updating. Starting again after expiry opens a new window. Operator
+pauses count toward the same wall-clock window. STOP/disconnect cancel motion;
+reconnection never starts updating automatically.
+
+Automatic points use the robot's connected free global-costmap region, measured
+clearance and no-go enforcement. Unknown/disconnected/blocked space is excluded.
+Default viewing spacing is 1 m (0.5–3 m), with four stopped headings at each site
+and at most 200 views spread across the region. Square clearance is conservative.
+Points are viewing samples, not guaranteed visual coverage. A new map revision
+refreshes the automatic points on the next round. Up to 20 manually
+selected views can instead be repeated. Preview markers show headings; move_base
+still computes the actual travel paths. Every goal is revalidated before travel.
+
+Each revisit replaces its latest unlabelled photo. Confirmed old photos stay as
+historical evidence; new images never inherit a moving object's old identity.
+Historical associations cannot authorize Fetch until confirmed in a current
+observation. This refreshes scene evidence, not measured object coordinates or
+automatic identity tracking. Capture/import failure stops updating and preserves
+the source frame for recovery; a 20-frame handoff backlog pauses updates.
 
 Live captures bind the received camera frame to TF at that frame's host receipt
 time, map identity and camera identity. The robot must be stopped. Arm captures

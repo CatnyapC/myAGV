@@ -16,6 +16,19 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
   const [radius, setRadius] = useState(String(state?.clearance_m ?? .25));
   const [measured, setMeasured] = useState(false);
   const [survey, setSurvey] = useState<Origin[]>([]);
+  const [automatic, setAutomatic] = useState(true);
+  const [minutes, setMinutes] = useState('10');
+  const [spacing, setSpacing] = useState('1');
+  const [updating, setUpdating] = useState(false);
+  const update = state?.map_update;
+  const paused = state?.phase === 'update_paused';
+  const validUpdate = Number.isFinite(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 60 && Number.isFinite(Number(spacing)) && Number(spacing) >= .5 && Number(spacing) <= 3;
+  const updateArgs = { limit_s: Number(minutes) * 60, spacing_m: Number(spacing), ...(!automatic ? { goals: survey } : {}) };
+  const updateCommand = async (type: string) => {
+    setUpdating(true);
+    try { await command(type, type === 'update_start' || type === 'update_pause' ? { task_id: state?.task_id } : updateArgs); }
+    finally { setUpdating(false); }
+  };
   const [confirmation, setConfirmation] = useState<{ type: string; message: string; values?: Record<string, unknown> } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const idle = connected && state?.phase === 'idle';
@@ -73,7 +86,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     <label className="setting-row">Folded clearance radius (m)<input type="number" min=".15" max="1" step=".01" value={radius} disabled={!idle} onChange={e => { setRadius(e.target.value); setMeasured(false); }} /></label>
     <label><input type="checkbox" checked={measured} disabled={!idle} onChange={e => setMeasured(e.target.checked)} /> Arm folded; measured radius encloses base, arm and payload</label>
     <Button disabled={!idle || !state?.arm_homed || !measured} onClick={() => void command('transport_record', { clearance_m: Number(radius), measured })}>Record transport pose</Button>
-    <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before Fetch or survey'}</span>
+    <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before Fetch or map updates'}</span>
     <label className="setting-row">Station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>
     <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => {
       const previous = stations[name.trim()];
@@ -88,12 +101,23 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
       <Button disabled={!connected} onClick={() => void command('confirm', { stage: state?.phase, task_id: state?.task_id })}>{review ? 'Confirm grasp alignment' : 'Confirm possession and return'}</Button>
       <Button variant="danger" onClick={stop}>Abort / STOP</Button>
     </div>}
-    <details><summary>Survey · {survey.length}/20 viewing poses</summary>
+    <details open><summary>MAP UPDATES</summary>
+      <label><input type="checkbox" checked={automatic} disabled={!idle || updating} onChange={e => setAutomatic(e.target.checked)} /> Reachable area automatically</label>
+      <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
+      <label className="setting-row">Viewing spacing (m)<input type="number" min=".5" max="3" step=".1" value={spacing} disabled={!idle || updating || !automatic} onChange={e => setSpacing(e.target.value)} /></label>
+      <span className="muted">Repeat observations refresh the map. Time limit pauses updating and retains all records.</span>
+      <div className="action-line">
+        <Button disabled={!idle || updating || !validUpdate || hardwareBlocks(state).length > 0 || (!automatic && !survey.length)} onClick={() => void updateCommand('update_plan')}>Preview update points</Button>
+        <Button variant="default" disabled={!connected || updating || (!paused && (!idle || !validUpdate || hardwareBlocks(state).length > 0 || (!automatic && !survey.length)))} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>开始更新</Button>
+        <Button disabled={!connected || updating || !update?.active || paused} onClick={() => void updateCommand('update_pause')}>暂停更新</Button>
+      </div>
+      {update && <span role="status" className="muted">{update.state === 'planned' ? 'Planned' : paused ? 'Updating paused' : update.active ? 'Updating' : 'Updates interrupted'} · {update.goals.length} views · round {update.round} · {update.completed}/{update.goals.length} · {update.captures} captures{update.active && ` · ${Math.floor(update.remaining_s / 60)}:${String(update.remaining_s % 60).padStart(2, '0')} left`}{update.capped && ' · bounded area sampling'}</span>}
+      {!automatic && <>
       <div className="action-line">
         <Button disabled={!idle || !goal || survey.length >= 20} onClick={() => goal && setSurvey(old => [...old, goal])}>Add goal</Button>
         <Button disabled={!idle} onClick={() => setSurvey([])}>Clear queue</Button>
-        <Button disabled={!idle || hardwareBlocks(state).length > 0 || !survey.length} onClick={() => void command('survey', { goals: survey })}>Run survey</Button>
       </div><span className="muted">{survey.map((p,i) => `${i+1}: (${p.x_m.toFixed(2)}, ${p.y_m.toFixed(2)})`).join(' · ')}</span>
+      </>}
     </details>
   </details>;
 }
