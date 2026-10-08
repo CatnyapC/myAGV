@@ -146,24 +146,26 @@ def main():
                 stream.release()
             time.sleep(1)
 
-    def snapshots():
-        last_check = 0
+    def monitor():
         while not rospy.is_shutdown():
             try:
-                if time.monotonic() - last_check > 1:
-                    last_check = time.monotonic()
-                    robot.check_publishers()
-                    if robot.clearance is None:
-                        try:
-                            robot.set_clearance(control.config['clearance_m'])
-                        except Exception as exc:
-                            rospy.logwarn_throttle(10, 'Planner footprint pending: %s', exc)
+                robot.check_publishers()
+                if robot.clearance is None:
+                    robot.set_clearance(control.config['clearance_m'])
+            except Exception as exc:
+                robot.layers_ok = False
+                rospy.logwarn_throttle(10, 'ROS planner check pending: %s', exc)
+            time.sleep(1)
+
+    def snapshots():
+        while not rospy.is_shutdown():
+            try:
                 pose, stamp = None, None
                 try:
                     p = robot.nav.get_pose(timeout=.05)
                     pose = dict(x_m=p['x_m'], y_m=p['y_m'], yaw_rad=math.radians(p['yaw_deg']))
                     stamp = time.time()
-                except (RuntimeError, TimeoutError):
+                except (RuntimeError, TimeoutError, ValueError):
                     pass
                 grid = robot.grid or {}
                 atomic_json(directory / 'state.json', dict(stamp_s=time.time(), pose=pose, pose_stamp_s=stamp,
@@ -180,6 +182,7 @@ def main():
         device = os.environ.get('MYAGV_%s_DEVICE' % camera_id.upper())
         if device:
             threading.Thread(target=camera, args=(camera_id, device), daemon=True).start()
+    threading.Thread(target=monitor, daemon=True).start()
     threading.Thread(target=snapshots, daemon=True).start()
     control.run()
 

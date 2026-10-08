@@ -32,7 +32,8 @@ export function HardwareControls({ state, connected, goal, command, hold, stop }
   const button = (key: string, label: string) => <Button key={key} disabled={!connected || !state?.motion_available || (!idle && state.phase !== 'manual') || (mode === 'ARM' && !state.arm_homed)}
     style={{ touchAction: 'none' }} onPointerDown={e => move(e, key)} onPointerUp={release}
     onPointerCancel={release} onLostPointerCapture={() => hold(null)}
-    onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') e.preventDefault(); }} aria-label={`Hold ${label}`}>{label}</Button>;
+    onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (!e.repeat) { const input = { mode, key }; hold(input); void command('manual', { mode, input }); } } }}
+    onKeyUp={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); release(); } }} onBlur={() => hold(null)} aria-label={`Hold ${label}`}>{label}</Button>;
   return <details className="hardware-controls" open>
     <summary>Hardware controls</summary>
     <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Localization ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>

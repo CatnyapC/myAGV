@@ -48,7 +48,7 @@
         update_frequency: 5.0
         publish_frequency: 5.0
         always_send_full_costmap: true
-        footprint: []
+        footprint: "[]"
         robot_radius: 0.25
         footprint_padding: 0.01
         rolling_window: false
@@ -76,7 +76,7 @@
         update_frequency: 5.0
         publish_frequency: 5.0
         always_send_full_costmap: true
-        footprint: []
+        footprint: "[]"
         robot_radius: 0.25
         footprint_padding: 0.01
         rolling_window: true

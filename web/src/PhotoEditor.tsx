@@ -9,7 +9,7 @@ export function StoredPhoto({ photo, onEdit }: { photo: Photo; onEdit: () => voi
   const [failed, setFailed] = useState(false);
   return <div className="stored-photo">
     {photo.available && !failed ? <img src={photo.image_url} alt={photo.kind === 'reference' ? 'Item reference photo' : 'Map observation photo'} onError={() => setFailed(true)} /> : <span className="empty">Image unavailable</span>}
-    <button className="photo-caption" onClick={onEdit}>{photo.kind === 'reference' ? 'Reference · phone' : 'Observation · Demo'} · Edit</button>
+    <button className="photo-caption" onClick={onEdit}>{photo.kind === 'reference' ? 'Reference · phone' : photo.source === 'ros' ? 'Observation · ROS' : 'Observation · Demo'} · Edit</button>
   </div>;
 }
 

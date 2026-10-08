@@ -52,6 +52,7 @@ class RobotROS:
         self.last_check = 0
         self.clearance = None
         self.layers_ok = False
+        self.amcl_uri = None
         self.subscribers = [
             rospy.Subscriber('/myagv/input_vel', Twist, self.receive_velocity, queue_size=1),
             rospy.Subscriber('/scan', LaserScan, self.receive_scan, queue_size=1),
@@ -176,7 +177,13 @@ class RobotROS:
     def check_publishers(self):
         import rosgraph
         self.driver_watchdog = self.ros.get_param('/myagv_web/driver_watchdog', 0) == 1
-        publishers = rosgraph.Master(self.ros.get_name()).getSystemState()[0]
+        master = rosgraph.Master(self.ros.get_name())
+        amcl_uri = master.lookupNode('/amcl')
+        if self.amcl_uri and amcl_uri != self.amcl_uri and self.control:
+            self.control.localized = False
+            self.control.request_stop('Localization process restarted; reconfirm pose')
+        self.amcl_uri = amcl_uri
+        publishers = master.getSystemState()[0]
         self.exclusive = all(set(nodes) <= ({self.ros.get_name()} if topic == '/cmd_vel' else {self.ros.get_name(), '/move_base'})
                              for topic, nodes in publishers if topic in ('/cmd_vel', '/myagv/input_vel'))
         self.layers_ok = True
@@ -184,12 +191,18 @@ class RobotROS:
             prefix = '/move_base/%s_costmap/' % side
             if self.ros.get_param(prefix + 'static_layer/map_topic', '') != '/navigation_map' or not self.ros.get_param(prefix + 'static_layer/enabled', False):
                 self.layers_ok = False
+            if self.clearance is not None and (self.ros.get_param(prefix + 'footprint', '') not in ('', '[]') or
+                    abs(self.ros.get_param(prefix + 'robot_radius', 0) - self.clearance) > .001):
+                self.clearance = None
 
     def set_clearance(self, radius):
         from dynamic_reconfigure.client import Client
         for side in ('global', 'local'):
-            config = Client('/move_base/%s_costmap' % side, timeout=2).update_configuration(
-                dict(footprint='[]', robot_radius=radius))
+            client = Client('/move_base/%s_costmap' % side, timeout=2)
+            try:
+                config = client.update_configuration(dict(footprint='[]', robot_radius=radius))
+            finally:
+                client.close()
             if abs(config['robot_radius'] - radius) > .001 or config['footprint'] not in ('[]', ''):
                 raise RuntimeError('ROS costmap rejected measured footprint')
         self.clearance = radius
