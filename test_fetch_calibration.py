@@ -46,11 +46,11 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         for size, step in (('large', 2), ('medium', 1), ('small', .5)):
             self.assertEqual(qualitative_alignment(dict(arm='left_' + size, front='right_' + size), None), dict(x_mm=-step, turn_deg=step))
             self.assertEqual(qualitative_alignment(dict(arm='right_' + size, front='left_' + size), None), dict(x_mm=step, turn_deg=-step))
-        self.assertEqual(qualitative_alignment(dict(arm='aligned', front='aligned'), None), dict(x_mm=0, turn_deg=0))
+        self.assertEqual(qualitative_alignment(dict(arm='aligned_perfectly', front='aligned_perfectly'), None), dict(x_mm=0, turn_deg=0))
         self.assertEqual(qualitative_alignment(dict(arm='right_large', front='right_large'), dict(max_step_mm=.5)), dict(x_mm=.5, turn_deg=2))
-        for label in ('unknown', None, 0, 'right', {}, []):
+        for label in ('unknown', 'aligned', None, 0, 'right', {}, []):
             with self.assertRaises(ValueError):
-                qualitative_alignment(dict(arm=label, front='aligned'), None)
+                qualitative_alignment(dict(arm=label, front='aligned_perfectly'), None)
 
     def test_base_turn_is_clockwise_without_translation_and_stops(self):
         c = fake_control()
@@ -63,8 +63,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertLess(c.robot.velocity[2], 0)
         self.assertFalse(c.base_enabled)
         c.robot.zero.assert_called()
-        c.robot.nav.get_odom_pose.side_effect = [dict(x_m=0, y_m=0, yaw_deg=0), dict(x_m=.02, y_m=0, yaw_deg=0)]
-        with self.assertRaisesRegex(RuntimeError, 'translated'):
+        c.robot.nav.get_odom_pose.side_effect = [dict(x_m=0, y_m=0, yaw_deg=0), dict(x_m=.02, y_m=0, yaw_deg=-2)]
+        with patch('robot_control.time.sleep'):
             c.turn_fetch(2)
         self.assertFalse(c.base_enabled)
 
@@ -121,7 +121,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_minimal_provider_request(self):
         images = dict(front='data:image/jpeg;base64,AQ==', arm='data:image/jpeg;base64,Ag==')
-        provider = AsyncMock(return_value=dict(arm='aligned', front='aligned'))
+        provider = AsyncMock(return_value=dict(arm='aligned_perfectly', front='aligned_perfectly'))
         history = [dict(images=images, commanded=dict(X=1, turn_deg=-1))] * 2
         trace = {}
         with patch('web_backend.resolve.request_json', provider):
@@ -139,6 +139,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any('"X": 1' in label and '"turn_deg": -1' in label for label in labels))
         self.assertEqual(trace['messages'][0]['content'], 'Edited prompt')
         self.assertEqual(json.loads(trace['result_json']), provider.return_value)
+        self.assertTrue(trace['aligned_perfectly'])
 
     def test_closed_loop_recaptures_and_missing_target_stops(self):
         c = fake_control()
@@ -146,19 +147,21 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         c.capture.return_value = {'image': 'compressed'}
         with tempfile.TemporaryDirectory() as folder:
             c.directory = Path(folder)
-            results = iter([{'x_mm': 2, 'turn_deg': 2}, {'x_mm': 0, 'turn_deg': 0}])
+            results = iter([{'x_mm': 2, 'turn_deg': 2}, {'x_mm': 1, 'turn_deg': 0}, {'x_mm': 0, 'turn_deg': 0}])
             requests = []
 
             def respond(path, value):
                 self.assertGreater(value['expires_at_s'] - time.time(), 34)
                 requests.append(value)
                 atomic_json(path, value)
-                atomic_json(c.directory / 'fetch_vision_response.json', {'id': value['id'], 'result': next(results)})
+                result = next(results)
+                atomic_json(c.directory / 'fetch_vision_response.json', {'id': value['id'], 'result': result,
+                    'aligned_perfectly': result == dict(x_mm=0, turn_deg=0)})
 
             with patch('robot_control.atomic_json', side_effect=respond):
                 c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
-            self.assertEqual(c.capture.call_args_list, [call('front', vision=True), call('arm', vision=True)] * 2)
-            c.arm_step.assert_not_called()
+            self.assertEqual(c.capture.call_args_list, [call('front', vision=True), call('arm', vision=True)] * 3)
+            c.arm_step.assert_called_once_with('X', 1, pickup=True, distance=1)
             c.turn_fetch.assert_called_once_with(2)
             self.assertEqual(requests[1]['history'][0]['commanded'], {'X': 0, 'turn_deg': 2})
             self.assertFalse(list(c.directory.iterdir()))

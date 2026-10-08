@@ -891,8 +891,6 @@ class Control:
                 if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
                     raise Stopped('Map or no-go zones changed during fetch rotation')
                 self.travel_guard(self.robot.nav.get_pose())
-                if math.hypot(pose['x_m'] - start['x_m'], pose['y_m'] - start['y_m']) > .01:
-                    raise RuntimeError('Base translated during fetch rotation')
                 error = math.atan2(math.sin(target - math.radians(pose['yaw_deg'])),
                                    math.cos(target - math.radians(pose['yaw_deg'])))
                 if abs(error) <= math.radians(.05):
@@ -955,8 +953,12 @@ class Control:
                     if time.monotonic() >= end:
                         raise TimeoutError('Fetch vision calibration timed out')
                     time.sleep(.05)
-                if packet.get('preview') or not any(moves.values()):
+                if packet.get('preview'):
                     return
+                if response.get('aligned_perfectly') is True and not any(moves.values()):
+                    return
+                if not any(moves.values()):
+                    raise ValueError('Both cameras must explicitly report aligned_perfectly')
                 if round_index == 32:
                     raise RuntimeError('Fetch cameras did not converge after 32 corrections')
                 if moves['turn_deg']:

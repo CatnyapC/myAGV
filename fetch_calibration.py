@@ -45,7 +45,7 @@ def qualitative_alignment(result, config):
     if not isinstance(result, dict) or set(result) != {'arm', 'front'}:
         raise ValueError('Invalid visual alignment labels')
     steps = {'left_large': -2, 'left_medium': -1, 'left_small': -.5,
-             'aligned': 0, 'right_small': .5, 'right_medium': 1, 'right_large': 2}
+             'aligned_perfectly': 0, 'right_small': .5, 'right_medium': 1, 'right_large': 2}
     moves = {}
     for camera, field in (('arm', 'x_mm'), ('front', 'turn_deg')):
         label = result[camera]

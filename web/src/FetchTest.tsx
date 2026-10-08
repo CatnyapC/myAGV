@@ -79,7 +79,7 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">LLM: left/right + large/medium/small. Steps: arm X 2/1/0.5 mm (capped by setting); base 2/1/0.5°. Aligned = 0; unknown stops.</span>
+    <span className="muted">LLM: left/right + large/medium/small. Steps: arm X 2/1/0.5 mm (capped by setting); base 2/1/0.5°. Both aligned_perfectly = done; otherwise continue. Unknown stops.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
