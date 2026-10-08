@@ -36,6 +36,9 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     onKeyUp={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); release(); } }} onBlur={() => hold(null)} aria-label={`Hold ${label}`}>{label}</Button>;
   return <details className="hardware-controls" open>
     <summary>Hardware controls</summary>
+    {state?.phase === 'fault' && <div role="alert"><strong>Stop unconfirmed · motion locked</strong>
+      <Button disabled={!connected} onClick={() => { if (window.confirm('Have you physically verified that the base and arm have stopped? This clears the fault and resets homing confirmation.')) void command('recover_stop', { confirmed: true }); }}>Verify stopped and clear fault</Button>
+    </div>}
     <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Localization ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
     <div className="action-line">
       <Button disabled={!idle || !goal} onClick={() => void command('initial_pose', { goal })}>Set pose from goal</Button>

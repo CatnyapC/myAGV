@@ -30,7 +30,7 @@ def fake_control():
     c.stop_pending = None
     c.localized = True
     c.config = dict(transport_angles=[0, 10, 20], clearance_m=.25)
-    c.arm, c.arm_homed = Mock(), True
+    c.arm, c.arm_homed, c.home_cancelled = Mock(), True, False
     c.capture = Mock()
     c.queue, c.results, c.requests = queue.Queue(maxsize=1), OrderedDict(), OrderedDict()
     c.robot = SimpleNamespace(grid=dict(map_id='map'), zones=dict(revision=2), zero=Mock(),
@@ -116,6 +116,19 @@ class ControlTest(unittest.TestCase):
         with self.assertRaises(RuntimeError): c.receive(dict(packet(),type='align_step'))
         c.receive(dict(packet(),type='confirm',task_id='task',stage='verify_grasp'))
         self.assertEqual(c.confirmation, 'verify_grasp')
+
+    def test_unconfirmed_stop_latches_motion_fault(self):
+        c = fake_control()
+        c.phase = 'homing'
+        with patch('robot_control.arm_deadline', return_value=nullcontext()), patch('robot_control.wait_arm', return_value=[0,0,0]):
+            c.stop_hardware('Stopped')
+            self.assertEqual(c.phase, 'fault')
+            self.assertFalse(c.arm_homed)
+            c.stop_hardware('Stopped again')
+            self.assertEqual(c.phase, 'fault')
+        with self.assertRaises(RuntimeError): c.receive(packet())
+        c.receive(dict(packet(), type='recover_stop', confirmed=True))
+        self.assertEqual(c.queue.qsize(), 1)
 
     def test_pure_geometry_and_driver_patch(self):
         grid = dict(width=10,height=10,resolution_m=.1, origin=dict(x_m=1,y_m=2,yaw_rad=math.pi/2),cells=[0]*100)

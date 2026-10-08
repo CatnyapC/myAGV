@@ -94,7 +94,7 @@ class Hardware:
             raise RuntimeError('Hardware controller unavailable')
         if not 0 <= time.monotonic() - state.get('ack', 0) <= .3:
             raise ValueError('Live, focused WebSocket session required')
-        if self.control['phase'] != 'idle' and self.owner != data.get('session_id'):
+        if self.control['phase'] not in ('idle', 'fault') and self.owner != data.get('session_id'):
             raise ValueError('Another tab owns the active task')
         # Claim before sending so the first heartbeat cannot miss an accepted command.
         old_owner = self.owner

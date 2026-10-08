@@ -102,7 +102,9 @@ commands. Reconnecting never resumes motion; explicitly issue a new command.
 
 STOP cancels move_base and sends zero base velocity plus P340 M15. UI reports
 **stopping** until fresh odometry and stable arm feedback confirm a stop.
-Unavailable feedback reports **Stop unconfirmed**. It never substitutes an
+Unavailable feedback reports **Stop unconfirmed** and locks motion. After physically
+checking that both mechanisms stopped, use **Verify stopped and clear fault**;
+fresh base/arm feedback is still required and homing confirmation is reset. It never substitutes an
 acknowledgement for feedback.
 
 The manufacturer's [P340 protocol](https://docs.elephantrobotics.com/docs/ultraArm-en/3-HowToUseultraArm/2-SoftwareControl/6-SerialPort/6-SerialPort.html)

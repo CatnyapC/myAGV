@@ -46,6 +46,7 @@ class Control:
         self.localized = False
         self.arm = None
         self.arm_homed = False
+        self.home_cancelled = False
         self.angles = None
         self.arm_stamp = 0
         self.arm_error = ''
@@ -133,7 +134,7 @@ class Control:
                 return dict(status='accepted')
             if command != 'align_step' or self.phase != 'review_grasp':
                 raise RuntimeError('Confirm the current grasp stage or stop')
-        elif self.phase != 'idle' or self.executing or not self.queue.empty():
+        elif (self.phase != 'idle' and not (self.phase == 'fault' and command == 'recover_stop')) or self.executing or not self.queue.empty():
             raise RuntimeError('Robot is busy; stop before starting another action')
         if packet.get('map_id') != (self.robot.grid or {}).get('map_id'):
             raise ValueError('Map changed; reload before issuing commands')
@@ -164,7 +165,7 @@ class Control:
                 os.kill(os.getpid(), signal.SIGUSR1)
 
     def watchdog(self):
-        if self.phase == 'idle' or self.stopping:
+        if self.phase in ('idle', 'fault') or self.stopping:
             return
         reason = None
         if not lease_valid(self.deadline, time.monotonic()):
@@ -285,6 +286,7 @@ class Control:
 
     def stop_hardware(self, reason):
         was_homing = self.phase == 'homing'
+        self.home_cancelled = self.home_cancelled or was_homing
         self.stopping = True
         self.phase, self.status = 'stopping', 'Stop unconfirmed'
         self.base_enabled = False
@@ -292,7 +294,8 @@ class Control:
         self.robot.nav.client.cancel_all_goals()
         if was_homing:
             self.arm_homed = False
-        arm_stopped = self.arm is None
+        arm_stopped = False
+        confirmed = False
         try:
             if self.arm:
                 with arm_deadline(.4):
@@ -301,7 +304,8 @@ class Control:
                 self.arm_stamp = time.monotonic()
                 arm_stopped = True
             self.robot.nav.wait_stopped(timeout=2)
-            self.status = reason + ('; stopped' if arm_stopped and not was_homing else '; arm stop unconfirmed')
+            confirmed = arm_stopped and not self.home_cancelled
+            self.status = reason + ('; stopped' if confirmed else '; arm stop unconfirmed')
         except (RuntimeError, ValueError, OSError, TimeoutError) as exc:
             self.status = 'Stop unconfirmed: ' + str(exc)
             self.arm_homed = False
@@ -311,7 +315,7 @@ class Control:
             self.input = None
             self.deadline = 0
             self.stop_pending = None
-            self.phase = 'idle'
+            self.phase = 'idle' if confirmed else 'fault'
             self.stopping = False
             while not self.queue.empty():
                 with suppress(queue.Empty):
@@ -357,7 +361,15 @@ class Control:
 
     def execute(self, packet):
         kind = packet['type']
-        if kind == 'initial_pose':
+        if kind == 'recover_stop':
+            if packet.get('confirmed') is not True:
+                raise ValueError('Physically verify stopped hardware before clearing the fault')
+            self.connect_arm()
+            self.robot.nav.wait_stopped()
+            self.angles = wait_arm(self.arm, timeout=3)
+            self.arm_stamp = time.monotonic()
+            self.arm_homed, self.home_cancelled = False, False
+        elif kind == 'initial_pose':
             self.robot.nav.wait_stopped()
             self.localized = False
             self.robot.initial_pose(validate_pose(packet['goal']))
