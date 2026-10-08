@@ -456,7 +456,8 @@ export function App() {
           min={i === 2 ? -180 : undefined} max={i === 2 ? 180 : undefined} placeholder={i === 2 ? '0' : 'Map click'} value={goalText[i]}
           disabled={!canLayout || busy} onChange={e => setGoalText(old => old.map((v, n) => n === i ? e.target.value : v))} /></label>)}</div>
         <div className="action-line"><Button variant="default" className="button-simulate" disabled={!state?.demo || !canEdit || !goalValid || !costmapReady || busy}
-          onClick={() => void simulationCommand('navigate')}><Play size={16} /> Simulate</Button><Button variant="default" disabled><Hand size={16} /> Fetch</Button>
+          onClick={() => void simulationCommand('navigate')}><Play size={16} /> Simulate</Button>
+          <Button variant="default" disabled><Crosshair size={16} /> Go</Button><Button variant="default" disabled><Hand size={16} /> Fetch</Button>
           <Button disabled={!state?.demo || !connected || state?.phase === 'idle' || busy} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
         <div className="section-divider" />
         <span className="subheading">NO-GO ZONES</span>
