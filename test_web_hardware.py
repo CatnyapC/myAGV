@@ -1,4 +1,4 @@
-"""Read-only hardware guards and expiration; no ROS or physical movement."""
+"""Hardware availability guards and expiration; no ROS or physical movement."""
 import tempfile
 import time
 import unittest
@@ -39,19 +39,19 @@ class HardwareTest(unittest.IsolatedAsyncioTestCase):
             async with TestClient(TestServer(create_app(root / 'ui', hardware_dir=bridge))) as client:
                 state = await (await client.get('/api/state')).json()
                 self.assertFalse(state['demo'])
-                self.assertTrue(state['read_only'])
+                self.assertFalse(state['read_only'])
                 self.assertFalse(state['motion_available'])
                 self.assertFalse(state['simulation_available'])
                 self.assertEqual(state['navigation']['source'], 'ros')
                 self.assertEqual((await client.get('/api/map')).status, 200)
                 for command in ('navigate', 'demo_reset', 'zone_add', 'zone_delete', 'fetch', 'home'):
-                    self.assertEqual((await client.post('/api/commands', json={'type': command})).status, 403)
-                self.assertEqual((await client.post('/api/photos/capture', json={})).status, 501)
+                    self.assertEqual((await client.post('/api/commands', json={'type': command})).status, 400)
+                self.assertEqual((await client.post('/api/photos/capture', json={})).status, 409)
                 self.assertEqual((await client.get('/api/cameras/front.jpg')).status, 503)
                 self.assertEqual((await client.get('/api/global-costmap')).status, 503)
                 response = await client.post('/api/stop', json={})
                 self.assertEqual(response.status, 503)
-                self.assertEqual((await response.json())['status'], 'unconfirmed')
+                self.assertEqual((await response.json())['error'], 'Hardware controller unavailable; stop unconfirmed')
 
 
 if __name__ == '__main__':

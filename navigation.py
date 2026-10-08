@@ -164,6 +164,7 @@ class Navigation:
         self.publisher = rospy.Publisher("cmd_vel", Twist, queue_size=1)
         self.approach_settings = (approach_distance, approach_speed, approach_clearance)
         self.aligner = None
+        self.guard = None  # Optional web lease/costmap guard; CLI behavior is unchanged.
 
     def _odom(self, message):
         self.odom = (time.monotonic(), message)
@@ -225,6 +226,8 @@ class Navigation:
 
     def go_to(self, pose, timeout=120):
         pose = validate_pose(pose)
+        if getattr(self, 'guard', None):
+            self.guard(pose)
         if not number(timeout) or timeout <= 0:
             raise ValueError("Navigation timeout must be positive and finite")
         if not self.client.wait_for_server(self.ros.Duration(5)):
@@ -244,6 +247,8 @@ class Navigation:
             print("Navigation goal sent; waiting for move_base...", flush=True)
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
+                if getattr(self, 'guard', None):
+                    self.guard(pose)
                 if self.ros.is_shutdown():
                     raise RuntimeError("ROS shutdown")
                 state = self.client.get_state()

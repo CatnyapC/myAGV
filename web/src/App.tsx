@@ -6,11 +6,12 @@ import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu,
 import { MapView, rectangleCorners } from './MapView';
 import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
-import { api } from './api';
+import { api, commandId } from './api';
+import { HardwareControls, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
-type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation; cameras?: Partial<Record<'front' | 'arm', { url: string; stamp_s: number }>>; llm: { model: string; status: string; reasoning_effort: string } };
+type State = { hardware?: HardwareState; robot_id: string; demo: boolean; phase: string; navigation: Navigation; cameras?: Partial<Record<'front' | 'arm', { url: string; stamp_s: number }>>; llm: { model: string; status: string; reasoning_effort: string } };
 type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; settings_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v2';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
@@ -73,6 +74,10 @@ export function App() {
   const fitViewport = useRef<() => void>(() => {});
   const draggingDivider = useRef<{ seam: Divider; tiles: Tile[]; start: number; cellWidth: number; cellHeight: number } | null>(null);
   const generation = useRef(0);
+  const session = useRef('');
+  const held = useRef<HeldInput>(null);
+  const hardwareMode = useRef(false);
+  hardwareMode.current = state?.demo === false;
   const previousMap = useRef('');
   const editingSettings = useRef(false);
   const resolutionRequest = useRef<AbortController | null>(null);
@@ -143,12 +148,18 @@ export function App() {
         socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events`);
         socket.onopen = () => setConnected(true);
         socket.onmessage = event => {
-          const message = JSON.parse(event.data) as { type: string; state?: State };
+          const message = JSON.parse(event.data) as { type: string; state?: State; session_id?: string; nonce?: string };
+          if (message.type === 'lease') {
+            session.current = message.session_id ?? '';
+            if (!document.hidden && document.hasFocus()) socket?.send(JSON.stringify({ nonce: message.nonce, input: held.current }));
+            return;
+          }
           if (message.type === 'telemetry' && message.state) {
             setState(message.state);
           } else void reload().catch(failure => { setError(failure.message); });
         };
         socket.onclose = () => {
+          session.current = ''; held.current = null;
           if (!disposed) { resolutionRequest.current?.abort(); setResolution(null); setConnected(false); setDrawing(false); setDraft([]); timer = setTimeout(connect, 1500); }
         };
         socket.onerror = () => socket?.close();
@@ -160,6 +171,16 @@ export function App() {
     return () => { disposed = true; clearTimeout(timer); socket?.close(); ++generation.current; };
   }, [reload]);
 
+  useEffect(() => {
+    const release = () => {
+      held.current = null;
+      if (hardwareMode.current) void api('/api/stop', { method: 'POST', keepalive: true }).catch(() => {});
+    };
+    const visibility = () => { if (document.hidden) release(); };
+    window.addEventListener('blur', release); window.addEventListener('pagehide', release);
+    document.addEventListener('visibilitychange', visibility);
+    return () => { window.removeEventListener('blur', release); window.removeEventListener('pagehide', release); document.removeEventListener('visibilitychange', visibility); };
+  }, []);
   useEffect(() => {
     if (!canEdit) { resolutionRequest.current?.abort(); setDrawing(false); setDraft([]); }
   }, [canEdit]);
@@ -227,13 +248,23 @@ export function App() {
     setBusy(true); setError('');
     try {
       const result = await api<{ zones: Zones }>('/api/commands', { method: 'POST',
-        body: JSON.stringify({ id: crypto.randomUUID(), type, map_id: packet.info.map_id, expected_revision: zones.revision,
+        body: JSON.stringify({ id: commandId(), type, session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision,
           ...(type === 'zone_add' ? { corners: rectangleCorners(draft[0], draft[1], packet.info.display.origin) } : { zone_id: selected }) }) });
       setZones(result.zones); setDraft([]); setDrawing(false); setSelected(null);
     } catch (failure) { setError((failure as Error).message); await reload().catch(() => {}); }
     finally { setBusy(false); }
   }
+  async function hardwareCommand(type: string, values: Record<string, unknown> = {}) {
+    if (!packet || !zones || !session.current) return;
+    setError('');
+    try {
+      await api('/api/commands', { method: 'POST', body: JSON.stringify({ ...values,
+        type, id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision }) });
+      if (type === 'teach' || type === 'transport_record') await reload();
+    } catch (failure) { held.current = null; setError((failure as Error).message); }
+  }
   async function stop() {
+    held.current = null;
     resolutionRequest.current?.abort(); setResolution(null);
     setDrawing(false); setDraft([]); setLayoutEditing(false);
     try { await api('/api/stop', { method: 'POST' }); setError(''); await reload(); }
@@ -244,7 +275,7 @@ export function App() {
     setBusy(true); setError(''); setDrawing(false); setDraft([]); setLayoutEditing(false);
     try {
       await api('/api/commands', { method: 'POST',
-        body: JSON.stringify({ id: crypto.randomUUID(), type, map_id: packet.info.map_id,
+        body: JSON.stringify({ id: commandId(), type, session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id,
           frame: packet.info.frame, expected_revision: zones.revision, ...(type === 'navigate' ? { goal } : {}) }) });
       if (type === 'demo_reset') { setGoalText(['', '', '0']); setFocusRobotVersion(v => v + 1); }
     } catch (failure) { setError((failure as Error).message); }
@@ -292,13 +323,13 @@ export function App() {
     setBusy(true); setError('');
     try {
       const result = await api<PhotoIndex & { added_id: string }>('/api/photos/capture', { method: 'POST',
-        body: JSON.stringify({ camera_id, map_id: packet.info.map_id, expected_revision: photos.revision }) });
+        body: JSON.stringify({ id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, camera_id, map_id: packet.info.map_id, expected_revision: photos.revision, zone_revision: zones?.revision }) });
       photoChanged(result, result.added_id);
     } catch (failure) { setError((failure as Error).message); await reload().catch(() => {}); }
     finally { setBusy(false); }
   }
   function storedCamera(camera: 'front' | 'arm') {
-    const matches = selectedPhoto && (selectedPhoto.kind === 'reference' ? camera === 'front' : selectedPhoto.camera_id === camera);
+    const matches = (state?.demo || state?.phase === 'idle') && selectedPhoto && (selectedPhoto.kind === 'reference' ? camera === 'front' : selectedPhoto.camera_id === camera);
     const live = state?.cameras?.[camera];
     return matches ? <StoredPhoto key={selectedPhoto.id} photo={selectedPhoto} onEdit={() => setPhotoMode('edit')} /> : live ?
       <div className="stored-photo"><img src={live.url} alt={`Live ${camera} camera`} /></div> :
@@ -373,9 +404,9 @@ export function App() {
           <Dropdown.Item className="menu-item" disabled={!canLayout} onSelect={resetLayout}><RotateCcw size={16} /> Restore default layout</Dropdown.Item>
         </Dropdown.Content></Dropdown.Portal>
       </Dropdown.Root>
-      <strong className="brand">MYAGV CONTROL</strong><span className="demo-tag">{state?.demo === false ? 'HARDWARE · READ ONLY' : 'DEMO'}</span>
+      <strong className="brand">MYAGV CONTROL</strong><span className="demo-tag">{state?.demo === false ? 'HARDWARE' : 'DEMO'}</span>
       <span className={`connection ${connected ? 'online' : ''}`}>{connected ? 'Connected' : 'Offline'}</span>
-      <Button variant="danger" onClick={() => void stop()} className="stop" disabled={state?.demo === false} title={state?.demo === false ? 'Hardware stop unavailable; use physical stop' : undefined}>STOP</Button>
+      <Button variant="danger" onClick={() => void stop()} className="stop">STOP</Button>
     </header>
     {error && <div role="alert" className="error-bar"><span>{error}</span><Button variant="ghost" className="icon" aria-label="Dismiss error" onClick={() => setError('')}><X size={15} /></Button></div>}
     <div className="workspace" ref={workspaceHost}>
@@ -390,9 +421,9 @@ export function App() {
             <Button variant="ghost" className="icon" aria-label="Fit map" onClick={() => setFitVersion(v => v + 1)}><Crosshair size={16} /></Button>
             <Dropdown.Root><Dropdown.Trigger asChild><Button variant="ghost" className="icon" aria-label="Map actions"><MoreHorizontal size={18} /></Button></Dropdown.Trigger>
               <Dropdown.Portal><Dropdown.Content className="menu" align="end" sideOffset={5}>
-                <Dropdown.Item className="menu-item" disabled={!state?.demo || !canEdit || !packet || busy} onSelect={startDrawing}><Square size={15} /> No-go zone</Dropdown.Item>
+                <Dropdown.Item className="menu-item" disabled={!canEdit || !packet || busy} onSelect={startDrawing}><Square size={15} /> No-go zone</Dropdown.Item>
                 <Dropdown.Item className="menu-item" disabled={!navigation} onSelect={() => setFocusRobotVersion(v => v + 1)}><Crosshair size={15} /> Fit robot</Dropdown.Item>
-                <Dropdown.CheckboxItem className="menu-item" disabled={!state?.demo} checked={showCostmap} onCheckedChange={setShowCostmap}><Square size={15} /> Global costmap {showCostmap ? '✓' : ''}</Dropdown.CheckboxItem>
+                <Dropdown.CheckboxItem className="menu-item" disabled={!costmapReady} checked={showCostmap} onCheckedChange={setShowCostmap}><Square size={15} /> Global costmap {showCostmap ? '✓' : ''}</Dropdown.CheckboxItem>
                 <Dropdown.Item className="menu-item" disabled={!state?.demo || !canEdit || busy} onSelect={() => void simulationCommand('demo_reset')}><RotateCcw size={15} /> Reset demo pose</Dropdown.Item>
                 <Dropdown.Item className="menu-item" onSelect={() => setSettingsOpen(true)}><Settings2 size={15} /> Settings</Dropdown.Item>
               </Dropdown.Content></Dropdown.Portal>
@@ -401,7 +432,7 @@ export function App() {
         </div>
         {packet ? <MapView info={packet.info} image={packet.image} zones={zones?.zones ?? []} selected={selected}
           drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
-          navigation={navigation} goal={goal} connected={connected} showCostmap={Boolean(state?.demo) && showCostmap} focusRobotVersion={focusRobotVersion}
+          navigation={navigation} goal={goal} connected={connected} showCostmap={showCostmap} focusRobotVersion={focusRobotVersion}
           photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto}
           onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
@@ -413,8 +444,8 @@ export function App() {
           </div>
         </details>}
       </>)}
-      {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Demo capture front observation" title="Demo capture · synthetic frame" disabled={!state?.demo || !canEdit || busy || !photos} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
-      {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Demo capture arm observation" title="Demo capture · synthetic frame" disabled={!state?.demo || !canEdit || busy || !photos} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
+      {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Capture front observation" title="Capture front observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
+      {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Capture arm observation" title="Capture arm observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
       {panel('operate', <div className="operate-body">
         <label className="subheading" htmlFor="item-request">REQUEST</label>
         <form className="request-row" onSubmit={event => { event.preventDefault(); void resolveRequest(); }}>
@@ -457,15 +488,18 @@ export function App() {
           disabled={!canLayout || busy} onChange={e => setGoalText(old => old.map((v, n) => n === i ? e.target.value : v))} /></label>)}</div>
         <div className="action-line"><Button variant="default" className="button-simulate" disabled={!state?.demo || !canEdit || !goalValid || !costmapReady || busy}
           onClick={() => void simulationCommand('navigate')}><Play size={16} /> Simulate</Button>
-          <Button variant="default" disabled><Crosshair size={16} /> Go</Button><Button variant="default" disabled><Hand size={16} /> Fetch</Button>
-          <Button disabled={!state?.demo || !connected || state?.phase === 'idle' || busy} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
+          <Button variant="default" disabled={state?.demo || !canEdit || !goalValid || !state?.hardware?.navigation_ready || busy} onClick={() => void simulationCommand('navigate')}><Crosshair size={16} /> Go</Button>
+          <Button variant="default" disabled={state?.demo || !canEdit || !state?.hardware?.navigation_ready || selectedItem?.station_status !== 'ready' || busy}
+            onClick={() => void hardwareCommand('fetch', { item_id: selectedItemId, index_revision: photos?.revision })}><Hand size={16} /> Fetch</Button>
+          <Button disabled={!connected || state?.phase === 'idle'} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
         <div className="section-divider" />
         <span className="subheading">NO-GO ZONES</span>
         <div className="zone-list">{zones?.zones.length ? zones.zones.map((zone, i) => <button key={zone.id}
           className={`zone-row ${selected === zone.id ? 'selected' : ''}`} onClick={() => { setSelected(zone.id); setDrawing(false); setDraft([]); }}>
           <Square size={14} /> Zone {i + 1}<span className="row-end">{selected === zone.id ? 'Selected' : ''}</span>
         </button>) : <span className="muted">None</span>}</div>
-        <span className="muted enforcement">{state?.demo === false ? 'Hardware control unavailable' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
+        <span className="muted enforcement">{state?.demo === false ? costmapReady ? 'ROS global + local no-go applied' : 'ROS no-go enforcement pending' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
+        {state?.demo === false && <HardwareControls state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
       </div>)}
     </main>

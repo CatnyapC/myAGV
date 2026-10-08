@@ -112,7 +112,7 @@ class PhotoIndex:
                 if photo.get('source') != 'phone' or any(k in photo for k in ('base_pose', 'map_id', 'captured_at_s', 'frame')):
                     raise ValueError('Reference photos cannot claim map observations')
             elif photo['kind'] == 'observation':
-                if photo.get('source') != 'simulation' or photo.get('camera_id') not in ('front', 'arm') or not all(isinstance(photo.get(k), str) and photo[k] for k in ('map_id', 'frame')):
+                if photo.get('source') not in ('simulation', 'ros') or photo.get('camera_id') not in ('front', 'arm') or not all(isinstance(photo.get(k), str) and photo[k] for k in ('map_id', 'frame')):
                     raise ValueError('Invalid observation source')
                 validate_pose(photo['base_pose'])
                 if type(photo.get('captured_at_s')) not in (int, float) or not math.isfinite(photo['captured_at_s']) or photo['captured_at_s'] <= 0 or type(photo.get('map_revision')) is not int or photo['map_revision'] < 0:

@@ -127,6 +127,8 @@ class PickupAlignment:
         progress_at = time.monotonic()
         try:
             while time.monotonic() < deadline:
+                if getattr(nav, 'guard', None):
+                    nav.guard(target)
                 if nav.ros.is_shutdown():
                     raise RuntimeError("ROS shutdown")
                 actual = nav.get_pose(timeout=0.1)

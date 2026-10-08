@@ -1,0 +1,81 @@
+import { useState, type PointerEvent } from 'react';
+import { Button } from './ui';
+import type { Origin } from './mapGeometry';
+
+export type HardwareState = {
+  stop_epoch: number; phase: string; status: string; task_id?: string; arm_available: boolean; arm_homed: boolean;
+  arm_angles?: number[]; arm_error?: string; navigation_ready: boolean; motion_available: boolean;
+  localized: boolean; driver_watchdog: boolean; exclusive: boolean; sensors_ready: boolean;
+  transport_angles?: number[]; clearance_m: number; zones_ready: boolean; stop_confirmed: boolean;
+};
+export type HeldInput = { mode: string; key: string } | null;
+
+type Props = { state?: HardwareState; connected: boolean; goal: Origin | null;
+  command: (type: string, values?: Record<string, unknown>) => Promise<void>;
+  hold: (input: HeldInput) => void; stop: () => void };
+
+export function HardwareControls({ state, connected, goal, command, hold, stop }: Props) {
+  const [mode, setMode] = useState('BASE');
+  const [name, setName] = useState('');
+  const [radius, setRadius] = useState('0.25');
+  const [measured, setMeasured] = useState(false);
+  const [survey, setSurvey] = useState<Origin[]>([]);
+  const idle = connected && state?.phase === 'idle';
+  const review = state?.phase === 'review_grasp';
+  const holding = state?.phase === 'verify_grasp';
+  const move = (event: PointerEvent<HTMLButtonElement>, key: string) => {
+    event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId);
+    const input = { mode, key }; hold(input);
+    void command('manual', { mode, input });
+  };
+  const release = () => { hold(null); stop(); };
+  const button = (key: string, label: string) => <Button key={key} disabled={!connected || !state?.motion_available || (!idle && state.phase !== 'manual') || (mode === 'ARM' && !state.arm_homed)}
+    style={{ touchAction: 'none' }} onPointerDown={e => move(e, key)} onPointerUp={release}
+    onPointerCancel={release} onLostPointerCapture={() => hold(null)}
+    onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') e.preventDefault(); }} aria-label={`Hold ${label}`}>{label}</Button>;
+  return <details className="hardware-controls" open>
+    <summary>Hardware controls</summary>
+    <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Localization ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
+    <div className="action-line">
+      <Button disabled={!idle || !goal} onClick={() => void command('initial_pose', { goal })}>Set pose from goal</Button>
+      <Button disabled={!idle} onClick={() => void command('confirm_localization')}>Confirm localization</Button>
+    </div>
+    <span className="muted">Confirm only after matching robot heading and position against the map.</span>
+    <div className="action-line">
+      <Button disabled={!idle || state?.arm_available} onClick={() => void command('connect_arm')}>Connect P340</Button>
+      <Button disabled={!idle || !state?.arm_available} onClick={() => { if (window.confirm('Home the real arm now? Clear its full travel area.')) void command('home'); }}>Home arm</Button>
+      <Button disabled={!idle || !state?.arm_available} onClick={() => { if (window.confirm('Confirm the arm has already completed homing since power-on?')) void command('confirm_homed'); }}>Already homed</Button>
+    </div>
+    <span className="muted">P340 {state?.arm_angles?.map(v => `${v.toFixed(1)}°`).join(' / ') || state?.arm_error || 'Feedback unavailable'}</span>
+    <label className="setting-row">Manual mode<select value={mode} disabled={!idle} onChange={e => { hold(null); setMode(e.target.value); }}>
+      {['BASE', 'ARM', 'PICKUP'].map(v => <option key={v}>{v}</option>)}
+    </select></label>
+    <span className="muted">Hold with pointer to move. Release to stop. Manual base driving bypasses no-go planning; watch the robot.</span>
+    <div className="action-line">{mode !== 'ARM' && [['forward','Forward'],['back','Back'],['ccw','↶'],['cw','↷'], ...(mode === 'BASE' ? [['left','Left'],['right','Right']] : [])].map(([key,label]) => button(key,label))}</div>
+    <div className="action-line">{mode !== 'BASE' && ['X+','X-', ...(mode === 'ARM' ? ['Y+','Y-'] : []),'Z+','Z-'].map(key => button(key,key))}</div>
+    <div className="action-line">
+      <Button disabled={!idle || !state?.arm_homed} onClick={() => void command('gripper', { value: 100 })}>Open gripper</Button>
+      <Button disabled={!idle || !state?.arm_homed} onClick={() => void command('gripper', { value: 0 })}>Close gripper</Button>
+    </div>
+    <label className="setting-row">Folded clearance radius (m)<input type="number" min=".15" max="1" step=".01" value={radius} disabled={!idle} onChange={e => { setRadius(e.target.value); setMeasured(false); }} /></label>
+    <label><input type="checkbox" checked={measured} disabled={!idle} onChange={e => setMeasured(e.target.checked)} /> Arm folded, J1=0; measured radius encloses base, arm and payload</label>
+    <Button disabled={!idle || !state?.arm_homed || !measured} onClick={() => void command('transport_record', { clearance_m: Number(radius), measured })}>Record transport pose</Button>
+    <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before automatic travel'}</span>
+    <label className="setting-row">New station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>
+    <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => void command('teach', { name: name.trim() })}>Teach current base + arm pose</Button>
+    <span className="muted">Use a new station name. J1 must be zero. Link the station to an item in its photo editor.</span>
+    {(review || holding) && <div role="alert">
+      <strong>{review ? 'Inspect live arm camera; align before grasp' : 'Inspect live arm camera; verify object held'}</strong>
+      {review && <div className="action-line">{['X+', 'X-', 'Z+', 'Z-'].map(key => <Button key={key} onClick={() => void command('align_step', { axis: key[0], direction: key[1] === '+' ? 1 : -1 })}>{key} 1 mm</Button>)}</div>}
+      <Button disabled={!connected} onClick={() => void command('confirm', { stage: state?.phase, task_id: state?.task_id })}>{review ? 'Confirm grasp alignment' : 'Confirm possession and return'}</Button>
+      <Button variant="danger" onClick={stop}>Abort / STOP</Button>
+    </div>}
+    <details><summary>Survey · {survey.length}/20 viewing poses</summary>
+      <div className="action-line">
+        <Button disabled={!idle || !goal || survey.length >= 20} onClick={() => goal && setSurvey(old => [...old, goal])}>Add goal</Button>
+        <Button disabled={!idle} onClick={() => setSurvey([])}>Clear queue</Button>
+        <Button disabled={!idle || !state?.navigation_ready || !survey.length} onClick={() => void command('survey', { goals: survey })}>Run survey</Button>
+      </div><span className="muted">{survey.map((p,i) => `${i+1}: (${p.x_m.toFixed(2)}, ${p.y_m.toFixed(2)})`).join(' · ')}</span>
+    </details>
+  </details>;
+}
