@@ -41,11 +41,11 @@ def validate_angles(angles):
 
 
 def pickup_angles(angles):
-    """Accept measured home-axis tolerance; command the pickup axis at zero."""
+    """The arm mounts facing left; J1=90 faces the chassis front."""
     angles = validate_angles(angles)
-    if abs(angles[0]) > 1:
-        raise ValueError("Side pickup needs J1 within 1 degree of 0; home and re-teach this pose")
-    angles[0] = 0.0
+    if abs(angles[0] - 90) > 1:
+        raise ValueError("Front pickup needs J1 within 1 degree of 90; re-teach this pose")
+    angles[0] = 90.0
     return angles
 
 

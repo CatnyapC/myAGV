@@ -49,12 +49,12 @@ Use the actual P340 serial port; it may differ from the example:
 ```
 
 - In ARM mode, press `h` to home. If already homed without power loss, use `--arm-homed`.
-- Park with the item on the left. Press `v` for PICKUP teaching. Home with `h` if needed: J1 must be near zero.
+- Park with the item in front. Home in ARM mode if needed, then position J1 at 90 degrees before entering PICKUP teaching with `v`.
 - Use `w/s` to move the base forward/backward at 3 cm/s, `a/d` to extend/retract the arm, and `k/j` for height. `q/e` turns the base slowly.
-- Align the item with the arm base along the vehicle's forward/back axis. Arm reach handles lateral distance; height handles vertical distance.
+- Align the item in front of the arm. Arm reach handles forward distance; height handles vertical distance.
 - Press `p`: stop, wait for standstill, read the map pose and all arm joint angles, and display the measurements.
 - Enter an item name, such as `red_cup`, to save. The same name overwrites that item; an empty name cancels.
-- Recording works in all modes, but named pickup records require J1 within 1 degree of zero. Missing localization or invalid arm feedback prevents saving.
+- Recording works in all modes, but named pickup records require J1 within 1 degree of 90. Missing localization or invalid arm feedback prevents saving.
 
 Records go into `stations.json` beside the scripts. The initial file is empty so example coordinates cannot be used accidentally. Manual edits use the same format:
 
@@ -62,17 +62,17 @@ Records go into `stations.json` beside the scripts. The initial file is empty so
 {
   "red_cup": {
     "base": {"x_m": 1.2, "y_m": 0.5, "yaw_deg": 90.0},
-    "arm_angles_deg": [0.0, 30.0, 20.0]
+    "arm_angles_deg": [90.0, 30.0, 20.0]
   }
 }
 ```
 
 These numbers only illustrate the format. Base coordinates use meters in the map frame; heading uses degrees (-180..180). Arm joint angles use degrees. Include the fourth value when a fourth axis is present; all poses must have the same joint count.
-Re-teach old stations with nonzero J1; changing only that JSON number is not a valid conversion. Record again after changing maps. The file stores items only, with no dropoff or startup pose.
+Re-teach old stations that don't face forward at J1=90; changing only that JSON number is not a valid conversion. Record again after changing maps. The file stores items only, with no dropoff or startup pose.
 
 ## 3. Set one transport pose
 
-Move the empty arm into a folded pose suitable for driving, keeping J1 at zero. Re-measure any old transport pose that used nonzero J1. Press `p` to see `arm_angles_deg`, then leave the name blank to avoid creating a station.
+Move the empty arm into a measured folded pose suitable for driving. Transport may use any valid J1. Press `p` to see `arm_angles_deg`, then leave the name blank to avoid creating a station.
 Set `TRANSPORT_ANGLES` near the top of `fetch_demo.py` to these measured angles. This is one shared transport pose; the default `None` prevents execution.
 
 Alternatively, pass measured values using `--transport-angles J1 J2 J3 [J4]`. No extra configuration file is needed.
@@ -89,13 +89,13 @@ Use teleop to park at the desired placement location and set the arm to the plac
 Before any movement, the script captures this run's base and arm poses:
 
 ```text
-Capture startup poses -> transport pose -> travel to staging -> align beside item -> open gripper
+Capture startup poses -> transport pose -> travel to staging -> align in front of item -> open gripper
 -> grasp pose -> close gripper -> transport pose -> return to startup base pose
 -> restore startup arm pose -> open gripper
 ```
 
 The script does not home automatically. Each run captures its own placement position and arm pose without writing them into JSON.
-Pickup and transport commands use J1=0. The startup placement pose can use any valid J1 and is restored unchanged.
+Pickup commands use J1=90. Transport and startup placement poses may use any valid J1. The startup pose is restored unchanged. Dual-camera LLM calibration is part of WebUI Fetch; this CLI uses the taught grasp pose directly.
 Options: `--arm-speed` (default 30), `--grip-speed` (500), `--grip-wait` (1.5 seconds), `--clamp` (0), `--release` (100), and `--nav-timeout` (120 seconds per leg).
 
 ## Checks and limits

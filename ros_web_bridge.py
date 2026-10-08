@@ -9,6 +9,7 @@ import time
 import uuid
 
 from navigation import wait_arm
+from fetch_calibration import vision_image
 from robot_control import Control
 from robot_ros import RobotROS
 from robot_safety import fresh
@@ -32,7 +33,7 @@ def main():
         p, q = transform.transform.translation, transform.transform.rotation
         return dict(x_m=p.x, y_m=p.y, yaw_rad=math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z)))
 
-    def capture(camera_id, persist=True, update_key=None):
+    def capture(camera_id, persist=True, update_key=None, vision=False):
         if camera_id not in ('front', 'arm') or not robot.grid or not control.localized:
             raise ValueError('Camera and confirmed localization required')
         robot.nav.wait_stopped()
@@ -57,6 +58,8 @@ def main():
             if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
                 raise RuntimeError('Arm moved during acquisition')
             metadata = dict(metadata, arm_angles_deg=after)
+        if vision:
+            return dict(image=vision_image(frame, cv2))
         if not persist:
             return {}
         if update_key is not None:

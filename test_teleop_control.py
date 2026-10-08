@@ -94,7 +94,8 @@ class TeleopTest(unittest.TestCase):
         c = self.controller
         c.handle("v", 0)
         self.assertEqual(c.mode, "PICKUP")
-        for key, expected in (("a", (1, 1, 30)), ("d", (1, 0, 30)),
+        self.arm.get_coords_info.return_value = [0, 180, 80]
+        for key, expected in (("a", (2, 1, 30)), ("d", (2, 0, 30)),
                               ("k", (3, 0, 30)), ("j", (3, 1, 30))):
             c.handle(key, 1)
             self.arm.set_jog_coord.assert_called_with(*expected)
@@ -118,13 +119,13 @@ class TeleopTest(unittest.TestCase):
         self.arm.get_coords_info.return_value = [180, 20, 80]
         with patch('teleop_control.print') as output:
             c.handle("a", 1)
-            output.assert_any_call("Pickup arm must face left at J1=0; home before teaching")
+            output.assert_any_call("Pickup arm must face forward at J1=90; position before teaching")
         self.arm.set_jog_coord.assert_not_called()
-        self.arm.get_coords_info.return_value = [4, 0, 80]
+        self.arm.get_coords_info.return_value = [0, 4, 80]
         c.handle("d", 2)
         self.arm.set_jog_coord.assert_not_called()
         c.handle("a", 3)
-        self.arm.set_jog_coord.assert_called_once_with(1, 1, 30)
+        self.arm.set_jog_coord.assert_called_once_with(2, 1, 30)
 
     def test_unhomed_and_outward_limit_motion_refused(self):
         c = self.controller

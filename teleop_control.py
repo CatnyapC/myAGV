@@ -63,11 +63,11 @@ class Controller:
         axis, sign = move
         low, high = arm_keys.LIMITS[axis]
         if self.mode == "PICKUP":
-            # Native X is radial reach when J1=0. Never jog native Y here.
-            if values[0] <= 0 or abs(math.degrees(math.atan2(values[1], values[0]))) > 1:
-                print("Pickup arm must face left at J1=0; home before teaching")
+            # Native Y is forward reach when J1=90.
+            if values[1] <= 0 or abs(math.degrees(math.atan2(values[1], values[0])) - 90) > 1:
+                print("Pickup arm must face forward at J1=90; position before teaching")
                 return False
-            if axis == "X":
+            if axis == "Y":
                 low = 0  # Do not retract through the arm's rotation axis.
         value = values["XYZ".index(axis)]
         return value < high - 5 if sign > 0 else value > low + 5
@@ -133,7 +133,7 @@ class Controller:
                 return True
             move = arm_keys.key_move(key)
             if self.mode == "PICKUP":
-                move = {"a": ("X", 1), "d": ("X", -1),
+                move = {"a": ("Y", 1), "d": ("Y", -1),
                         "k": ("Z", 1), "j": ("Z", -1)}.get(key)
                 if move is None:
                     self.stop()

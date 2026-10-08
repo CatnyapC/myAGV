@@ -66,14 +66,15 @@ must be taught again. Restarting only the API or bridge keeps the SLAM session.
    homed** is only for an arm homed since its last power-on. A process restart
    clears this confirmation.
 4. In ARM/PICKUP mode, hold the manual buttons to position the arm. Motion uses
-   bounded 1 mm targets. PICKUP allows X/Z adjustment with J1 near zero.
+   bounded 1 mm targets. PICKUP uses logical X forward/back, Y right/left and Z
+   height with the arm facing forward at J1=90 degrees.
 5. Fold the arm and measure a circular clearance radius covering the
    base, folded arm and carried object. Check the measurement box and **Record
    transport pose**. This updates both ROS planner footprints. No transport pose
    is guessed. Fetch and survey remain disabled until this is done.
-   Transport keeps the measured joint angles, including J1 rotation. Only side
-   pickup station poses require J1 near zero.
-6. Teach a named pickup station at its real base/arm pose (J1=0).
+   Transport keeps the measured joint angles, including J1 rotation. Front
+   pickup station poses require J1 near 90 degrees.
+6. Teach a named pickup station at its real base/arm pose (J1=90).
    Existing names require overwrite confirmation; changed station links must be
    reconfirmed. Capture a photo, edit its item, and explicitly associate that station.
 
@@ -95,11 +96,53 @@ obstacles. The original map is preserved. Recovery rotations are disabled.
 **Fetch** requires an explicitly selected item linked to an unchanged taught
 station on the current map. It captures the startup base/arm poses, folds,
 approaches the station, opens the gripper and reaches the taught arm pose.
-It then pauses for live-camera alignment review; bounded X/Z adjustments are
+With the configured LLM key, it aligns using fresh front and arm camera images,
+then pauses for live-camera alignment review; bounded X/Y/Z adjustments are
 available. After confirmation it closes, folds, and pauses again for the user
 to confirm possession. Only then does it return and restore the startup pose.
-There is no automatic vision calibration or force-based grasp detection.
+There is no force-based grasp detection. Without an LLM key, alignment stays manual.
 A five-minute review timeout cancels the task.
+
+### Dual-camera Fetch calibration
+
+The arm base mounts facing chassis left; J1=90 faces forward. The arm camera
+mounts 90 degrees clockwise, with the target near the bottom of its image.
+Its image X controls logical arm X (chassis forward/back). Front camera image X
+controls logical arm Y (chassis right/left). A target right of the alignment point
+commands positive motion on either logical axis. The SDK receives native +Y for
+logical X+, and native -X for logical Y+; images retain their mounted orientation.
+
+Each round sends two JPEGs (longest side at most 480 pixels, quality 60) to the
+configured DeepSeek Flash model through OpenRouter. Thinking is disabled and
+output is capped at 64 tokens: `{"front_x":0.5,"arm_x":0.5}`. Positions are
+normalized to image width; absent/ambiguous targets use `null` and stop Fetch.
+Only these fields are accepted. The controller converts image errors into bounded
+arm targets; the model cannot close the gripper, drive the base or change Z.
+It recaptures after each correction and stops on malformed output, timeout,
+expired control lease, changed map/zones, missing sensors or non-convergence.
+
+Tune the optional `fetch_calibration` object in `web_runtime/robot_config.json`
+while the bridge is stopped, then restart `myagv-bridge`. Defaults below use a
+conservative 20 mm per full image width; they are starting gains, not measured
+camera geometry. Set target X to the actual gripper alignment point in each view.
+Transport-pose recording preserves these settings. Old J1=0 stations must be
+physically re-taught at J1=90 and their photo associations reconfirmed.
+
+```json
+"fetch_calibration": {
+  "front_target_x": 0.5,
+  "arm_target_x": 0.5,
+  "front_mm_per_width": 20,
+  "arm_mm_per_width": 20,
+  "tolerance": 0.025,
+  "max_step_mm": 2,
+  "max_total_mm": 20
+}
+```
+
+Defaults permit at most eight vision rounds and 20 mm combined travel. Each
+correction is divided into absolute waypoints no larger than 1 mm, with measured
+feedback. Grasp and possession still require the existing operator confirmations.
 
 **Map updates** repeatedly refresh observations in the current reachable area.
 Use **Preview update points**, then **Start updating**. **Pause updating** retains

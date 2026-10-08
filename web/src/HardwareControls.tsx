@@ -64,7 +64,8 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     </select></label>
     <span className="muted">Hold with pointer to move. Release to stop. Manual base driving bypasses no-go planning; watch the robot.</span>
     <div className="action-line">{mode !== 'ARM' && [['forward','Forward'],['back','Back'],['ccw','↶'],['cw','↷'], ...(mode === 'BASE' ? [['left','Left'],['right','Right']] : [])].map(([key,label]) => button(key,label))}</div>
-    <div className="action-line">{mode !== 'BASE' && ['X+','X-', ...(mode === 'ARM' ? ['Y+','Y-'] : []),'Z+','Z-'].map(key => button(key,key))}</div>
+    <div className="action-line">{mode !== 'BASE' && ['X+','X-','Y+','Y-','Z+','Z-'].map(key => button(key,key))}</div>
+    {mode === 'PICKUP' && <span className="muted">Face forward at J1=90°: X forward/back, Y left/right, Z up/down.</span>}
     <div className="action-line">
       <Button disabled={!idle || !state?.arm_homed} onClick={() => void command('gripper', { value: 100 })}>Open gripper</Button>
       <Button disabled={!idle || !state?.arm_homed} onClick={() => void command('gripper', { value: 0 })}>Close gripper</Button>
@@ -80,10 +81,10 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
       if (previous) setConfirmation({ type: 'teach', values, message: 'Overwrite this station with the current base and arm pose? Linked items will need reconfirmation.' });
       else void command('teach', values);
     }}>Teach current base + arm pose</Button>
-    <span className="muted">Existing names require overwrite confirmation. J1 must be zero. Link the station to an item in its photo editor.</span>
+    <span className="muted">Existing names require overwrite confirmation. J1 must be 90° (forward). Link the station to an item in its photo editor.</span>
     {(review || holding) && <div role="alert">
       <strong>{review ? 'Inspect live arm camera; align before grasp' : 'Inspect live arm camera; verify object held'}</strong>
-      {review && <div className="action-line">{['X+', 'X-', 'Z+', 'Z-'].map(key => <Button key={key} onClick={() => void command('align_step', { axis: key[0], direction: key[1] === '+' ? 1 : -1 })}>{key} 1 mm</Button>)}</div>}
+      {review && <div className="action-line">{['X+', 'X-', 'Y+', 'Y-', 'Z+', 'Z-'].map(key => <Button key={key} onClick={() => void command('align_step', { axis: key[0], direction: key[1] === '+' ? 1 : -1 })}>{key} 1 mm</Button>)}</div>}
       <Button disabled={!connected} onClick={() => void command('confirm', { stage: state?.phase, task_id: state?.task_id })}>{review ? 'Confirm grasp alignment' : 'Confirm possession and return'}</Button>
       <Button variant="danger" onClick={stop}>Abort / STOP</Button>
     </div>}

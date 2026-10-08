@@ -15,7 +15,7 @@ from teleop_control import Controller, parse_args, record_station
 
 
 POSE = {"x_m": 1.2, "y_m": 0.5, "yaw_deg": 90}
-STATION = {"base": POSE, "arm_angles_deg": [0, 20, 30]}
+STATION = {"base": POSE, "arm_angles_deg": [90, 20, 30]}
 
 
 class FakeArm:
@@ -48,7 +48,7 @@ class StationsTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch("navigation.time.sleep"):
             path = Path(folder) / "stations.json"
             args = parse_args(["--p340-port", "unused", "--arm-homed", "--stations", str(path)])
-            arm = FakeArm([], [0, 20, 95, 40])
+            arm = FakeArm([], [90, 20, 95, 40])
             c = Controller(Mock(), arm, {"i": (1, 0, 0, 0)}, args)
             nav = Mock()
             nav.get_pose.return_value = dict(POSE)
@@ -91,7 +91,7 @@ class StationsTest(unittest.TestCase):
                 navigation.save_station("cup", old, path)
             navigation.save_station("cup", STATION, path)
             self.assertEqual(navigation.load_stations(path)["other"], old)
-            self.assertEqual(navigation.pickup_angles([0.5, 20, 30]), [0, 20, 30])
+            self.assertEqual(navigation.pickup_angles([90.5, 20, 30]), [90, 20, 30])
 
     def test_record_checks_map_before_arm_and_reports_progress(self):
         args = parse_args(["--p340-port", "unused", "--arm-homed"])
@@ -382,9 +382,9 @@ class FetchTest(unittest.TestCase):
             with patch("sys.stderr"), self.assertRaises(SystemExit):
                 fetch_demo.parse_args(["cup", "--p340-port", "unused"] + extra)
 
-    def test_nonzero_pickup_or_transport_axis_refused_before_motion(self):
+    def test_side_pickup_or_invalid_transport_refused_before_motion(self):
         for station, transport in ((dict(STATION, arm_angles_deg=[75, 20, 30]), [0, 10, 10]),
-                                   (STATION, [75, 10, 10])):
+                                   (STATION, [200, 10, 10])):
             nav, arm = Mock(), Mock()
             with self.assertRaisesRegex(ValueError, "J1"):
                 fetch_demo.fetch(nav, arm, station, transport, NS())

@@ -29,7 +29,7 @@ def fake_control():
     c.boot_id, c.stop_epoch = 'boot', 0
     c.directory = Path('unused/ros')
     c.phase, c.status, c.task_id = 'idle', 'Ready', None
-    c.owner, c.deadline, c.input = None, 0, None
+    c.owner, c.deadline, c.input = None, time.monotonic() + .45, None
     c.executing = c.stopping = c.base_enabled = False
     c.stop_pending = None
     c.teleop_pid = None
@@ -204,7 +204,7 @@ class ControlTest(unittest.TestCase):
         c.move_arm = Mock()
         c.review = Mock()
         c.go = Mock()
-        record = dict(base=dict(x_m=0,y_m=0,yaw_deg=0), arm_angles_deg=[0,20,30])
+        record = dict(base=dict(x_m=0,y_m=0,yaw_deg=0), arm_angles_deg=[90,20,30])
         data = dict(station='cup', station_digest=digest_station(record))
         with patch('robot_control.load_stations', return_value={'cup':record}), patch('robot_control.wait_arm', return_value=[0,10,20,0]):
             with self.assertRaises(ValueError): c.fetch(data)

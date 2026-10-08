@@ -5,6 +5,7 @@ from contextlib import suppress
 import json
 import math
 import os
+import time
 from pathlib import Path
 import uuid
 from urllib.parse import urlsplit
@@ -15,7 +16,7 @@ from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_json
 from .hardware import Hardware
-from .resolve import MODEL, MODEL_OPTIONS, describe_photo, load_key, resolve_items, target_preview, validate_llm
+from .resolve import MODEL, MODEL_OPTIONS, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off')
@@ -373,7 +374,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if not item or item['station_status'] != 'ready' or not item['observation_current']:
                         raise ValueError('Confirmed current-map station association required')
                     link = item['station_link']
-                    data = {**data, 'station': link['name'], 'station_digest': link['digest']}
+                    data = {**data, 'station': link['name'], 'station_digest': link['digest'],
+                            'vision_item': dict(name=item['name'], appearance=item['appearance']) if llm_key else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):
                         raise ValueError('Fresh front camera required for map updating')
@@ -506,6 +508,42 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             await socket.close(code=1001, message=b'Service stopping')
 
     async def simulation_tick(application):
+        async def fetch_vision():
+            directory = editor.hardware.directory
+            request_path, response_path = directory / 'fetch_vision_request.json', directory / 'fetch_vision_response.json'
+            handled = None
+
+            def current(value):
+                control = editor.hardware.control
+                return (control.get('phase') == 'calibrating' and control.get('boot_id') == value['boot_id']
+                        and control.get('task_id') == value['task_id'] and control.get('stop_epoch') == value['stop_epoch']
+                        and editor.grid['map_id'] == value['map_id'] and time.time() < value['expires_at_s'])
+
+            while True:
+                await asyncio.sleep(.1)
+                try:
+                    value = await asyncio.to_thread(load_json, request_path, {})
+                    if not value or value['id'] == handled or not current(value):
+                        continue
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+                handled = value['id']
+                try:
+                    if not llm_key:
+                        raise ValueError('OpenRouter key unavailable for fetch calibration')
+                    if resolve_lock.locked():
+                        raise ValueError('Another LLM request is running; retry fetch explicitly')
+                    async with resolve_lock:
+                        result = await locate_pickup(value['images'], value['item'], llm_key)
+                    response = dict(id=handled, result=result)
+                except (web.HTTPException, ValueError, KeyError, TypeError) as exc:
+                    response = dict(id=handled, error=str(exc))
+                try:
+                    if current(value) and await asyncio.to_thread(load_json, request_path, {}) == value:
+                        await asyncio.to_thread(atomic_json, response_path, response)
+                except (OSError, ValueError):
+                    continue  # The hardware may have cancelled and removed the request.
+
         async def refresh_hardware():
             while True:
                 await asyncio.to_thread(editor.hardware.refresh)
@@ -553,13 +591,14 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     await editor.emit('telemetry')
         task = asyncio.create_task(advance())
         refresh_task = asyncio.create_task(refresh_hardware()) if editor.hardware else None
+        vision_task = asyncio.create_task(fetch_vision()) if editor.hardware else None
         try:
             yield
         finally:
-            for pending in (task, refresh_task):
+            for pending in (task, refresh_task, vision_task):
                 if pending:
                     pending.cancel()
-            for pending in (task, refresh_task):
+            for pending in (task, refresh_task, vision_task):
                 if pending:
                     with suppress(asyncio.CancelledError):
                         await pending

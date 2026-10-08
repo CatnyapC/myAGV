@@ -16,6 +16,7 @@ import time
 import uuid
 
 from navigation import arm_deadline, load_stations, pickup_angles, save_station, validate_angles, wait_arm
+from fetch_calibration import alignment_command, calibration_config, pickup_delta
 from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
 from web_backend.map_data import validate_rectangle
@@ -324,30 +325,35 @@ class Control:
             self.arm.set_gripper_state(value, 500)
         time.sleep(1.5)
 
-    def arm_step(self, axis, direction, pickup=False):
+    def arm_step(self, axis, direction, pickup=False, distance=1):
         self.require_arm()
         if axis not in LIMITS or direction not in (-1, 1):
             raise ValueError('Invalid arm step')
+        number(distance, .001, 1, 'Arm step distance')
         with arm_deadline(.4):
             coords = self.arm.get_coords_info()
         if not coords or len(coords) < 3 or not all(type(v) in (float, int) and math.isfinite(v) for v in coords[:3]):
             raise RuntimeError('Arm coordinate feedback unavailable')
         coords = list(coords[:3])
-        if pickup and (axis == 'Y' or coords[0] <= 0 or abs(math.degrees(math.atan2(coords[1], coords[0]))) > 1):
-            raise ValueError('Pickup arm steps require J1=0; only native X/Z are allowed')
-        index = 'XYZ'.index(axis)
-        coords[index] += direction  # Bounded 1 mm target; no endless firmware jog on process death.
-        low, high = LIMITS[axis]
-        if not low + 5 <= coords[index] <= high - 5 or (pickup and coords[0] <= 5):
+        if pickup and (coords[1] <= 5 or abs(math.degrees(math.atan2(coords[1], coords[0])) - 90) > 15):
+            raise ValueError('Pickup arm must face forward near J1=90')
+        delta = pickup_delta(axis, direction * distance) if pickup else tuple(
+            direction * distance if a == axis else 0 for a in 'XYZ')
+        coords = [value + step for value, step in zip(coords, delta)]
+        if any(not LIMITS[a][0] + 5 <= coords[i] <= LIMITS[a][1] - 5 for i, a in enumerate('XYZ')) or (pickup and coords[1] <= 5):
             raise ValueError('Arm workspace limit')
+        if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+            raise Stopped('Arm step cancelled or lease expired')
         with arm_deadline(.4):
             self.arm.set_mode(0)
             self.arm.set_coords(coords, 30)
         end = time.monotonic() + 3
         while time.monotonic() < end:
+            if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+                raise Stopped('Arm step cancelled or lease expired')
             with arm_deadline(.4):
                 actual = self.arm.get_coords_info()
-            if actual and len(actual) >= 3 and all(abs(a-b) <= .5 for a, b in zip(actual, coords)):
+            if actual and len(actual) >= 3 and all(type(a) in (int, float) and math.isfinite(a) and abs(a-b) <= .5 for a, b in zip(actual[:3], coords)):
                 self.read_arm()
                 return
             time.sleep(.05)
@@ -572,7 +578,7 @@ class Control:
             self.robot.set_clearance(radius)
             self.robot.nav.approach_settings = (.3, .03, radius)
             self.robot.nav.aligner = None
-            self.config = dict(transport_angles=angles, clearance_m=radius)
+            self.config = {**self.config, 'transport_angles': angles, 'clearance_m': radius}
             atomic_json(self.config_path, self.config)
         elif kind == 'teach':
             if not self.localized:
@@ -723,12 +729,74 @@ class Control:
         finally:
             update['active'], update['state'] = False, 'interrupted'
 
+    def calibrate_fetch(self, packet, config):
+        config = calibration_config(config)
+        self.phase, self.status = 'calibrating', 'Aligning pickup with front and arm cameras'
+        self.base_enabled = False
+        self.robot.zero()
+        request_path = self.directory / 'fetch_vision_request.json'
+        response_path = self.directory / 'fetch_vision_response.json'
+        travel = 0
+        map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
+
+        def current():
+            if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+                raise Stopped('Fetch alignment cancelled or lease expired')
+            if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
+                raise ValueError('Map or no-go zones changed during fetch alignment')
+            if not self.robot.sensors_ready():
+                raise RuntimeError('Fresh sensors required during fetch alignment')
+
+        try:
+            for _ in range(8):
+                current()
+                self.robot.nav.wait_stopped()
+                images = {camera: self.capture(camera, vision=True)['image'] for camera in ('front', 'arm')}
+                request_id = str(uuid.uuid4())
+                atomic_json(request_path, dict(id=request_id, boot_id=self.boot_id, task_id=self.task_id,
+                    stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + 20,
+                    item=packet['vision_item'], images=images))
+                end = time.monotonic() + 20
+                while True:
+                    current()
+                    try:
+                        response = json.loads(response_path.read_text())
+                    except (OSError, ValueError):
+                        response = {}
+                    if response.get('id') == request_id:
+                        if response.get('error'):
+                            raise RuntimeError(response['error'])
+                        moves = alignment_command(response.get('result'), config)
+                        break
+                    if time.monotonic() >= end:
+                        raise TimeoutError('Fetch vision calibration timed out')
+                    time.sleep(.05)
+                if not any(moves.values()):
+                    return
+                travel += sum(abs(delta) for delta in moves.values())
+                if travel > config['max_total_mm']:
+                    raise ValueError('Fetch alignment travel budget exhausted')
+                for axis, delta in moves.items():
+                    remaining = abs(delta)
+                    while remaining >= .001:
+                        current()
+                        step = min(1, remaining)
+                        self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=step)
+                        remaining -= step
+            raise RuntimeError('Fetch cameras did not converge within 8 rounds')
+        finally:
+            request_path.unlink(missing_ok=True)
+            response_path.unlink(missing_ok=True)
+
     def fetch(self, packet):
         records = load_stations(self.stations_path)
         station = records.get(packet.get('station'))
         if station is None or digest_station(station) != packet.get('station_digest'):
             raise ValueError('Station missing or changed; reconfirm item association')
         target = pickup_angles(station['arm_angles_deg'])
+        calibration = self.config.get('fetch_calibration')
+        if packet.get('vision_item'):
+            calibration = calibration_config(calibration)
         self.travel_guard(station['base'])
         self.require_arm()
         self.robot.nav.wait_stopped()
@@ -749,6 +817,8 @@ class Control:
             self.robot.zero()
         self.grip(100)
         self.move_arm(target)
+        if packet.get('vision_item'):
+            self.calibrate_fetch(packet, calibration)
         self.review('review_grasp')
         self.grip(0)
         self.fold()

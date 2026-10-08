@@ -66,7 +66,7 @@ a `cmd_vel` subscriber. Use `cmd_vel:=/your/topic` if the chassis topic differs.
 | All | `v` | Stop motion, enter/leave PICKUP teaching |
 | PICKUP | `w` / `s` | Base forward/back at 0.03 m/s |
 | PICKUP | `q` / `e` | Base turn left/right at 0.05 rad/s |
-| PICKUP | `a` / `d` | Arm extend/retract along native X, with J1 near zero |
+| PICKUP | `a` / `d` | Arm extend/retract along native Y, with J1 near 90 degrees |
 | PICKUP | `k` / `j`, `h` | Raise/lower, home |
 | BASE | `i` / `,` | Forward / backward |
 | BASE | `j` / `l` | Turn left / right |
@@ -82,13 +82,13 @@ a `cmd_vel` subscriber. Use `cmd_vel:=/your/topic` if the chassis topic differs.
 | All | Ctrl-C | Stop motion and exit; retain gripper position |
 | All | `p` | Stop, read map pose + arm angles, save named item; Enter cancels |
 
-With J1 at zero, the arm extends to the robot's left. PICKUP mode uses only
-native X/Z arm jogging; base forward/back motion handles longitudinal alignment.
-It rejects arm jogging outside the zero-axis plane and prevents retraction
+With J1 at 90 degrees, the arm extends toward the robot's front. PICKUP mode uses
+native Y/Z arm jogging; the arm handles forward reach and height.
+It rejects arm jogging outside the forward-axis plane and prevents retraction
 through the rotation axis. `+/-` changes arm speed in PICKUP mode; base speeds
 stay fixed. Arrows are disabled there. Unrestricted ARM mode retains its existing
 native-axis keys for startup placement poses. Recorded angles remain native.
-Named pickup records require J1 within 1 degree of zero in every mode.
+Named pickup records require J1 within 1 degree of 90 in every mode.
 
 Jogging requires homing. If already homed without power loss, pass `--arm-homed`
 to acknowledge that state. Homing is a blocking SDK operation, not keyboard jog.

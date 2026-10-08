@@ -30,7 +30,7 @@ def grip(arm, value, args):
 
 def fetch(nav, arm, station, transport, args):
     station = validate_station(station)
-    transport = pickup_angles(transport)
+    transport = validate_angles(transport)
     station["arm_angles_deg"] = pickup_angles(station["arm_angles_deg"])
     try:
         nav.wait_stopped()
@@ -87,7 +87,7 @@ def parse_args(argv=None):
     add_pickup_args(parser)
     args = parser.parse_args(argv)
     try:
-        pickup_angles(args.transport_angles)
+        validate_angles(args.transport_angles)
     except ValueError as exc:
         parser.error("Set calibrated TRANSPORT_ANGLES or --transport-angles: %s" % exc)
     for key, low, high in (("arm_speed", 1, 200), ("grip_speed", 1, 1500),
