@@ -885,7 +885,7 @@ class Control:
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         target = math.radians(start['yaw_deg'] - degrees)
         speed = .015
-        end = time.monotonic() + .8 * abs(math.radians(degrees)) / speed
+        end = time.monotonic() + .6 * abs(math.radians(degrees)) / speed
         try:
             while True:
                 pose = self.robot.nav.get_odom_pose()
