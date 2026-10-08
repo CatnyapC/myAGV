@@ -37,6 +37,7 @@ const REQUEST_EXAMPLES = [
 export function App() {
   const [state, setState] = useState<State | null>(null);
   const [connected, setConnected] = useState(false);
+  const [obstacleSize, setObstacleSize] = useState<number | null>(null);
   const [packet, setPacket] = useState<{ info: MapInfo; image: string } | null>(null);
   const [zones, setZones] = useState<Zones | null>(null);
   const [savedSettings, setSavedSettings] = useState<Settings | null>(null);
@@ -433,6 +434,13 @@ export function App() {
     <main className={`grid-stack ${layoutEditing ? 'layout-editing' : ''}`} ref={gridHost}>
       {panel('map', <>
         <div className="map-tools">
+          {state?.demo === false && <label className="muted">Filter small obstacles · {Math.round((obstacleSize ?? state.hardware?.small_obstacle_m ?? .15)*100)} cm
+            <input aria-label="Filter small obstacles" type="range" min="0" max="0.5" step="0.01"
+              disabled={!canEdit || busy || state.hardware?.phase !== 'idle'} value={obstacleSize ?? state.hardware?.small_obstacle_m ?? .15}
+              onChange={e => setObstacleSize(Number(e.target.value))}
+              onPointerUp={e => { void hardwareCommand('obstacle_filter', { minimum_m: Number(e.currentTarget.value) }); }}
+              onKeyUp={e => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) void hardwareCommand('obstacle_filter', { minimum_m: Number(e.currentTarget.value) }); }} />
+          </label>}
           <span className="muted">{drawing ? draft.length < 2 ? 'Select two corners' : 'Preview' : state?.demo === false ? state.hardware?.mapping_mode ? 'Static SLAM snapshot' : 'Saved ROS map' : 'Demo map'}</span>
           <div className="toolbar-actions">
             {state?.demo === false && <Button disabled={!canEdit || busy} onClick={() => setResetMapOpen(true)}><RotateCcw size={14} /> Reset map</Button>}

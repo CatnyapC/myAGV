@@ -8,6 +8,7 @@ import time
 import uuid
 
 from navigation import Navigation
+from obstacle_filter import filter_grid, filter_scan
 from robot_safety import fresh, footprint_clear, zones_visible
 from web_backend.map_data import local_to_world
 from web_backend.simulation import navigation_grid
@@ -38,6 +39,7 @@ class RobotROS:
         self.output = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
         self.initial = rospy.Publisher('/initialpose', PoseWithCovarianceStamped, queue_size=1)
         self.maps = rospy.Publisher('/navigation_map', OccupancyGrid, queue_size=1, latch=True)
+        self.filtered_scan = rospy.Publisher('/myagv/scan', LaserScan, queue_size=1)
         self.lock = threading.RLock()
         self.source = self.grid = self.derived = None
         self.pending_map = None
@@ -85,6 +87,9 @@ class RobotROS:
 
     def receive_scan(self, message):
         self.scan = (time.monotonic(), message)
+        filtered = deepcopy(message)
+        filtered.ranges = filter_scan(message, self.control.config.get('small_obstacle_m', .15) if self.control else .15)
+        self.filtered_scan.publish(filtered)
 
     def receive_path(self, message):
         if message.header.frame_id == 'map':
@@ -93,7 +98,8 @@ class RobotROS:
 
     def set_map(self, source, grid, zones):
         with self.lock:
-            self.source, self.grid = deepcopy(source), grid
+            self.source = deepcopy(source)
+            self.grid = filter_grid(grid, self.control.config.get('small_obstacle_m', .15))
             self.pending_map = None
             if hasattr(self.source, 'info'):
                 info, origin = self.source.info, grid['origin']

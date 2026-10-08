@@ -39,6 +39,7 @@ def robot_at(root):
     robot.control = Control.__new__(Control)
     c = robot.control
     c.robot, c.directory = robot, robot.directory
+    c.config = dict(small_obstacle_m=0)
     c.zones_path, c.stations_path = root / 'hardware_no_go_zones.json', root / 'stations.json'
     c.phase, c.localized, c.stop_pending, c.base_enabled = 'idle', True, None, False
     c.request_stop = Mock()

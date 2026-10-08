@@ -50,6 +50,13 @@ Photos remain in the library; old map positions and station associations become
 invalid. A startup failure restores the archived files.
 
 After reset, the label becomes **Static SLAM snapshot**. SLAM continues collecting
+scans through the small-obstacle filter. The map-top slider sets the minimum
+isolated obstacle size (default 15 cm; 0 disables it). It filters scan clusters
+before SLAM and both costmaps, and occupied map components before no-go masks.
+Long walls and explicitly drawn no-go zones remain. Change it while idle;
+the threshold persists across restarts and map resets. Raw map cells are retained
+so lowering the threshold restores components in the accepted snapshot.
+SLAM continues collecting
 scans, but the displayed map and navigation map stay fixed. **Pause updates**
 waits for the base to stop, then publishes the latest complete snapshot once.
 It also works while idle, without starting a survey. Time-limit pauses publish

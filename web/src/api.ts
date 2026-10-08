@@ -34,6 +34,7 @@ export type HardwareState = {
   map_update?: { active: boolean; state: string; map_id: string; goals: { x_m: number; y_m: number; yaw_rad: number }[];
     completed: number; round: number; captures: number; remaining_s: number; capped: boolean };
   mapping_mode?: boolean;
+  small_obstacle_m?: number;
 };
 
 export function hardwareBlocks(state?: HardwareState, requireArm = true): string[] {

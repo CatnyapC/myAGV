@@ -66,6 +66,7 @@ class Control:
         self.config_path = self.directory.parent / 'robot_config.json'
         self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else dict(transport_angles=None, clearance_m=.25)
         number(self.config['clearance_m'], .15, 1, 'Measured clearance radius')
+        number(self.config.get('small_obstacle_m', .15), 0, .5, 'Small obstacle size')
         if self.config['transport_angles'] is not None:
             validate_angles(self.config['transport_angles'])
         self.stations_path = Path(__file__).with_name('stations.json')
@@ -455,6 +456,7 @@ class Control:
                 blank = {**previous[1], 'map_id': 'slam-' + session_id, 'revision': 0,
                          'cells': [-1] * len(previous[1]['cells'])}
                 blank.pop('content_hash', None)
+                blank.pop('raw_cells', None)
                 self.robot.set_map(previous[0], blank, dict(map_id=blank['map_id'], revision=0, zones=[]))
                 atomic_json(self.directory / 'map.json', blank)
                 self.robot.amcl_uri = self.robot.clearance = None
@@ -557,6 +559,20 @@ class Control:
             self.robot.nav.wait_stopped()
             self.robot.commit_map_update()
             return dict(map_revision=self.robot.grid['revision'])
+        elif kind == 'obstacle_filter':
+            minimum = number(packet.get('minimum_m'), 0, .5, 'Small obstacle size')
+            self.robot.nav.wait_stopped()
+            self.config['small_obstacle_m'] = minimum
+            atomic_json(self.config_path, self.config)
+            with self.robot.lock:
+                grid = {**self.robot.grid, 'revision': self.robot.grid['revision'] + 1}
+                pending = self.robot.pending_map
+                self.robot.set_map(self.robot.source, grid, self.robot.zones)
+                if pending:
+                    self.robot.pending_map = (pending[0], {**pending[1], 'revision': grid['revision'] + 1})
+                self.robot.costmaps = {}
+                self.robot.published_at = time.monotonic()
+            return dict(minimum_m=minimum)
         elif kind in ('home', 'confirm_homed'):
             self.require_arm(False)
             self.robot.nav.wait_stopped()
@@ -858,6 +874,7 @@ class Control:
                     arm_angles=self.angles if fresh(self.arm_stamp, time.monotonic(), 2) else None,
                     arm_error=self.arm_error, transport_angles=self.config['transport_angles'],
                     clearance_m=self.config['clearance_m'], localized=self.localized,
+                    small_obstacle_m=self.config.get('small_obstacle_m', .15),
                     mapping_mode=(self.directory.parent / 'mapping.json').exists(),
                     driver_watchdog=self.robot.driver_watchdog, exclusive=self.robot.exclusive,
                     sensors_ready=self.robot.sensors_ready(), motion_available=ready,

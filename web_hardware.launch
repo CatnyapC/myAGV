@@ -8,7 +8,9 @@
     </node>
   </group>
   <group if="$(arg mapping)">
-    <include file="$(find myagv_navigation)/launch/gmapping.launch" />
+    <include file="$(find myagv_navigation)/launch/gmapping.launch">
+      <arg name="scan_topic" value="/myagv/scan" />
+    </include>
     <param name="/gmapping/map_session" value="$(anon live_map)" />
     <param name="/gmapping/map_update_interval" value="1.0" />
     <param name="/gmapping/temporalUpdate" value="1.0" />
@@ -18,6 +20,7 @@
   <node name="base_to_laser" pkg="tf" type="static_transform_publisher"
         args="0.065 0.0 0.08 3.14159265 0.0 0.0 base_footprint laser_frame 10" />
   <node pkg="move_base" type="move_base" name="move_base" output="screen">
+    <remap from="/scan" to="/myagv/scan" />
     <remap from="cmd_vel" to="/myagv/input_vel" />
     <rosparam file="$(find myagv_navigation)/param/costmap_common_params.yaml" command="load" ns="global_costmap" />
     <rosparam file="$(find myagv_navigation)/param/costmap_common_params.yaml" command="load" ns="local_costmap" />
@@ -76,6 +79,7 @@
         obstacle_layer:
           enabled: true
           combination_method: 1
+          laser_scan_sensor: {inf_is_valid: true}
         inflation_layer:
           enabled: true
           inflation_radius: 0.4
@@ -104,6 +108,7 @@
         obstacle_layer:
           enabled: true
           combination_method: 1
+          laser_scan_sensor: {inf_is_valid: true}
         inflation_layer:
           enabled: true
           inflation_radius: 0.4
