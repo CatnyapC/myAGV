@@ -14,6 +14,7 @@ from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame
 from .storage import atomic_json
+from .hardware import Hardware
 from .resolve import MODEL, MODEL_OPTIONS, load_key, resolve_items, target_preview, validate_llm
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,14 +37,21 @@ def validate_settings(value):
 
 
 class Editor:
-    def __init__(self, directory):
+    def __init__(self, directory, hardware_dir=None):
         self.directory = Path(directory)
-        self.grid = demo_map()
+        self.hardware = Hardware(hardware_dir) if hardware_dir else None
+        if self.hardware:
+            self.hardware.refresh()
+            if not self.hardware.grid:
+                raise ValueError('Waiting for ROS bridge map snapshot')
+        self.grid = self.hardware.grid if self.hardware else demo_map()
         self.settings = load_json(self.directory / 'settings.json', dict(revision=0, values=DEFAULT_SETTINGS.copy()))
         if isinstance(self.settings['values'], dict) and set(self.settings['values']) == set(DISPLAY_FIELDS):
             self.settings['values'] = {**DEFAULT_SETTINGS, **self.settings['values']}
         validate_settings(self.settings['values'])
-        self.zones = load_json(self.directory / 'no_go_zones.json', dict(map_id=self.grid['map_id'], revision=0, zones=[]))
+        self.zones = dict(map_id=self.grid['map_id'], revision=0, zones=[])
+        if not self.hardware:
+            self.zones = load_json(self.directory / 'no_go_zones.json', self.zones)
         if self.zones['map_id'] != self.grid['map_id']:
             raise ValueError('Saved zones belong to another map; explicit review required')
         for zone in self.zones['zones']:
@@ -53,16 +61,28 @@ class Editor:
         self.sockets = set()
         self.lock = asyncio.Lock()
         self.replies = {}  # Bounded retry cache; duplicate command IDs never add another zone.
-        self.sim = Simulation(self.grid, self.zones)
+        self.sim = None if self.hardware else Simulation(self.grid, self.zones)
         self.cost_png = None
         self.llm = dict(status='not_configured')
 
     def state(self):
+        if self.hardware:
+            navigation = self.hardware.telemetry(self.grid)
+            return dict(robot_id='myagv-ros', demo=False, read_only=True, phase='idle', motion_available=False,
+                        simulation_available=False, cameras_available=bool(self.hardware.cameras),
+                        cameras=self.hardware.cameras, localization_available=navigation['pose'] is not None,
+                        zone_enforcement='unavailable', navigation=navigation,
+                        llm={**self.llm, 'model': self.settings['values']['llm_model'],
+                             'reasoning_effort': self.settings['values']['reasoning_effort']})
         return dict(robot_id='local-demo', demo=True, phase=self.sim.phase, motion_available=False,
                     simulation_available=True, cameras_available=False, localization_available=False,
                     zone_enforcement='simulated-global',
                     navigation=self.sim.telemetry(), llm={**self.llm, 'model': self.settings['values']['llm_model'],
                                                         'reasoning_effort': self.settings['values']['reasoning_effort']})
+
+    @property
+    def generation(self):
+        return self.hardware.generation if self.hardware else self.sim.generation
 
     async def emit(self, kind):
         for socket in tuple(self.sockets):
@@ -109,9 +129,9 @@ async def boundary(request, handler):
     return response
 
 
-def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.json'):
+def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.json', hardware_dir=None):
     app = web.Application(middlewares=[boundary], client_max_size=MAX_IMAGE_BYTES + 1024)
-    editor = Editor(directory)
+    editor = Editor(directory, hardware_dir)
     app[EDITOR] = editor
     photos = PhotoIndex(directory, stations_path)
     photo_lock = asyncio.Lock()
@@ -119,7 +139,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     resolve_lock = asyncio.Lock()  # ponytail: one request; per-user locks if multi-user control is added.
 
     def photo_stopped():
-        if editor.sim.phase != 'idle':
+        if editor.sim and editor.sim.phase != 'idle':
             raise web.HTTPConflict(text='Photo editing requires a stopped simulator')
 
     async def photo_index(request):
@@ -137,10 +157,10 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         if resolve_lock.locked():
             raise web.HTTPTooManyRequests(text='An item resolution is already running')
         async with resolve_lock:
-            generation, zone_revision, settings_revision = editor.sim.generation, editor.zones['revision'], editor.settings['revision']
+            generation, zone_revision, settings_revision = editor.generation, editor.zones['revision'], editor.settings['revision']
             config = dict(editor.settings['values'])
             def check_current():
-                if editor.sim.generation != generation or editor.sim.phase != 'idle' or editor.zones['revision'] != zone_revision or editor.settings['revision'] != settings_revision or data['map_id'] != editor.grid['map_id'] or data['expected_revision'] != photos.value['revision']:
+                if editor.generation != generation or (editor.sim and editor.sim.phase != 'idle') or editor.zones['revision'] != zone_revision or editor.settings['revision'] != settings_revision or data['map_id'] != editor.grid['map_id'] or data['expected_revision'] != photos.value['revision']:
                     raise web.HTTPConflict(text='Resolution cancelled or records changed; retry explicitly')
             index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
             check_current()
@@ -176,6 +196,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         return web.json_response({**await asyncio.to_thread(photos.snapshot, editor.grid['map_id']), 'added_id': added['id']})
 
     async def capture_photo(request):
+        if editor.hardware:
+            raise web.HTTPNotImplemented(text='Hardware observation capture requires acquisition-time pose binding')
         data = await request.json()
         async with photo_lock:
             photo_stopped()
@@ -226,10 +248,14 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         return web.json_response(editor.zones)
 
     async def costmap(request):
+        if editor.hardware:
+            raise web.HTTPServiceUnavailable(text='ROS costmap integration unavailable')
         grid = editor.sim.navigation if request.path == '/api/navigation-map' else editor.sim.costmap
         return web.json_response({**grid, 'zone_revision': editor.sim.revision, 'source': 'simulation'})
 
     async def costmap_image(request):
+        if editor.hardware:
+            raise web.HTTPServiceUnavailable(text='ROS costmap integration unavailable')
         view, zone = editor.metadata['display']['view_revision'], editor.sim.revision
         if request.query.get('view_revision') != str(view) or request.query.get('zone_revision') != str(zone):
             raise web.HTTPConflict(text='Costmap revision changed; reload')
@@ -252,13 +278,15 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             saved = dict(revision=editor.settings['revision'] + 1, values=values)
             metadata, png = editor.metadata, editor.png
             if any(values[k] != editor.settings['values'][k] for k in DISPLAY_FIELDS):
-                metadata, png = await asyncio.to_thread(render_map, editor.grid, values, saved['revision'], editor.detected)
+                metadata, png = await asyncio.to_thread(render_map, editor.grid, values, metadata['display']['view_revision'] + 1, editor.detected)
             atomic_json(editor.directory / 'settings.json', saved)
             editor.settings, editor.metadata, editor.png = saved, metadata, png
         await editor.emit('settings')
         return web.json_response({**saved, 'llm_models': MODEL_OPTIONS})
 
     async def commands(request):
+        if editor.hardware:
+            raise web.HTTPForbidden(text='Read-only hardware: motion and no-go edits are unavailable')
         data = await request.json()
         async with editor.lock:
             command_id = data['id']
@@ -329,6 +357,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         return web.json_response(reply)
 
     async def stop(request):
+        if editor.hardware:
+            editor.hardware.generation += 1
+            return web.json_response(dict(status='unconfirmed', reason='Read-only bridge cannot stop hardware; use physical stop'), status=503)
         editor.sim.stop('Stopped')
         await editor.emit('telemetry')
         return web.json_response(dict(status='completed', reason='Simulation stopped; hardware is not connected'))
@@ -344,7 +375,10 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         finally:
             editor.sockets.discard(socket)
             if not editor.sockets:
-                editor.sim.stop('UI disconnected')
+                if editor.hardware:
+                    editor.hardware.generation += 1
+                else:
+                    editor.sim.stop('UI disconnected')
                 await editor.emit('telemetry')
         return socket
 
@@ -356,6 +390,20 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         async def advance():
             while True:
                 await asyncio.sleep(.1)
+                if editor.hardware:
+                    await asyncio.to_thread(editor.hardware.refresh)
+                    async with editor.lock:
+                        grid = editor.hardware.grid
+                        changed = grid is not None and grid['map_id'] != editor.grid['map_id']
+                        if changed:
+                            detected = await asyncio.to_thread(dominant_angle, grid)
+                            view = editor.metadata['display']['view_revision'] + 1
+                            metadata, png = await asyncio.to_thread(render_map, grid, editor.settings['values'], view, detected)
+                            editor.grid, editor.metadata, editor.png, editor.detected = grid, metadata, png, detected
+                            editor.zones = dict(map_id=grid['map_id'], revision=0, zones=[])
+                            editor.hardware.generation += 1
+                    await editor.emit('map' if changed else 'telemetry')
+                    continue
                 async with editor.lock:
                     running = editor.sim.phase == 'running'
                     if running:
@@ -379,6 +427,15 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             return web.FileResponse(dist / 'index.html')
         raise web.HTTPNotFound(text='Build frontend first, or use the PM2 development frontend on port 5173')
 
+    async def camera_image(request):
+        camera_id = request.match_info['id']
+        if not editor.hardware or camera_id not in editor.hardware.cameras:
+            raise web.HTTPServiceUnavailable(text='Camera unavailable or stale')
+        camera = editor.hardware.cameras[camera_id]
+        if not editor.hardware.fresh(camera['stamp_s']):
+            raise web.HTTPServiceUnavailable(text='Camera unavailable or stale')
+        return web.FileResponse(editor.hardware.directory / f'{camera_id}.jpg', headers={'Cache-Control': 'no-store'})
+
     app.router.add_get('/api/state', state)
     app.router.add_get('/api/items', photo_index)
     app.router.add_post('/api/resolve', resolve)
@@ -399,6 +456,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app.router.add_post('/api/commands', commands)
     app.router.add_post('/api/stop', stop)
     app.router.add_get('/api/events', events)
+    app.router.add_get('/api/cameras/{id}.jpg', camera_image)
     app.router.add_get('/{path:.*}', static)
     app.on_shutdown.append(shutdown)
     app.cleanup_ctx.append(simulation_tick)
@@ -409,5 +467,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8791)
     parser.add_argument('--data-dir', type=Path, default=ROOT / 'web_runtime')
+    parser.add_argument('--hardware-dir', type=Path, default=os.environ.get('MYAGV_HARDWARE_DIR'))
     args = parser.parse_args()
-    web.run_app(create_app(args.data_dir), host='127.0.0.1', port=args.port)
+    web.run_app(create_app(args.data_dir, hardware_dir=args.hardware_dir), host='127.0.0.1', port=args.port)

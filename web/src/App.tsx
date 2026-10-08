@@ -10,7 +10,7 @@ import { api } from './api';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
-type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation; llm: { model: string; status: string; reasoning_effort: string } };
+type State = { robot_id: string; demo: boolean; phase: string; navigation: Navigation; cameras?: Partial<Record<'front' | 'arm', { url: string; stamp_s: number }>>; llm: { model: string; status: string; reasoning_effort: string } };
 type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; settings_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v2';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
@@ -299,7 +299,9 @@ export function App() {
   }
   function storedCamera(camera: 'front' | 'arm') {
     const matches = selectedPhoto && (selectedPhoto.kind === 'reference' ? camera === 'front' : selectedPhoto.camera_id === camera);
-    return matches ? <StoredPhoto key={selectedPhoto.id} photo={selectedPhoto} onEdit={() => setPhotoMode('edit')} /> :
+    const live = state?.cameras?.[camera];
+    return matches ? <StoredPhoto key={selectedPhoto.id} photo={selectedPhoto} onEdit={() => setPhotoMode('edit')} /> : live ?
+      <div className="stored-photo"><img src={live.url} alt={`Live ${camera} camera`} /></div> :
       <div className="camera-body"><Camera size={26} strokeWidth={1} /><span>Camera unavailable</span></div>;
   }
   function startDrawing() { setSelected(null); setDraft([]); setDrawing(true); setLayoutEditing(false); }
@@ -371,16 +373,16 @@ export function App() {
           <Dropdown.Item className="menu-item" disabled={!canLayout} onSelect={resetLayout}><RotateCcw size={16} /> Restore default layout</Dropdown.Item>
         </Dropdown.Content></Dropdown.Portal>
       </Dropdown.Root>
-      <strong className="brand">MYAGV CONTROL</strong><span className="demo-tag">DEMO</span>
+      <strong className="brand">MYAGV CONTROL</strong><span className="demo-tag">{state?.demo === false ? 'HARDWARE · READ ONLY' : 'DEMO'}</span>
       <span className={`connection ${connected ? 'online' : ''}`}>{connected ? 'Connected' : 'Offline'}</span>
-      <Button variant="danger" onClick={() => void stop()} className="stop">STOP</Button>
+      <Button variant="danger" onClick={() => void stop()} className="stop" disabled={state?.demo === false} title={state?.demo === false ? 'Hardware stop unavailable; use physical stop' : undefined}>STOP</Button>
     </header>
     {error && <div role="alert" className="error-bar"><span>{error}</span><Button variant="ghost" className="icon" aria-label="Dismiss error" onClick={() => setError('')}><X size={15} /></Button></div>}
     <div className="workspace" ref={workspaceHost}>
     <main className={`grid-stack ${layoutEditing ? 'layout-editing' : ''}`} ref={gridHost}>
       {panel('map', <>
         <div className="map-tools">
-          <span className="muted">{drawing ? draft.length < 2 ? 'Select two corners' : 'Preview' : 'Demo map'}</span>
+          <span className="muted">{drawing ? draft.length < 2 ? 'Select two corners' : 'Preview' : state?.demo === false ? 'ROS map' : 'Demo map'}</span>
           <div className="toolbar-actions">
             {drawing && <><Button variant="default" disabled={draft.length !== 2 || busy || !canEdit} onClick={() => void command('zone_add')}>Save</Button>
               <Button onClick={() => { setDrawing(false); setDraft([]); }}>Cancel</Button></>}
@@ -388,10 +390,10 @@ export function App() {
             <Button variant="ghost" className="icon" aria-label="Fit map" onClick={() => setFitVersion(v => v + 1)}><Crosshair size={16} /></Button>
             <Dropdown.Root><Dropdown.Trigger asChild><Button variant="ghost" className="icon" aria-label="Map actions"><MoreHorizontal size={18} /></Button></Dropdown.Trigger>
               <Dropdown.Portal><Dropdown.Content className="menu" align="end" sideOffset={5}>
-                <Dropdown.Item className="menu-item" disabled={!canEdit || !packet || busy} onSelect={startDrawing}><Square size={15} /> No-go zone</Dropdown.Item>
+                <Dropdown.Item className="menu-item" disabled={!state?.demo || !canEdit || !packet || busy} onSelect={startDrawing}><Square size={15} /> No-go zone</Dropdown.Item>
                 <Dropdown.Item className="menu-item" disabled={!navigation} onSelect={() => setFocusRobotVersion(v => v + 1)}><Crosshair size={15} /> Fit robot</Dropdown.Item>
-                <Dropdown.CheckboxItem className="menu-item" checked={showCostmap} onCheckedChange={setShowCostmap}><Square size={15} /> Global costmap {showCostmap ? '✓' : ''}</Dropdown.CheckboxItem>
-                <Dropdown.Item className="menu-item" disabled={!canEdit || busy} onSelect={() => void simulationCommand('demo_reset')}><RotateCcw size={15} /> Reset demo pose</Dropdown.Item>
+                <Dropdown.CheckboxItem className="menu-item" disabled={!state?.demo} checked={showCostmap} onCheckedChange={setShowCostmap}><Square size={15} /> Global costmap {showCostmap ? '✓' : ''}</Dropdown.CheckboxItem>
+                <Dropdown.Item className="menu-item" disabled={!state?.demo || !canEdit || busy} onSelect={() => void simulationCommand('demo_reset')}><RotateCcw size={15} /> Reset demo pose</Dropdown.Item>
                 <Dropdown.Item className="menu-item" onSelect={() => setSettingsOpen(true)}><Settings2 size={15} /> Settings</Dropdown.Item>
               </Dropdown.Content></Dropdown.Portal>
             </Dropdown.Root>
@@ -399,7 +401,7 @@ export function App() {
         </div>
         {packet ? <MapView info={packet.info} image={packet.image} zones={zones?.zones ?? []} selected={selected}
           drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
-          navigation={navigation} goal={goal} connected={connected} showCostmap={showCostmap} focusRobotVersion={focusRobotVersion}
+          navigation={navigation} goal={goal} connected={connected} showCostmap={Boolean(state?.demo) && showCostmap} focusRobotVersion={focusRobotVersion}
           photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto}
           onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
@@ -411,8 +413,8 @@ export function App() {
           </div>
         </details>}
       </>)}
-      {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Demo capture front observation" title="Demo capture · synthetic frame" disabled={!canEdit || busy || !photos} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
-      {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Demo capture arm observation" title="Demo capture · synthetic frame" disabled={!canEdit || busy || !photos} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
+      {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Demo capture front observation" title="Demo capture · synthetic frame" disabled={!state?.demo || !canEdit || busy || !photos} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
+      {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Demo capture arm observation" title="Demo capture · synthetic frame" disabled={!state?.demo || !canEdit || busy || !photos} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
       {panel('operate', <div className="operate-body">
         <label className="subheading" htmlFor="item-request">REQUEST</label>
         <form className="request-row" onSubmit={event => { event.preventDefault(); void resolveRequest(); }}>
@@ -443,26 +445,26 @@ export function App() {
             if (base) setGoalText([String(base.x_m), String(base.y_m), String(base.yaw_deg)]);
           }}>Approach</Button>}
         </div>}
-        <span className="subheading">POSE · DEMO</span>
-        <output className="pose-readout" aria-label="Simulated map-frame pose">
-          <span>X <b>{navigation?.pose.x_m.toFixed(2) ?? '—'}</b> m</span>
-          <span>Y <b>{navigation?.pose.y_m.toFixed(2) ?? '—'}</b> m</span>
-          <span>θ <b>{navigation ? (navigation.pose.yaw_rad * 180 / Math.PI).toFixed(0) : '—'}</b>°</span>
+        <span className="subheading">{state?.demo === false ? 'POSE · ROS ESTIMATE' : 'POSE · DEMO'}</span>
+        <output className="pose-readout" aria-label={state?.demo === false ? 'ROS map-frame pose; nominal chassis outline' : 'Simulated map-frame pose'}>
+          <span>X <b>{navigation?.pose?.x_m.toFixed(2) ?? '—'}</b> m</span>
+          <span>Y <b>{navigation?.pose?.y_m.toFixed(2) ?? '—'}</b> m</span>
+          <span>θ <b>{navigation?.pose ? (navigation.pose.yaw_rad * 180 / Math.PI).toFixed(0) : '—'}</b>°</span>
         </output>
         <span className="subheading">GOAL</span>
         <div className="goal-inputs">{['X (m)', 'Y (m)', 'θ (°)'].map((label, i) => <label key={label}>{label}<input type="number" step={i === 2 ? '5' : '.05'}
           min={i === 2 ? -180 : undefined} max={i === 2 ? 180 : undefined} placeholder={i === 2 ? '0' : 'Map click'} value={goalText[i]}
           disabled={!canLayout || busy} onChange={e => setGoalText(old => old.map((v, n) => n === i ? e.target.value : v))} /></label>)}</div>
-        <div className="action-line"><Button variant="default" className="button-simulate" disabled={!canEdit || !goalValid || !costmapReady || busy}
+        <div className="action-line"><Button variant="default" className="button-simulate" disabled={!state?.demo || !canEdit || !goalValid || !costmapReady || busy}
           onClick={() => void simulationCommand('navigate')}><Play size={16} /> Simulate</Button><Button variant="default" disabled><Hand size={16} /> Fetch</Button>
-          <Button disabled={!connected || state?.phase === 'idle' || busy} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
+          <Button disabled={!state?.demo || !connected || state?.phase === 'idle' || busy} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
         <div className="section-divider" />
         <span className="subheading">NO-GO ZONES</span>
         <div className="zone-list">{zones?.zones.length ? zones.zones.map((zone, i) => <button key={zone.id}
           className={`zone-row ${selected === zone.id ? 'selected' : ''}`} onClick={() => { setSelected(zone.id); setDrawing(false); setDraft([]); }}>
           <Square size={14} /> Zone {i + 1}<span className="row-end">{selected === zone.id ? 'Selected' : ''}</span>
         </button>) : <span className="muted">None</span>}</div>
-        <span className="muted enforcement">{costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
+        <span className="muted enforcement">{state?.demo === false ? 'Hardware control unavailable' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
       </div>)}
     </main>

@@ -17,8 +17,8 @@ export type Item = { id: string; name: string; appearance: string; station_link?
 export type PhotoIndex = { version: number; revision: number; photos: Photo[]; items: Item[] };
 export type Stations = Record<string, { base: { x_m: number; y_m: number; yaw_deg: number }; arm_angles_deg: number[] }>;
 export type Navigation = {
-  map_id: string; frame: string; source: 'simulation'; stamp_s: number;
-  pose: Origin; goal: Origin | null; path: Point[]; moving: boolean; phase: string; status: string;
+  map_id: string; frame: string; source: 'simulation' | 'ros'; stamp_s: number;
+  pose: Origin | null; goal: Origin | null; path: Point[]; moving: boolean; phase: string; status: string;
   footprint: { length_m: number; width_m: number };
   costmap: { ready: boolean; applied_zone_revision: number; clearance_m: number };
 };

@@ -1,5 +1,8 @@
 # Local WebUI
 
+Robot live map/pose/camera setup: [HARDWARE_WEBUI.md](HARDWARE_WEBUI.md).
+That mode is read-only; the demo workflow below remains separate.
+
 Demo map editor and simulated navigation on the development Mac. No ROS/serial
 connection or hardware motion. All displayed poses/routes are explicitly simulated.
 The four panels follow `WEBUI_PLAN.md`; task status is in `WEBUI_TASKS.md`.

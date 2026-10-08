@@ -79,7 +79,7 @@ export function MapView(props: {
 
   useEffect(() => {
     const nav = props.navigation;
-    if (!nav || nav.map_id !== props.info.map_id) {
+    if (!nav || !nav.pose || nav.map_id !== props.info.map_id) {
       robot.current?.setLatLngs([]); heading.current?.setLatLngs([]); path.current?.setLatLngs([]);
       return;
     }
