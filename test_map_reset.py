@@ -1,4 +1,4 @@
-"""Map reset recovery and continuous SLAM updates, without ROS or movement."""
+"""Map reset recovery and paused SLAM snapshots, without ROS or movement."""
 from copy import deepcopy
 from contextlib import nullcontext
 import asyncio
@@ -35,6 +35,7 @@ def robot_at(root):
     robot.zones = dict(map_id=robot.grid['map_id'], revision=0, zones=[])
     robot.costmaps = {}
     robot.map_saved, robot.costmap_saved = None, 0
+    robot.pending_map = None
     robot.control = Control.__new__(Control)
     c = robot.control
     c.robot, c.directory = robot, robot.directory
@@ -91,7 +92,7 @@ class MapResetTest(unittest.TestCase):
             self.assertEqual(c.receive(dict(op='stop'))['status'], 'stopping')
             c.request_stop.assert_called_once()
 
-    def test_live_updates_keep_map_identity_localization_and_costmap_feedback(self):
+    def test_slam_snapshot_changes_only_on_commit_and_survives_bridge_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             robot = robot_at(root)
@@ -103,19 +104,37 @@ class MapResetTest(unittest.TestCase):
                 self.assertEqual(robot.grid['revision'], 1)
                 robot.control.localized = True
                 robot.control.request_stop.reset_mock()
-                robot.costmaps = {'global': 'fresh approved feedback'}
+                robot.costmaps = {'global': (clock.monotonic(), 0, True, robot.grid)}
                 published_at = robot.published_at
+                original = deepcopy(robot.grid)
                 grid['cells'][100] = 0 if grid['cells'][100] else 100
                 robot.receive_map(robot.source)
+                self.assertEqual(robot.grid, original)
+                robot.write_maps()
+                self.assertEqual(json.loads((robot.directory / 'map.json').read_text()), original)
+                grid['cells'][101] = 0 if grid['cells'][101] else 100
+                robot.receive_map(robot.source)
+                self.assertEqual(robot.grid, original)
+                robot.commit_map_update()
                 self.assertEqual(robot.grid['revision'], 2)
                 self.assertTrue(robot.control.localized)
                 robot.control.request_stop.assert_not_called()
-                self.assertIn('global', robot.costmaps)
-                self.assertEqual(robot.published_at, published_at)
+                self.assertFalse(robot.costmaps)  # Pause waits for both costmaps to consume the new snapshot.
+                self.assertGreater(robot.published_at, published_at)
                 robot.receive_map(robot.source)
                 self.assertEqual(robot.grid['revision'], 2)
                 robot.write_maps()
                 self.assertEqual(json.loads((robot.directory / 'map.json').read_text())['cells'], grid['cells'])
+                saved = deepcopy(robot.grid)
+                grid['cells'][102] = 0 if grid['cells'][102] else 100
+                robot.grid = None  # A bridge restart must not publish unpublished scans.
+                robot.receive_map(robot.source)
+                self.assertEqual(robot.grid, saved)
+                robot.commit_map_update()
+                self.assertEqual(robot.grid['revision'], 3)
+                self.assertEqual(robot.grid['cells'], grid['cells'])
+                robot.control.localized = True
+                robot.control.request_stop.reset_mock()
                 atomic_json(robot.control.zones_path, robot.zones)
                 robot.control.stations_path.write_text('old stations')
                 robot.ros.get_param.return_value = 'run-2'

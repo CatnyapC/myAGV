@@ -40,6 +40,7 @@ class RobotROS:
         self.maps = rospy.Publisher('/navigation_map', OccupancyGrid, queue_size=1, latch=True)
         self.lock = threading.RLock()
         self.source = self.grid = self.derived = None
+        self.pending_map = None
         self.zones = None
         self.zone_points = []
         self.published_at = float('inf')
@@ -93,7 +94,24 @@ class RobotROS:
     def set_map(self, source, grid, zones):
         with self.lock:
             self.source, self.grid = deepcopy(source), grid
+            self.pending_map = None
+            if hasattr(self.source, 'info'):
+                info, origin = self.source.info, grid['origin']
+                self.source.header.frame_id = grid['frame']
+                info.width, info.height, info.resolution = grid['width'], grid['height'], grid['resolution_m']
+                info.origin.position.x, info.origin.position.y = origin['x_m'], origin['y_m']
+                q = info.origin.orientation
+                q.x = q.y = 0.
+                q.z, q.w = math.sin(origin['yaw_rad']/2), math.cos(origin['yaw_rad']/2)
         self.apply_zones(zones)
+
+    def commit_map_update(self):
+        with self.lock:
+            if self.pending_map:
+                source, grid = self.pending_map
+                self.published_at = time.monotonic()
+                self.costmaps = {}
+                self.set_map(source, grid, self.zones)
 
     def receive_map(self, message):
         try:
@@ -108,9 +126,13 @@ class RobotROS:
                 map_id = ('slam-' + json.loads(marker.read_text())['session_id'] + '-' + self.ros.get_param('/gmapping/map_session')) if mapping else 'ros-' + digest[:16]
                 previous = self.grid or {}
                 if previous.get('map_id') == map_id and previous.get('content_hash') == digest:
+                    self.pending_map = None
                     return
                 same_map = previous.get('map_id') == map_id
                 grid.update(map_id=map_id, revision=previous['revision'] + 1 if same_map else 1, content_hash=digest)
+                if mapping and same_map:
+                    self.pending_map = (message, grid)
+                    return
                 if not same_map:
                     if self.control.phase != 'resetting_map':
                         self.control.request_stop('Map changed')
@@ -127,6 +149,14 @@ class RobotROS:
                             if path.exists():
                                 path.rename(backup / path.name)
                         zones = dict(map_id=map_id, revision=0, zones=[])
+                if mapping and not previous:
+                    path = self.directory / 'map.json'
+                    saved = json.loads(path.read_text()) if path.exists() else {}
+                    if saved.get('map_id') == map_id and saved.get('revision', 0) > 0:
+                        self.set_map(message, saved, zones)
+                        if saved.get('content_hash') != digest:
+                            self.pending_map = (message, {**grid, 'revision': saved['revision'] + 1})
+                        return
                 self.set_map(message, grid, zones)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             self.grid = None

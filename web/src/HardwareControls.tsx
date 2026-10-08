@@ -99,20 +99,25 @@ export function MapUpdateControls({ state, connected, goal, command }: Pick<Prop
   const paused = state?.phase === 'update_paused';
   const idle = connected && state?.phase === 'idle';
   const validUpdate = Number.isFinite(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 60;
-  const cannotPlan = !idle || updating || !validUpdate || hardwareBlocks(state).length > 0 || !survey.length;
+  const goals = survey.length ? survey : goal ? [goal] : [];
+  const blockers = !connected ? ['Connect to the controller'] : hardwareBlocks(state, false);
+  if (!goals.length) blockers.push('Select a map goal and heading');
+  if (!validUpdate) blockers.push('Choose an update window from 1 to 60 minutes');
+  const cannotPlan = !idle || updating || blockers.length > 0;
   const updateCommand = async (type: string) => {
     setUpdating(true);
     try { await command(type, type === 'update_start' || type === 'update_pause'
-      ? { task_id: state?.task_id } : { limit_s: Number(minutes) * 60, goals: survey }); }
+      ? { task_id: state?.task_id } : { limit_s: Number(minutes) * 60, goals }); }
     finally { setUpdating(false); }
   };
   return <div className="map-updates">
     <div className="action-line">
       <Button variant="default" disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start updates</Button>
-      <Button disabled={!connected || updating || !update?.active || paused} onClick={() => void updateCommand('update_pause')}>Pause updates</Button>
+      <Button disabled={!connected || updating || paused || (!update?.active && !idle)} onClick={() => void updateCommand('update_pause')}>Pause updates</Button>
     </div>
+    {!paused && blockers.length > 0 && <span role="status" className="muted">{blockers.join(' · ')}</span>}
     <details><summary>Manual update points · {survey.length} views</summary>
-      <span className="muted">Select a map goal and heading, then add it to the queue. Updates repeat these points until paused.</span>
+      <span className="muted">Select a map goal and heading, then add it to the queue. The map stays fixed while collecting. Pause updates publishes the latest map.</span>
       <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
       <div className="action-line">
         <Button disabled={!idle || updating || !goal || survey.length >= 20} onClick={() => goal && setSurvey(old => [...old, goal])}>Add goal</Button>

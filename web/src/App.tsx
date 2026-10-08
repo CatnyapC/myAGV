@@ -433,7 +433,7 @@ export function App() {
     <main className={`grid-stack ${layoutEditing ? 'layout-editing' : ''}`} ref={gridHost}>
       {panel('map', <>
         <div className="map-tools">
-          <span className="muted">{drawing ? draft.length < 2 ? 'Select two corners' : 'Preview' : state?.demo === false ? state.hardware?.mapping_mode ? 'Live SLAM map' : 'Saved ROS map' : 'Demo map'}</span>
+          <span className="muted">{drawing ? draft.length < 2 ? 'Select two corners' : 'Preview' : state?.demo === false ? state.hardware?.mapping_mode ? 'Static SLAM snapshot' : 'Saved ROS map' : 'Demo map'}</span>
           <div className="toolbar-actions">
             {state?.demo === false && <Button disabled={!canEdit || busy} onClick={() => setResetMapOpen(true)}><RotateCcw size={14} /> Reset map</Button>}
             {drawing && <><Button variant="default" disabled={draft.length !== 2 || busy || !canEdit} onClick={() => void command('zone_add')}>Save</Button>

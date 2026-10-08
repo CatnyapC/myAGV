@@ -42,7 +42,7 @@ def fake_control():
     c.queue, c.results, c.requests = queue.Queue(maxsize=1), OrderedDict(), OrderedDict()
     c.robot = SimpleNamespace(grid=dict(map_id='map'), zones=dict(revision=2), zero=Mock(),
             nav=Mock(), costmap_received={}, layers_ok=True, driver_watchdog=True, exclusive=True, sensors_ready=lambda: True,
-            zones_ready=lambda: True, clearance_ready=lambda r: True, validate_goal=Mock())
+            zones_ready=lambda: True, clearance_ready=lambda r: True, validate_goal=Mock(), commit_map_update=Mock())
     return c
 
 

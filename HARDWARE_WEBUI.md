@@ -49,11 +49,14 @@ under `web_runtime/map_backups/<session>/`, with original paths in `manifest.jso
 Photos remain in the library; old map positions and station associations become
 invalid. A startup failure restores the archived files.
 
-After reset, the label becomes **Live SLAM map**. Fresh scans update occupancy
-and the WebUI raster about once per second; map identity stays fixed during one
-SLAM session, even as its bounds grow. Existing no-go zones keep their world
-coordinates. Verify **Confirm map pose** before navigating; SLAM determines the
-pose, so **Set pose from goal** is disabled. The live mode survives service
+After reset, the label becomes **Static SLAM snapshot**. SLAM continues collecting
+scans, but the displayed map and navigation map stay fixed. **Pause updates**
+waits for the base to stop, then publishes the latest complete snapshot once.
+It also works while idle, without starting a survey. Time-limit pauses publish
+the snapshot too. Robot position remains live. Map identity stays fixed within
+one SLAM session; existing no-go zones keep their world coordinates. SLAM
+confirms its pose from fresh sensors automatically. **Set pose from goal** is
+disabled. The accepted snapshot survives API and bridge restarts. Mapping mode survives service
 restarts through `web_runtime/mapping.json`. Restarting the SLAM launch begins
 a fresh map session; stale no-go zones and taught stations are archived and
 must be taught again. Restarting only the API or bridge keeps the SLAM session.
@@ -80,7 +83,12 @@ must be taught again. Restarting only the API or bridge keeps the SLAM session.
 
 Manual BASE driving is supervised and bypasses no-go planning. It uses at most
 0.1 m/s and 0.3 rad/s; PICKUP base motion uses 0.03 m/s and 0.05 rad/s. Releasing
-buttons stops the task. Fetch and survey fold the arm before travel.
+buttons stops the task. Fetch folds the arm before travel. Map updates use the
+front camera and the same base-only readiness conditions as Go. They do not
+require arm homing or move the arm. Select a goal and press **Start updates**,
+or add several goals under **Manual update points**. Disabled-start reasons
+appear below the buttons. Starting updates also validates each selected goal;
+it does not require the robot's current footprint to be observed as free.
 
 ## Navigation, no-go zones and Fetch
 

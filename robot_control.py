@@ -159,7 +159,7 @@ class Control:
         command = packet.get('type')
         if command in ('teleop_acquire', 'teleop_release'):
             raise ValueError('TELEOP handoff requires the local socket')
-        if command in ('update_pause', 'update_start'):
+        if command in ('update_pause', 'update_start') and (command == 'update_start' or (self.map_update or {}).get('active')):
             update = self.map_update
             if not update or not update['active'] or packet.get('task_id') != self.task_id or packet.get('session_id') != self.owner:
                 raise ValueError('Current map update and owning tab required')
@@ -550,6 +550,13 @@ class Control:
             if packet.get('confirmed') is not True:
                 raise ValueError('Confirm reset of map, no-go zones and taught stations')
             return self.reset_map()
+        elif kind == 'update_pause':
+            self.base_enabled = False
+            self.robot.zero()
+            self.robot.nav.cancel()
+            self.robot.nav.wait_stopped()
+            self.robot.commit_map_update()
+            return dict(map_revision=self.robot.grid['revision'])
         elif kind in ('home', 'confirm_homed'):
             self.require_arm(False)
             self.robot.nav.wait_stopped()
@@ -653,7 +660,6 @@ class Control:
         if not isinstance(goals, list) or not 1 <= len(goals) <= 20:
             raise ValueError('Select 1..20 viewing poses')
         poses = [validate_pose(p) for p in goals]
-        self.travel_guard(self.robot.nav.get_pose(timeout=.1))
         for pose in poses:
             self.travel_guard(pose)
         return dict(goals=poses, capped=False)
@@ -672,8 +678,7 @@ class Control:
         self.robot.zero()
         self.robot.nav.cancel()
         self.robot.nav.wait_stopped()
-        self.angles = wait_arm(self.arm, timeout=3)
-        self.arm_stamp = time.monotonic()
+        self.robot.commit_map_update()
         self.phase, self.status = 'update_paused', update['pause_reason']
         update['state'] = 'paused'
         while update['pause_requested']:
@@ -687,9 +692,6 @@ class Control:
     def run_update(self, packet):
         limit_s = number(packet.get('limit_s', 600), 60, 3600, 'Update window seconds')
         started = time.monotonic()
-        self.require_arm()
-        if self.config['transport_angles'] is None:
-            raise ValueError('Record folded transport pose before map updating')
         plan = self.plan_update(packet)
         self.map_update = update = {**plan, 'map_id': self.robot.grid['map_id'],
             'zone_revision': self.robot.zones['revision'], 'map_revision': self.robot.grid.get('revision'), 'active': True, 'state': 'updating',
@@ -697,7 +699,6 @@ class Control:
             'pause_reason': '', 'storage_error': '', 'completed': 0, 'round': 1, 'captures': 0}
         try:
             self.capture('front', persist=False)
-            self.fold()
             while True:
                 self.wait_update()
                 if update['completed'] == 0 and update['round'] > 1 and update['map_revision'] != self.robot.grid.get('revision'):

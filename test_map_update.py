@@ -21,12 +21,23 @@ from web_backend.storage import atomic_json
 
 
 class MapUpdateTest(unittest.TestCase):
+    def test_idle_pause_commits_latest_map_without_arm_or_movement(self):
+        c = fake_control()
+        c.arm, c.arm_homed = None, False
+        c.robot.grid['revision'] = 2
+        p = {**packet(), 'type': 'update_pause'}
+        self.assertEqual(c.receive(p)['status'], 'accepted')
+        self.assertEqual(c.execute(c.queue.get_nowait()), dict(map_revision=2))
+        c.robot.nav.wait_stopped.assert_called_once()
+        c.robot.commit_map_update.assert_called_once()
+        c.robot.nav.go_to.assert_not_called()
+
     def test_updates_require_manual_points_and_validate_each_pose(self):
         c = fake_control()
         c.travel_guard = Mock()
         poses = [dict(x_m=1, y_m=2, yaw_rad=.5), dict(x_m=2, y_m=3, yaw_rad=1)]
         self.assertEqual(c.plan_update({'goals': poses}), dict(goals=poses, capped=False))
-        self.assertEqual([call.args[0] for call in c.travel_guard.call_args_list[1:]], poses)
+        self.assertEqual([call.args[0] for call in c.travel_guard.call_args_list], poses)
         for goals in (None, [], {}, poses * 11, [dict(x_m=float('nan'), y_m=0, yaw_rad=0)]):
             with self.assertRaises(ValueError):
                 c.plan_update({'goals': goals})
@@ -62,6 +73,7 @@ class MapUpdateTest(unittest.TestCase):
         self.assertGreater(c.map_update['deadline'], time.monotonic() + 59)
         self.assertFalse(c.map_update['pause_requested'])
         c.robot.nav.wait_stopped.assert_called_once()
+        c.robot.commit_map_update.assert_called_once()
 
     def test_pause_retries_current_view_and_updates_repeat_until_cancelled(self):
         c = fake_control()
@@ -70,6 +82,8 @@ class MapUpdateTest(unittest.TestCase):
         poses = [dict(x_m=1, y_m=1, yaw_rad=0), dict(x_m=2, y_m=1, yaw_rad=math.pi / 2)]
         c.plan_update = Mock(return_value=dict(goals=poses, capped=False))
         c.fold = Mock()
+        c.arm, c.arm_homed = None, False
+        c.config['transport_angles'] = None
         dispatched = []
         def go(pose):
             dispatched.append(pose)
@@ -95,6 +109,7 @@ class MapUpdateTest(unittest.TestCase):
         self.assertEqual(captures[0].kwargs['update_key'], captures[2].kwargs['update_key'])
         self.assertFalse(c.map_update['active'])
         self.assertEqual(c.map_update['state'], 'interrupted')
+        c.fold.assert_not_called()
 
     def test_navigation_guard_enforces_window_even_without_ros_timer(self):
         c = fake_control()
