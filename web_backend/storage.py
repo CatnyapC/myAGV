@@ -21,4 +21,4 @@ def atomic_bytes(path, content):
 
 
 def atomic_json(path, value):
-    atomic_bytes(path, (json.dumps(value, allow_nan=False, indent=2) + '\n').encode('utf-8'))
+    atomic_bytes(path, (json.dumps(value, allow_nan=False, separators=(',', ':')) + '\n').encode('utf-8'))

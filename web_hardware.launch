@@ -57,7 +57,7 @@
         robot_base_frame: base_footprint
         transform_tolerance: 0.5
         update_frequency: 5.0
-        publish_frequency: 5.0
+        publish_frequency: 1.0
         always_send_full_costmap: true
         footprint: "[]"
         robot_radius: 0.25
