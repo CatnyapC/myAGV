@@ -75,6 +75,30 @@ def qualitative_alignment(result, config):
     return moves
 
 
+def measured_arm_alignment(result, config):
+    config = calibration_config(config)
+    for box in result.values():
+        if (not isinstance(box, list) or len(box) != 4
+                or any(type(v) is not int or not 0 <= v <= 1000 for v in box)
+                or box[0] >= box[2] or box[1] >= box[3]):
+            raise ValueError('Arm target visible bounds unavailable or invalid')
+    goal, current = result['goal'], result['current']
+    x = (current[0] + current[2] - goal[0] - goal[2]) / 2
+    goal_height, height = goal[3] - goal[1], current[3] - current[1]
+    y = height - goal_height  # More exposed => Y+.
+    width_ratio = (current[2] - current[0]) / (goal[2] - goal[0])
+    area_ratio = width_ratio * height / goal_height
+    if abs(x) <= 20 and abs(y) <= 20 and (abs(width_ratio - 1) > .10 or abs(area_ratio - 1) > .15
+            or abs(current[1] - goal[1]) > 20 or abs(current[3] - goal[3]) > 20):
+        raise ValueError('Arm GOAL size or pose still differs; correction direction unclear')
+    def step(error):
+        if abs(error) <= 20:
+            return 0
+        size = 10 if abs(error) > 150 else 5 if abs(error) > 60 else 1
+        return math.copysign(min(config['max_step_mm'], size), error)
+    return dict(x_mm=step(x), y_mm=step(y), turn_deg=0)
+
+
 def pickup_delta(axis, delta):
     """J1=90: logical forward/right maps to native +Y/-X."""
     if axis not in ('X', 'Y', 'Z'):

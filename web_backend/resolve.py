@@ -150,44 +150,27 @@ reason to stop. aligned_stalled means accept rough base position and proceed to
 arm fine alignment, never that the arm GOAL matches. With fewer than five history
 images, aligned_stalled is forbidden."""
     else:
-        fields = ('x', 'y')
-        labels = ['minus_large', 'minus_medium', 'minus_small', 'aligned_perfectly', 'plus_small', 'plus_medium', 'plus_large', 'unknown']
-        instruction = """ACTIVE STAGE: ARM ONLY. Base is locked. Return {"x":label,"y":label}.
-GOAL is the saved top-camera calibration view, NOT image center. Match the CURRENT
-bottom fragment to GOAL: horizontal position, vertical boundary, visible width,
-height, and cropping/visible proportion must match. Do not require the full item
-or gripper. Only return both aligned_perfectly when these match within visible
-image precision. Large/medium/small command 10/5/1 mm, capped by settings.
-X: item right of its GOAL position => plus; left => minus.
-Y: calibrated direction: if CURRENT exposes MORE of the bottom fragment than GOAL
-(visible height/area/proportion too large), command plus; if it exposes LESS,
-command minus. Compare normalized image coordinates and proportions, not raw pixels
-across different resolutions. No direction probe is needed. Keep Z fixed.
-Use history to reduce overshoot. Unknown only when the
-fragment or required direction cannot be determined, not merely because clipped.
-
-MANDATORY ARM COMPLETION CHECK, performed silently before returning labels:
-1. Locate the SAME visible target feature in GOAL and CURRENT, not the floor or
-the uploaded identity photo. Compare normalized positions in the full images.
-2. X may be aligned_perfectly ONLY if that feature's horizontal midpoint differs
-by at most 2% of image width. A clearly left/right fragment still needs correction.
-3. Y may be aligned_perfectly ONLY if its top boundary and bottom-exposed height
-differ by at most 2% of image height AND its visible width/area/cropping proportion
-look the same (no clear size mismatch). MORE exposed => plus; LESS => minus.
-4. Both aligned_perfectly is a completion command, not a confidence label.
-If either check fails, return a correction for that axis. Small but visible error
-means small, never aligned_perfectly. If pose/shape mismatch prevents deciding a
-reducing direction, return unknown instead of falsely declaring completion.
-Do not relax these checks after many rounds or because earlier moves improved it.
-
-Failure example: GOAL shows a small blue arc at bottom near the middle, but CURRENT
-shows a large bottle section extending up from bottom-left. This is NOT aligned:
-X must be minus (left of GOAL), Y must be plus (too much exposed). Never output
-both aligned_perfectly or Y minus for that example. Choose magnitude from the
-CURRENT error, using history only to avoid repeating an overshoot.
-Return ONLY the two requested labels; no explanation or extra fields."""
-    schema = dict(type='object', properties={field: dict(type='string', enum=labels)
-                  for field in fields}, required=list(fields), additionalProperties=False)
+        fields = ('goal', 'current')
+        instruction = """ACTIVE STAGE: ARM MEASUREMENT ONLY. Base is locked.
+Return ONLY {"goal":[left,top,right,bottom],"current":[left,top,right,bottom]}.
+Each array is the bounding box of the SAME TARGET ITEM'S VISIBLE FRAGMENT in that
+labeled image, using integer coordinates normalized to 0..1000 across the FULL
+image. Include only visible object pixels, including the part clipped at the
+bottom; do NOT infer the unseen full object. Bottom-clipped objects have bottom=1000.
+Ignore the floor, shadows, people, and the uploaded identity photo's coordinates.
+Measure GOAL and CURRENT independently. Do not copy coordinates between them.
+A fragment left of GOAL must have a smaller horizontal midpoint. A taller visible
+fragment must have a smaller top coordinate when both touch the bottom edge.
+Never report alignment or motor commands. The controller computes those from
+these measurements. Return null for an image only if its target cannot be located.
+Earlier history images are not CURRENT and must not supply its coordinates."""
+    if stage == 'base':
+        schema = dict(type='object', properties={field: dict(type='string', enum=labels)
+                      for field in fields}, required=list(fields), additionalProperties=False)
+    else:
+        box_schema = dict(anyOf=[dict(type='array', items=dict(type='integer', minimum=0, maximum=1000), minItems=4, maxItems=4), dict(type='null')])
+        schema = dict(type='object', properties={field: box_schema for field in fields},
+                      required=list(fields), additionalProperties=False)
     if not isinstance(history, list) or len(history) > (5 if stage == 'base' else 2):
         raise ValueError('Invalid fetch calibration history')
     content = [dict(type='text', text=json.dumps(dict(name=item['name'], appearance=item['appearance']), ensure_ascii=False))]
@@ -198,11 +181,11 @@ Return ONLY the two requested labels; no explanation or extra fields."""
         content.extend([dict(type='text', text=label), dict(type='image_url', image_url=dict(url=image, detail='high'))])
 
     add_image('Uploaded item reference: identity only', reference)
-    if stage == 'arm':
-        add_image('GOAL: saved arm-top calibration position; match visible fragment exactly', goal)
     camera = 'front' if stage == 'base' else 'arm'
     for previous in history:
         add_image('Before executed adjustment ' + json.dumps(previous['commanded']) + ' (X/Y mm, turn_deg clockwise)', previous['images'][camera])
+    if stage == 'arm':
+        add_image('GOAL: measure visible target fragment bounds in this image', goal)
     add_image('CURRENT: ' + camera + ' camera', images[camera])
     body = dict(model=MODEL, messages=[dict(role='system', content=prompt + '\n\n' + instruction),
         dict(role='user', content=content)],
@@ -214,21 +197,23 @@ Return ONLY the two requested labels; no explanation or extra fields."""
     result = await request_json(body, key, FETCH_VISION_TIMEOUT_S)
     if trace is not None:
         trace['result_json'] = json.dumps(result, ensure_ascii=False)
-    if not isinstance(result, dict) or set(result) != set(fields) or any(not isinstance(v, str) or v not in labels for v in result.values()):
-        raise ValueError('Invalid alignment stage labels')
+    if not isinstance(result, dict) or set(result) != set(fields):
+        raise ValueError('Invalid alignment stage output')
     if stage == 'base':
+        if any(not isinstance(v, str) or v not in labels for v in result.values()):
+            raise ValueError('Invalid alignment stage labels')
         if result['front'] == 'aligned_stalled' and len(history) < 5:
             raise ValueError('Base stagnation requires five executed rotation rounds')
         front = 'aligned_perfectly' if result['front'] == 'aligned_stalled' else result['front']
         moves = qualitative_alignment(dict(arm='aligned_perfectly', front=front), config)
+        aligned = front == 'aligned_perfectly'
     else:
-        steps = dict(minus_large=-10, minus_medium=-5, minus_small=-1, aligned_perfectly=0, plus_small=1, plus_medium=5, plus_large=10)
-        if 'unknown' in result.values():
-            raise ValueError('Arm target or correction direction ambiguous')
-        moves = {axis + '_mm': max(-config['max_step_mm'], min(config['max_step_mm'], steps[result[axis]])) for axis in fields}
-        moves['turn_deg'] = 0
+        from fetch_calibration import measured_arm_alignment
+        moves = measured_arm_alignment(result, config)
+        aligned = not any(moves.values())
     if trace is not None:
-        trace['aligned_perfectly'] = all(result[field] == 'aligned_perfectly' for field in fields) or (stage == 'base' and result['front'] == 'aligned_stalled')
+        trace['aligned_perfectly'] = aligned
+
     return moves
 
 

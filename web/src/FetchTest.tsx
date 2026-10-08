@@ -92,7 +92,7 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">Stage 1: front midpoint within 45–55% of image width; base only. After 5 rotations without clear progress, accept coarse position. Stage 2: base locked, arm X/Y match the saved top-camera GOAL, including visible size and cropping. Arm steps 10/5/1 mm, capped by setting. Unknown stops.</span>
+    <span className="muted">Stage 1: front midpoint within 45–55% of image width; base only. After 5 rotations without clear progress, accept coarse position. Stage 2: base locked, arm X/Y match the saved top-camera GOAL, including visible size and cropping. Arm returns visible bounds (0–1000); code computes 10/5/1 mm steps and completion. Unclear bounds or pose stop with an error.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
