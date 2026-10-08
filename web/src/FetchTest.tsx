@@ -12,7 +12,7 @@ type Round = {
 };
 
 export function FetchTest(props: {
-  connected: boolean; editable: boolean; reasons: string[]; itemId: string; indexRevision?: number;
+  connected: boolean; editable: boolean; turnEnabled: boolean; reasons: string[]; itemId: string; indexRevision?: number;
   itemName?: string; status?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
 }) {
   const [settings, setSettings] = useState<FetchSettings | null>(null);
@@ -49,7 +49,7 @@ export function FetchTest(props: {
     return () => { controller.abort(); clearTimeout(timer); };
   }, [props.connected]);
 
-  async function save(preview?: boolean) {
+  async function save(preview?: boolean, turnSize?: 's' | 'm' | 'l') {
     if (!settings || !draft || pending) return;
     setPending(true); setError('');
     try {
@@ -57,6 +57,7 @@ export function FetchTest(props: {
         method: 'PUT', body: JSON.stringify({ expected_revision: settings.revision, values: draft }),
       });
       setSettings(saved); setDraft(saved.values);
+      if (turnSize) await props.command('fetch_turn_test', { size: turnSize, fetch_revision: saved.revision });
       if (preview !== undefined) await props.command('fetch_test', {
         item_id: props.itemId, index_revision: props.indexRevision, fetch_revision: saved.revision, preview,
       });
@@ -83,6 +84,13 @@ export function FetchTest(props: {
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, turn_step_deg: Number(event.target.value) })} /></label>
       </div>
       <span className="muted">Base large / medium / small: {draft.turn_step_deg}° / {draft.turn_step_deg / 2}° / {draft.turn_step_deg / 4}°. Large pulse ≈{(draft.turn_duration_scale * draft.turn_step_deg * Math.PI / 180 / draft.turn_speed_rad_s).toFixed(2)} s. Save or press ALIGN to apply next run.</span>
+      <div className="action-line">{(['s', 'm', 'l'] as const).map(size => <Button key={size}
+        disabled={!props.connected || !props.editable || !props.turnEnabled || pending || !settings}
+        title="Save settings, then rotate right once. No LLM or arm movement."
+        onClick={() => void save(undefined, size)}>{size.toUpperCase()} ↻</Button>)}
+        <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
+      </div>
+      <span className="muted">S / M / L: one right turn using saved settings. No item or LLM required.</span>
       <label className="photo-field">Calibration prompt<textarea className="fetch-prompt" rows={10} maxLength={8000} value={draft.prompt}
         disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, prompt: event.target.value })} /></label>
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>

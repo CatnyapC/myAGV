@@ -682,6 +682,13 @@ class Control:
             if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
                 raise RuntimeError('Arm moved while recording grasp goal')
             return dict(captures=captures)
+        elif kind == 'fetch_turn_test':
+            size = packet.get('size')
+            if size not in ('s', 'm', 'l'):
+                raise ValueError('Choose S, M or L rotation test')
+            config = calibration_config(packet['fetch_settings'])
+            self.phase, self.status = 'calibrating', 'Right rotation test: ' + size.upper()
+            self.turn_fetch(config['turn_step_deg'] * {'s': .25, 'm': .5, 'l': 1}[size], config)
         elif kind == 'fetch_test':
             self.require_arm()
             if not self.localized or type(packet.get('preview')) is not bool:

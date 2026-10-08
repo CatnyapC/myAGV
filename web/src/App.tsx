@@ -297,7 +297,7 @@ export function App() {
     } catch (failure) {
       // Releasing a manual button aborts its pending start; a newer hold may already exist.
       if (type === 'manual' && session.current && failure instanceof DOMException && failure.name === 'AbortError') return;
-      held.current = null; setError((failure as Error).message); if (type === 'reset_map' || type === 'fetch_test') throw failure;
+      held.current = null; setError((failure as Error).message); if (type === 'reset_map' || type === 'fetch_test' || type === 'fetch_turn_test') throw failure;
     }
   }
   async function stop() {
@@ -609,7 +609,7 @@ export function App() {
         <span className="muted enforcement">{state?.demo === false ? costmapReady ? 'ROS global + local no-go applied' : 'ROS no-go enforcement pending' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
         {state?.demo === false && <HardwareControls stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
-        <FetchTest connected={connected} editable={canEdit && !busy} itemId={selectedItemId} itemName={selectedItem?.name}
+        <FetchTest connected={connected} editable={canEdit && !busy} turnEnabled={state?.demo === false && Boolean(state?.hardware?.localized)} itemId={selectedItemId} itemName={selectedItem?.name}
           indexRevision={photos?.revision} command={hardwareCommand} stop={() => void stop()} status={navigation?.status}
           reasons={[
             ...(!connected ? ['Reconnect to the robot'] : state?.phase !== 'idle' ? [`Robot busy (${state?.phase}); wait for completion`] : busy ? ['Wait for the current operation'] : []),

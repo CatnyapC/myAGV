@@ -512,6 +512,10 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             'estimate': estimate, 'location_config': location_calibration,
                             'reference_photo_id': estimate['photo_id'],
                             'catalog_signature': catalog_signature(photos.value['items'])}
+                if kind == 'fetch_turn_test':
+                    if data.get('size') not in ('s', 'm', 'l') or data.get('fetch_revision') != fetch_settings['revision']:
+                        raise ValueError('Rotation test size or settings revision invalid; retry')
+                    data = {**data, 'fetch_settings': dict(fetch_settings['values'])}
                 if kind in ('fetch', 'fetch_test'):
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')

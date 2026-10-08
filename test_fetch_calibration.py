@@ -22,6 +22,17 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
+    def test_rotation_buttons_use_saved_sizes_without_arm_or_camera(self):
+        c = fake_control()
+        c.arm, c.arm_homed, c.turn_fetch = None, False, Mock()
+        config = calibration_config(dict(turn_step_deg=1.6, turn_speed_rad_s=.02, turn_duration_scale=.6))
+        for size, angle in (('s', .4), ('m', .8), ('l', 1.6)):
+            c.execute(dict(type='fetch_turn_test', size=size, fetch_settings=config))
+            c.turn_fetch.assert_called_with(angle, config)
+        c.capture.assert_not_called()
+        with self.assertRaises(ValueError):
+            c.execute(dict(type='fetch_turn_test', size='invalid', fetch_settings=config))
+
     def test_preview_allows_off_axis_pose_but_alignment_requires_front_pose(self):
         c = fake_control()
         c.calibrate_fetch = Mock()
@@ -249,6 +260,12 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(json.loads((ui / 'fetch_settings.json').read_text()), saved)
                     self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values=values))).status, 409)
                     hardware.command = AsyncMock(return_value=dict(status='accepted'))
+                    turn = dict(id=str(uuid.uuid4()), type='fetch_turn_test', size='s', fetch_revision=1,
+                        map_id=grid['map_id'], expected_revision=app[EDITOR].zones['revision'], fetch_settings=dict(turn_speed_rad_s=100))
+                    self.assertEqual((await client.post('/api/commands', json=turn)).status, 200)
+                    self.assertEqual(hardware.command.call_args.args[0]['fetch_settings'], values)
+                    self.assertEqual((await client.post('/api/commands', json=dict(turn, fetch_revision=0))).status, 400)
+                    self.assertEqual((await client.post('/api/commands', json=dict(turn, size='invalid'))).status, 400)
                     command = dict(id=str(uuid.uuid4()), type='fetch_test', preview=True, map_id=grid['map_id'],
                         expected_revision=app[EDITOR].zones['revision'], item_id=item_id, index_revision=index.value['revision'], fetch_revision=1,
                         fetch_settings=dict(max_step_mm=100))
