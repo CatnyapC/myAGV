@@ -10,6 +10,6 @@ module.exports = { apps: [
   processConfig('myagv-localization', 'exec roslaunch --wait ./web_hardware.launch map_file:="${MYAGV_MAP_FILE:-$HOME/maps/room.yaml}" mapping:="$(test -f web_runtime/mapping.json && echo true || echo false)"'),
   { ...processConfig('myagv-bridge', 'exec /usr/bin/python3 ros_web_bridge.py'),
     env: { MYAGV_HARDWARE_DIR: path.join(__dirname, 'web_runtime/ros'),
-           MYAGV_FRONT_DEVICE: process.env.MYAGV_FRONT_DEVICE || '/dev/video0',
-           MYAGV_ARM_DEVICE: process.env.MYAGV_ARM_DEVICE || '/dev/video1' } },
+           MYAGV_FRONT_DEVICE: process.env.MYAGV_FRONT_DEVICE || '/dev/video2',
+           MYAGV_ARM_DEVICE: process.env.MYAGV_ARM_DEVICE || '/dev/v4l/by-id/usb-USB_corp._usb_camera_usb_camera-video-index0' } },
 ] };

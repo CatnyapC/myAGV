@@ -250,11 +250,15 @@ Physical stopping distance and firmware behavior need supervised acceptance.
 
 ## Devices and map
 
-Defaults: front `/dev/video0`, arm `/dev/video1`, P340 `/dev/ttyUSB0` at 115200.
+Defaults: front Raspberry Pi `camera0` at `/dev/video2`, arm USB camera at
+`/dev/v4l/by-id/usb-USB_corp._usb_camera_usb_camera-video-index0`,
+P340 `/dev/ttyUSB0` at 115200. The USB path follows the capture device across
+reconnections; its `video-index1` node carries metadata, not images.
 Verify these roles. Override camera devices when restarting the bridge:
 
 ```bash
-MYAGV_FRONT_DEVICE=/dev/video0 MYAGV_ARM_DEVICE=/dev/video1 \
+MYAGV_FRONT_DEVICE=/dev/video2 \
+MYAGV_ARM_DEVICE=/dev/v4l/by-id/usb-USB_corp._usb_camera_usb_camera-video-index0 \
 pm2 startOrRestart ecosystem.robot.config.cjs --only myagv-bridge --update-env
 ```
 
