@@ -4,7 +4,7 @@ import { Button } from './ui';
 
 type TurnSize = 's' | 'm' | 'l';
 type TurnFields = Record<`turn_${TurnSize}_${'speed_rad_s' | 'duration_s'}`, number>;
-type FetchSettings = { revision: number; values: TurnFields & { max_step_mm: number; max_total_mm: number; turn_speed_rad_s: number; turn_duration_scale: number; turn_step_deg: number; prompt: string } };
+type FetchSettings = { revision: number; values: TurnFields & { max_step_mm: number; turn_speed_rad_s: number; turn_duration_scale: number; turn_step_deg: number; prompt: string } };
 type Part = { type: string; text?: string; image_url?: { url: string } };
 type Round = {
   id: string; round: number; mode?: 'grasp' | 'approach'; stage?: 'base' | 'arm'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
@@ -74,8 +74,7 @@ export function FetchTest(props: {
       <div className="goal-inputs">
         <label>Arm X/Y step (mm)<input type="number" min={0.1} max={10} step={0.1} value={draft.max_step_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_step_mm: Number(event.target.value) })} /></label>
-        <label>Total arm X/Y (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
-          disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_total_mm: Number(event.target.value) })} /></label>
+
       </div>
       {(['s', 'm', 'l'] as const).map(size => <div className="goal-inputs" key={size}>
         <label>{size.toUpperCase()} speed (rad/s)<input type="number" min={0.005} max={0.1} step={0.001} value={draft[`turn_${size}_speed_rad_s`]}
@@ -99,7 +98,7 @@ export function FetchTest(props: {
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
-    <span className="muted">Preview: one coarse-alignment round, no movement. ALIGN runs both stages in order. Arm Z and gripper stay fixed. More bottom fragment than GOAL: Y+; less: Y−. Up to 33 observations; total arm travel includes X and Y.</span>
+    <span className="muted">Preview: one coarse-alignment round, no movement. ALIGN runs both stages in order. Arm Z and gripper stay fixed. More bottom fragment than GOAL: Y+; less: Y−. Up to 33 observations; no cumulative arm travel cap.</span>
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}

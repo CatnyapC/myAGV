@@ -153,8 +153,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         values=dict(**calibration_config(None), prompt=PICKUP_PROMPT)))
 
     def validate_fetch_settings(values):
-        if (not isinstance(values, dict) or not {'max_step_mm', 'max_total_mm', 'prompt'} <= set(values)
-                or set(values) - (set(calibration_config(None)) | {'prompt'})):
+        if (not isinstance(values, dict) or not {'max_step_mm', 'prompt'} <= set(values)
+                or set(values) - (set(calibration_config(None)) | {'prompt', 'max_total_mm'})):
             raise ValueError('Invalid fetch settings')
         limits = calibration_config(values)
         if not isinstance(values['prompt'], str) or not 1 <= len(values['prompt'].strip()) <= 8000:

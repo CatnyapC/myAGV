@@ -196,7 +196,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as folder:
             c.directory = Path(folder)
             results = iter([dict(x_mm=0, turn_deg=1), dict(x_mm=0, turn_deg=0),
-                            dict(x_mm=1, y_mm=-1, turn_deg=0), dict(x_mm=0, y_mm=0, turn_deg=0)])
+                            dict(x_mm=10, y_mm=-10, turn_deg=0), dict(x_mm=1, y_mm=-1, turn_deg=0), dict(x_mm=0, y_mm=0, turn_deg=0)])
             requests = []
             def respond(path, value):
                 requests.append(value)
@@ -206,11 +206,11 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     aligned_perfectly=not any(result.values())))
             with patch('robot_control.atomic_json', side_effect=respond):
                 c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
-            self.assertEqual([r['stage'] for r in requests], ['base', 'base', 'arm', 'arm'])
+            self.assertEqual([r['stage'] for r in requests], ['base', 'base', 'arm', 'arm', 'arm'])
             self.assertEqual(requests[2]['history'], [])
-            self.assertEqual(c.capture.call_args_list, [call('front', vision=True)] * 2 + [call('arm', vision=True)] * 2)
+            self.assertEqual(c.capture.call_args_list, [call('front', vision=True)] * 2 + [call('arm', vision=True)] * 3)
             c.turn_fetch.assert_called_once_with(1, calibration_config(None))
-            self.assertEqual(c.arm_step.call_args_list, [call('X', 1, pickup=True, distance=1), call('Y', -1, pickup=True, distance=1)])
+            self.assertEqual(c.arm_step.call_args_list, [call('X', 1, pickup=True, distance=1)] * 10 + [call('Y', -1, pickup=True, distance=1)] * 10 + [call('X', 1, pickup=True, distance=1), call('Y', -1, pickup=True, distance=1)])
             self.assertFalse(list(c.directory.iterdir()))
             results = iter([dict(x_mm=1, turn_deg=0)])
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):

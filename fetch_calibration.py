@@ -11,7 +11,7 @@ def calibration_config(value):
     if not isinstance(value, dict):
         raise ValueError('Invalid fetch_calibration configuration')
     result = {key: value.get(key, default) for key, default in (
-        ('max_step_mm', 10), ('max_total_mm', 20), ('turn_speed_rad_s', .015),
+        ('max_step_mm', 10), ('turn_speed_rad_s', .015),
         ('turn_duration_scale', .8), ('turn_step_deg', 2))}
     for key in result:
         number = result.get(key)
@@ -19,8 +19,6 @@ def calibration_config(value):
             raise ValueError('Invalid fetch calibration: ' + key)
     if not .1 <= result['max_step_mm'] <= 10:
         raise ValueError('Invalid fetch alignment step limit')
-    if not result['max_step_mm'] <= result['max_total_mm'] <= 30:
-        raise ValueError('Invalid fetch alignment travel budget')
     for key, low, high in (('turn_speed_rad_s', .005, .1), ('turn_duration_scale', .1, 1.5), ('turn_step_deg', .4, 2)):
         if not low <= result[key] <= high:
             raise ValueError('Invalid fetch calibration: ' + key)

@@ -924,7 +924,7 @@ class Control:
         self.robot.zero()
         request_path = self.directory / 'fetch_vision_request.json'
         response_path = self.directory / 'fetch_vision_response.json'
-        travel, turned = 0, 0
+        turned = 0
         history = []
         stage = 'base'
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
@@ -988,9 +988,6 @@ class Control:
                     self.status = 'Aligning left/right with base rotation'
                     self.turn_fetch(moves['turn_deg'], config)
                     moves['X'] = 0  # Rotation changes the arm view; recapture before advancing.
-                travel += abs(moves['X']) + abs(moves.get('Y', 0))
-                if travel > config['max_total_mm']:
-                    raise ValueError('Fetch alignment travel budget exhausted')
                 for axis, delta in [('X', moves['X']), ('Y', moves.get('Y', 0))]:
                     remaining = abs(delta)
                     while remaining >= .001:
