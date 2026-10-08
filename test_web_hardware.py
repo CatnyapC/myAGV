@@ -3,15 +3,44 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 from aiohttp.test_utils import TestClient, TestServer
 from web_backend.hardware import Hardware
 from web_backend.map_data import demo_map
-from web_backend.server import create_app
+from web_backend.server import EDITOR, create_app
 from web_backend.storage import atomic_bytes, atomic_json
 
 
 class HardwareTest(unittest.IsolatedAsyncioTestCase):
+    async def test_stop_recovery_waits_for_feedback_and_reports_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bridge = root / 'ros'
+            grid = demo_map()
+            atomic_json(bridge / 'map.json', grid)
+            app = create_app(root / 'ui', hardware_dir=bridge)
+            hardware = app[EDITOR].hardware
+            hardware.refresh = Mock()
+            hardware.control = dict(stamp_s=time.time(), boot_id='boot', phase='fault')
+            hardware.sessions['tab'] = dict(ack=time.monotonic())
+            data = dict(id='recovery', type='recover_stop', confirmed=True, session_id='tab',
+                        map_id=grid['map_id'], expected_revision=app[EDITOR].zones['revision'])
+            async with TestClient(TestServer(app)) as client:
+                for result, status in ((dict(status='completed'), 200),
+                                       (dict(status='failed', error='P340 USB input/output error'), 400),
+                                       (dict(status='cancelled', error='Recovery stopped'), 400)):
+                    with self.subTest(result=result):
+                        hardware.sessions['tab']['ack'] = time.monotonic()
+                        hardware.control['stamp_s'] = time.time()
+                        hardware.rpc = AsyncMock(side_effect=[dict(status='accepted'), dict(status='pending'), result])
+                        response = await client.post('/api/commands', json=data)
+                        self.assertEqual(response.status, status)
+                        self.assertEqual(await response.json(), result if status == 200 else dict(error=result['error']))
+                        self.assertEqual(hardware.rpc.await_count, 3)
+                        self.assertEqual(hardware.rpc.call_args.args[0], dict(op='result', id=data['id']))
+                hardware.rpc = AsyncMock(return_value=dict(status='stopping'))
+
     async def test_real_source_stale_feedback_and_motion_guards(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

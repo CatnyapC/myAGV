@@ -374,7 +374,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Confirmed current-map station association required')
                     link = item['station_link']
                     data = {**data, 'station': link['name'], 'station_digest': link['digest']}
-                result = await editor.hardware.command(data, wait=kind in ('zone_add', 'zone_delete', 'teach', 'transport_record'))
+                result = await editor.hardware.command(data, wait=kind in ('zone_add', 'zone_delete', 'teach', 'transport_record', 'recover_stop'))
                 if 'zones' in result:
                     editor.zones = result['zones']
             await editor.emit('zones' if 'zones' in result else 'state')

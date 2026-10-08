@@ -138,6 +138,21 @@ class ControlTest(unittest.TestCase):
         with self.assertRaises(RuntimeError): c.receive(packet())
         c.receive(dict(packet(), type='recover_stop', confirmed=True))
         self.assertEqual(c.queue.qsize(), 1)
+        recovery = c.queue.get_nowait()
+        with self.assertRaises(ValueError):
+            c.execute(dict(recovery, confirmed=False))
+        c.robot.nav.wait_stopped.side_effect = TimeoutError('Base not stationary')
+        with self.assertRaises(TimeoutError):
+            c.execute(recovery)
+        c.robot.nav.wait_stopped.side_effect = None
+        with patch('robot_control.wait_arm', side_effect=TimeoutError('P340 unavailable')):
+            with self.assertRaises(TimeoutError):
+                c.execute(recovery)
+        self.assertTrue(c.home_cancelled)
+        with patch('robot_control.wait_arm', return_value=[0,0,0]):
+            c.execute(recovery)
+        self.assertFalse(c.home_cancelled)
+        self.assertFalse(c.arm_homed)
 
     def test_pure_geometry_and_driver_patch(self):
         grid = dict(width=10,height=10,resolution_m=.1, origin=dict(x_m=1,y_m=2,yaw_rad=math.pi/2),cells=[0]*100)
