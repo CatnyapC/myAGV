@@ -530,11 +530,13 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             raise ValueError('Fetch settings changed or test mode missing; retry')
                     if llm_key and not item['reference_photo_id']:
                         raise ValueError('Upload and associate an item reference photo first')
+                    if llm_key and not item.get('grasp_goal_ready'):
+                        raise ValueError('Save the arm calibration GOAL before alignment')
                     if kind == 'fetch':
                         link = item['station_link']
                         data = {**data, 'station': link['name'], 'station_digest': link['digest']}
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
-                            'vision_item': dict(name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id']) if llm_key else None}
+                            'vision_item': dict(name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm']) if llm_key else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):
                         raise ValueError('Fresh front camera required for map updating')
@@ -785,8 +787,11 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                 raise ValueError('Item reference photo unavailable')
                             reference_image = await asyncio.to_thread(photos.reference_image, reference['id'])
                             fetch_log['revision'] += 1
+                            goal_image = None
+                            if value.get('stage', 'base') == 'arm':
+                                goal_image = await asyncio.to_thread(photos.reference_image, value['item']['arm_goal_photo_id'])
                             result = await locate_pickup(value['images'], value['item'], llm_key, reference_image, value['history'],
-                                                         prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'))
+                                                         prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image)
                             entry.update(correction=alignment_command(result, value.get('limits')))
                     entry.update(status='returned')
                     response = dict(id=handled, result=result)

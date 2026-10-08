@@ -38,18 +38,18 @@ def calibration_config(value):
 
 def alignment_command(result, config):
     config = calibration_config(config)
-    if not isinstance(result, dict) or set(result) != {'x_mm', 'turn_deg'}:
+    if not isinstance(result, dict) or set(result) not in ({'x_mm', 'turn_deg'}, {'x_mm', 'y_mm', 'turn_deg'}):
         raise ValueError('Invalid model alignment JSON')
     moves = {}
-    for field, axis in (('x_mm', 'X'), ('turn_deg', 'turn_deg')):
+    for field, axis in [('x_mm', 'X'), ('turn_deg', 'turn_deg')] + ([('y_mm', 'Y')] if 'y_mm' in result else []):
         delta = result[field]
         if delta is None:
             raise ValueError('Pickup target missing or ambiguous')
-        if type(delta) not in (int, float) or not math.isfinite(delta) or abs(delta) > (10 if axis == 'X' else 2):
+        if type(delta) not in (int, float) or not math.isfinite(delta) or abs(delta) > (2 if axis == 'turn_deg' else 10):
             raise ValueError('Invalid model arm adjustment')
         if 0 < abs(delta) < .1:
             raise ValueError('Model arm adjustment is below measurable step size')
-        limit = config['max_step_mm'] if axis == 'X' else 2
+        limit = 2 if axis == 'turn_deg' else config['max_step_mm']
         moves[axis] = max(-limit, min(limit, delta))
     return moves
 

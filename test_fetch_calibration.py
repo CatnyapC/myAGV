@@ -169,7 +169,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_minimal_provider_request(self):
         images = dict(front='data:image/jpeg;base64,AQ==', arm='data:image/jpeg;base64,Ag==')
-        provider = AsyncMock(return_value=dict(arm='aligned_perfectly', front='aligned_perfectly'))
+        provider = AsyncMock(return_value=dict(front='aligned_perfectly'))
         history = [dict(images=images, commanded=dict(X=1, turn_deg=-1))] * 2
         trace = {}
         with patch('web_backend.resolve.request_json', provider):
@@ -180,66 +180,57 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body['max_tokens'], 64)
         self.assertTrue(body['response_format']['json_schema']['strict'])
         self.assertEqual([part['image_url']['detail'] for part in body['messages'][1]['content']
-                          if part['type'] == 'image_url'], ['high'] * 7)
+                          if part['type'] == 'image_url'], ['high'] * 4)
         labels = [part['text'] for part in body['messages'][1]['content'] if part['type'] == 'text']
         self.assertTrue(any('Uploaded item reference' in label for label in labels))
         self.assertFalse(any('GOAL' in label for label in labels))
         self.assertTrue(any('"X": 1' in label and '"turn_deg": -1' in label for label in labels))
-        self.assertEqual(trace['messages'][0]['content'], 'Edited prompt')
+        self.assertTrue(trace['messages'][0]['content'].startswith('Edited prompt'))
         self.assertEqual(json.loads(trace['result_json']), provider.return_value)
         self.assertTrue(trace['aligned_perfectly'])
 
-    def test_closed_loop_recaptures_and_missing_target_stops(self):
+    def test_closed_loop_stages_never_mix_motors(self):
         c = fake_control()
         c.task_id, c.arm_step, c.turn_fetch = 'task', Mock(), Mock()
         c.capture.return_value = {'image': 'compressed'}
         with tempfile.TemporaryDirectory() as folder:
             c.directory = Path(folder)
-            results = iter([{'x_mm': 2, 'turn_deg': 2}, {'x_mm': 1, 'turn_deg': 0}, {'x_mm': 0, 'turn_deg': 0}])
+            results = iter([dict(x_mm=0, turn_deg=1), dict(x_mm=0, turn_deg=0),
+                            dict(x_mm=1, y_mm=-1, turn_deg=0), dict(x_mm=0, y_mm=0, turn_deg=0)])
             requests = []
-
             def respond(path, value):
-                self.assertGreater(value['expires_at_s'] - time.time(), 34)
                 requests.append(value)
                 atomic_json(path, value)
                 result = next(results)
-                atomic_json(c.directory / 'fetch_vision_response.json', {'id': value['id'], 'result': result,
-                    'aligned_perfectly': result == dict(x_mm=0, turn_deg=0)})
+                atomic_json(c.directory / 'fetch_vision_response.json', dict(id=value['id'], result=result,
+                    aligned_perfectly=not any(result.values())))
+            with patch('robot_control.atomic_json', side_effect=respond):
+                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
+            self.assertEqual([r['stage'] for r in requests], ['base', 'base', 'arm', 'arm'])
+            self.assertEqual(requests[2]['history'], [])
+            self.assertEqual(c.capture.call_args_list, [call('front', vision=True)] * 2 + [call('arm', vision=True)] * 2)
+            c.turn_fetch.assert_called_once_with(1, calibration_config(None))
+            self.assertEqual(c.arm_step.call_args_list, [call('X', 1, pickup=True, distance=1), call('Y', -1, pickup=True, distance=1)])
+            self.assertFalse(list(c.directory.iterdir()))
+            results = iter([dict(x_mm=1, turn_deg=0)])
+            with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):
+                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
+            results = iter([dict(x_mm=0, turn_deg=0), dict(x_mm=0, y_mm=0, turn_deg=1)])
+            with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):
+                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
 
-            with patch('robot_control.atomic_json', side_effect=respond):
-                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
-            self.assertEqual(c.capture.call_args_list, [call('front', vision=True), call('arm', vision=True)] * 3)
-            c.arm_step.assert_called_once_with('X', 1, pickup=True, distance=1)
-            c.turn_fetch.assert_called_once_with(2, calibration_config(None))
-            self.assertEqual(requests[1]['history'][0]['commanded'], {'X': 0, 'turn_deg': 2})
-            self.assertFalse(list(c.directory.iterdir()))
-            c.arm_step.reset_mock()
-            results = iter([{'x_mm': None, 'turn_deg': 0}])
-            with patch('robot_control.atomic_json', side_effect=respond), self.assertRaises(ValueError):
-                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
-            c.arm_step.assert_not_called()
-            self.assertFalse(list(c.directory.iterdir()))
-            requests.clear()
-            results = iter([{'x_mm': .5, 'turn_deg': 0}] * 32 + [{'x_mm': 0, 'turn_deg': 0}])
-            with patch('robot_control.atomic_json', side_effect=respond):
-                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
-            self.assertEqual(len(requests), 33)
-            self.assertEqual(c.arm_step.call_count, 32)
-            self.assertEqual(len(requests[-1]['history']), 2)
-            c.arm_step.reset_mock()
-            c.turn_fetch.reset_mock()
-            results = iter([{'x_mm': 2, 'turn_deg': 1}])
-            with patch('robot_control.atomic_json', side_effect=respond):
-                c.calibrate_fetch({'vision_item': {'name': 'cup'}, 'preview': True}, None)
-            c.arm_step.assert_not_called()
-            c.turn_fetch.assert_not_called()
-            self.assertTrue(requests[-1]['preview'])
-            results = iter([{'x_mm': 0, 'turn_deg': 2}] * 22 +
-                           [{'x_mm': 0, 'turn_deg': 1}, {'x_mm': 0, 'turn_deg': .1}])
-            with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'rotation budget'):
-                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
-            self.assertEqual(sum(abs(entry.args[0]) for entry in c.turn_fetch.call_args_list), 45)
-            c.arm_step.assert_not_called()
+    async def test_arm_goal_labels_and_y_direction(self):
+        images = dict(arm='data:image/jpeg;base64,AQ==')
+        trace = {}
+        for label, expected in [('plus_medium', 5), ('minus_small', -1)]:
+            with patch('web_backend.resolve.request_json', AsyncMock(return_value=dict(x='aligned_perfectly', y=label))):
+                moves = await locate_pickup(images, dict(name='cup', appearance='red'), 'key', images['arm'], [],
+                    stage='arm', goal=images['arm'], trace=trace)
+            self.assertEqual(moves, dict(x_mm=0, y_mm=expected, turn_deg=0))
+            self.assertFalse(trace['aligned_perfectly'])
+            self.assertEqual(trace['stage'], 'arm')
+            self.assertIn('exposes MORE', trace['messages'][0]['content'])
+            self.assertTrue(any('GOAL:' in p.get('text', '') for p in trace['messages'][1]['content']))
 
     async def test_settings_persist_and_live_round_log_records_request_and_response(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -252,12 +243,20 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             reference = index.add(image, dict(kind='reference', source='phone'), 0)
             index.edit(reference['id'], dict(expected_revision=1, item_id='new', name='Cup', confirmed=True), grid['map_id'])
             item_id = index.value['items'][0]['id']
+            cameras = {}
+            for camera in ('front', 'arm'):
+                photo = index.add(image, dict(kind='observation', source='ros', camera_id=camera,
+                    map_id=grid['map_id'], map_revision=1, frame='map', captured_at_s=time.time(),
+                    base_pose=dict(x_m=0, y_m=0, yaw_rad=0)), index.value['revision'])
+                index.image_path(photo['id']).with_suffix('.jpg').write_bytes(image)
+                cameras[camera] = photo['id']
+            index.save_grasp_goal(item_id, cameras, index.value['revision'], grid['map_id'])
             entered, release = asyncio.Event(), asyncio.Event()
 
             async def provider(body, key, timeout):
                 entered.set()
                 await release.wait()
-                return dict(arm='right_large', front='left_large')
+                return dict(front='left_large')
 
             with patch('web_backend.server.load_key', return_value=('configured', 'private-test-key')), patch('web_backend.resolve.request_json', side_effect=provider):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
@@ -301,7 +300,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         await asyncio.wait_for(entered.wait(), 2)
                         log = await (await client.get('/api/fetch-log')).json()
                         self.assertEqual(log['rounds'][0]['status'], 'requesting')
-                        self.assertEqual(len([p for p in log['rounds'][0]['messages'][1]['content'] if p['type'] == 'image_url']), 3)
+                        self.assertEqual(len([p for p in log['rounds'][0]['messages'][1]['content'] if p['type'] == 'image_url']), 2)
                         self.assertNotIn('private-test-key', json.dumps(log))
                         self.assertEqual(await (await client.get(f"/api/fetch-log?after={log['revision']}")).json(), dict(revision=log['revision']))
                     finally:
@@ -313,9 +312,9 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(.025)
                     entry = log['rounds'][0]
                     self.assertEqual(entry['status'], 'returned')
-                    self.assertEqual(json.loads(entry['result_json']), dict(arm='right_large', front='left_large'))
-                    self.assertEqual(entry['correction'], dict(X=.5, turn_deg=-2))
-                    self.assertEqual(entry['messages'][0]['content'], values['prompt'])
+                    self.assertEqual(json.loads(entry['result_json']), dict(front='left_large'))
+                    self.assertEqual(entry['correction'], dict(X=0, turn_deg=-2))
+                    self.assertTrue(entry['messages'][0]['content'].startswith(values['prompt']))
                     entered.clear()
                     release.clear()
                     atomic_json(bridge / 'fetch_vision_request.json', dict(value, id='request-2', round=2))

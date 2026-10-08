@@ -926,6 +926,7 @@ class Control:
         response_path = self.directory / 'fetch_vision_response.json'
         travel, turned = 0, 0
         history = []
+        stage = 'base'
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
 
         def current():
@@ -941,14 +942,14 @@ class Control:
                 current()
                 self.status = 'Round %d: capturing front and arm cameras' % (round_index + 1)
                 self.robot.nav.wait_stopped()
-                images = {camera: self.capture(camera, vision=True)['image'] for camera in ('front', 'arm')}
+                images = {camera: self.capture(camera, vision=True)['image'] for camera in (('front',) if stage == 'base' else ('arm',))}
                 request_id = str(uuid.uuid4())
                 atomic_json(request_path, dict(id=request_id, boot_id=self.boot_id, task_id=self.task_id,
                     stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + FETCH_VISION_TIMEOUT_S + 5,
-                    item=packet['vision_item'], images=images, history=history,
+                    item=packet['vision_item'], images=images, history=history, stage=stage,
                     round=round_index + 1, preview=packet.get('preview', False), limits=config,
                     prompt=packet.get('fetch_settings', {}).get('prompt')))
-                self.status = 'Round %d: waiting for LLM' % (round_index + 1)
+                self.status = '%s alignment round %d: waiting for LLM' % (stage, round_index + 1)
                 end = time.monotonic() + FETCH_VISION_TIMEOUT_S + 5
                 while True:
                     current()
@@ -966,10 +967,17 @@ class Control:
                     time.sleep(.05)
                 if packet.get('preview'):
                     return
+                if (stage == 'base' and (moves['X'] or moves.get('Y', 0))) or (stage == 'arm' and (moves['turn_deg'] or 'Y' not in moves)):
+                    raise ValueError('Alignment command violates active stage')
                 if response.get('aligned_perfectly') is True and not any(moves.values()):
-                    return
+                    if stage == 'arm':
+                        return
+                    stage, history = 'arm', []
+                    self.robot.zero()
+                    self.robot.nav.wait_stopped()
+                    continue
                 if not any(moves.values()):
-                    raise ValueError('Both cameras must explicitly report aligned_perfectly')
+                    raise ValueError('Active stage must explicitly report alignment')
                 if round_index == 32:
                     raise RuntimeError('Fetch cameras did not converge after 32 corrections')
                 if moves['turn_deg']:
@@ -980,10 +988,10 @@ class Control:
                     self.status = 'Aligning left/right with base rotation'
                     self.turn_fetch(moves['turn_deg'], config)
                     moves['X'] = 0  # Rotation changes the arm view; recapture before advancing.
-                travel += abs(moves['X'])
+                travel += abs(moves['X']) + abs(moves.get('Y', 0))
                 if travel > config['max_total_mm']:
                     raise ValueError('Fetch alignment travel budget exhausted')
-                for axis, delta in [('X', moves['X'])]:
+                for axis, delta in [('X', moves['X']), ('Y', moves.get('Y', 0))]:
                     remaining = abs(delta)
                     while remaining >= .001:
                         current()
@@ -991,6 +999,7 @@ class Control:
                         self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=step)
                         remaining -= step
                 history = (history + [dict(images=images, commanded=moves)])[-2:]
+            raise RuntimeError('Fetch alignment did not finish both stages')
         finally:
             self.base_enabled = False
             self.robot.zero()

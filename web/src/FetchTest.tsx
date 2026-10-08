@@ -7,9 +7,9 @@ type TurnFields = Record<`turn_${TurnSize}_${'speed_rad_s' | 'duration_s'}`, num
 type FetchSettings = { revision: number; values: TurnFields & { max_step_mm: number; max_total_mm: number; turn_speed_rad_s: number; turn_duration_scale: number; turn_step_deg: number; prompt: string } };
 type Part = { type: string; text?: string; image_url?: { url: string } };
 type Round = {
-  id: string; round: number; mode?: 'grasp' | 'approach'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
+  id: string; round: number; mode?: 'grasp' | 'approach'; stage?: 'base' | 'arm'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
   model?: string; messages?: [{ content: string }, { content: Part[] }];
-  result_json?: string; correction?: { X: number; turn_deg: number }; error?: string;
+  result_json?: string; correction?: { X: number; Y?: number; turn_deg: number }; error?: string;
   base_command?: { forward_m: number; turn_deg: number }; corrected_location?: { x_m: number; y_m: number; uncertainty_m: number };
 };
 
@@ -72,9 +72,9 @@ export function FetchTest(props: {
     <span className="muted">Item: {props.itemName || 'Select an item above'} · Align accepts J1 75–105° near the object.</span>
     {draft && <>
       <div className="goal-inputs">
-        <label>Arm X step (mm)<input type="number" min={0.1} max={10} step={0.1} value={draft.max_step_mm}
+        <label>Arm X/Y step (mm)<input type="number" min={0.1} max={10} step={0.1} value={draft.max_step_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_step_mm: Number(event.target.value) })} /></label>
-        <label>Total arm X (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
+        <label>Total arm X/Y (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_total_mm: Number(event.target.value) })} /></label>
       </div>
       {(['s', 'm', 'l'] as const).map(size => <div className="goal-inputs" key={size}>
@@ -93,13 +93,13 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">LLM: left/right + large/medium/small. Arm X 10/5/1 mm (capped by setting); base uses the settings above. Both aligned_perfectly = done; otherwise continue. Unknown stops.</span>
+    <span className="muted">Stage 1: front camera roughly centered; base only. Stage 2: base locked, arm X/Y match the saved top-camera GOAL, including visible size and cropping. Arm steps 10/5/1 mm, capped by setting. Unknown stops.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
-    <span className="muted">Preview: no movement. Align: center the item in the front camera by rotating the base; arm X centers the visible item fragment in the arm camera. Up to 32 corrections, ≤2°/turn and ≤45° total. No translation or gripper motion. Rotation runs first, then fresh photos before arm movement.</span>
+    <span className="muted">Preview: one coarse-alignment round, no movement. ALIGN runs both stages in order. Arm Z and gripper stay fixed. More bottom fragment than GOAL: Y+; less: Y−. Up to 33 observations; total arm travel includes X and Y.</span>
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
@@ -108,10 +108,10 @@ export function FetchTest(props: {
     {rounds.map(round => {
       const parts = round.messages?.[1].content ?? [];
       return <article className="fetch-round" key={round.id}>
-        <header><strong>Round {round.round}</strong><span>{round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
+        <header><strong>Round {round.round}</strong><span>{round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.stage || round.mode} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
         <span className="muted">{new Date(round.started_at_s * 1000).toLocaleTimeString()} · {round.model}</span>
         {round.result_json && <pre>LLM: {round.result_json}</pre>}
-        {round.correction && <span>Suggestion: arm X {round.correction.X} mm · base {round.correction.turn_deg}° (positive = clockwise)</span>}
+        {round.correction && <span>Suggestion: arm X {round.correction.X} mm · Y {round.correction.Y ?? 0} mm · base {round.correction.turn_deg}° (positive = clockwise)</span>}
         {round.base_command && <span>Base suggestion: forward {(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
         {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}
         <span className="muted">Request log; movement completion appears in TASK. History labels show previously executed commands.</span>

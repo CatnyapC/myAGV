@@ -617,6 +617,7 @@ export function App() {
             ...(!state?.hardware?.arm_homed || !state.hardware.localized ? ['Home arm and confirm localization'] : []),
             ...(state?.llm?.status !== 'configured' ? ['LLM not configured'] : []),
             ...(!selectedItem?.reference_photo_id ? ['Select an item with an uploaded reference photo'] : []),
+            ...(!selectedItem?.grasp_goal_ready ? ['Save the arm calibration GOAL'] : []),
           ]} />
       </div>{photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId}
         photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
