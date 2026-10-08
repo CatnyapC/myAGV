@@ -679,8 +679,6 @@ class Control:
         if not isinstance(goals, list) or not 1 <= len(goals) <= 20:
             raise ValueError('Select 1..20 viewing poses')
         poses = [validate_pose(p) for p in goals]
-        for pose in poses:
-            self.travel_guard(pose)
         return dict(goals=poses, capped=False)
 
     def wait_update(self):
@@ -717,18 +715,11 @@ class Control:
             'deadline': started + limit_s, 'limit_s': limit_s, 'pause_requested': False,
             'pause_reason': '', 'storage_error': '', 'completed': 0, 'round': 1, 'captures': 0}
         try:
-            self.capture('front', persist=False)
             while True:
                 self.wait_update()
-                if update['completed'] == 0 and update['round'] > 1 and update['map_revision'] != self.robot.grid.get('revision'):
-                    try:
-                        update.update(self.plan_update(packet), map_revision=self.robot.grid.get('revision'))
-                    except UpdatePaused:
-                        self.wait_update()
-                        continue
                 pose = update['goals'][update['completed']]
                 try:
-                    self.go(dict(x_m=pose['x_m'], y_m=pose['y_m'], yaw_deg=math.degrees(pose['yaw_rad'])))
+                    self.execute(dict(type='navigate', goal=pose))
                 except UpdatePaused:
                     self.wait_update()
                     continue
@@ -744,6 +735,8 @@ class Control:
                 update['captures'] += 1
                 update['completed'] += 1
                 if update['completed'] == len(update['goals']):
+                    update['pause_requested'], update['pause_reason'] = True, 'Go queue completed; map updated'
+                    self.wait_update()
                     update['completed'] = 0
                     update['round'] += 1
         finally:
