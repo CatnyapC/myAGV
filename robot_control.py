@@ -878,6 +878,36 @@ class Control:
             request_path.unlink(missing_ok=True)
             response_path.unlink(missing_ok=True)
 
+    def turn_fetch(self, degrees):
+        number(degrees, -2, 2, 'Fetch base turn')
+        self.robot.nav.wait_stopped()
+        start = self.robot.nav.get_pose()
+        map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
+        target = math.radians(start['yaw_deg'] - degrees)
+        end = time.monotonic() + 5
+        try:
+            while True:
+                pose = self.robot.nav.get_pose()
+                if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
+                    raise Stopped('Map or no-go zones changed during fetch rotation')
+                self.travel_guard(pose)
+                if math.hypot(pose['x_m'] - start['x_m'], pose['y_m'] - start['y_m']) > .01:
+                    raise RuntimeError('Base translated during fetch rotation')
+                error = math.atan2(math.sin(target - math.radians(pose['yaw_deg'])),
+                                   math.cos(target - math.radians(pose['yaw_deg'])))
+                if abs(error) <= math.radians(.05):
+                    return
+                if time.monotonic() >= end:
+                    raise TimeoutError('Fetch base rotation did not reach target')
+                self.base_enabled = True
+                self.robot.velocity = (0, 0, math.copysign(min(.04, max(.01, abs(error))), error))
+                self.robot.velocity_at = time.monotonic()
+                time.sleep(.05)
+        finally:
+            self.base_enabled = False
+            self.robot.zero()
+            self.robot.nav.wait_stopped()
+
     def calibrate_fetch(self, packet, config):
         config = calibration_config(config)
         self.phase, self.status = 'calibrating', 'Aligning pickup with front and arm cameras'
@@ -885,7 +915,7 @@ class Control:
         self.robot.zero()
         request_path = self.directory / 'fetch_vision_request.json'
         response_path = self.directory / 'fetch_vision_response.json'
-        travel = 0
+        travel, turned = 0, 0
         history = []
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
 
@@ -929,19 +959,29 @@ class Control:
                     return
                 if round_index == 8:
                     raise RuntimeError('Fetch cameras did not converge after 8 corrections')
-                travel += sum(abs(delta) for delta in moves.values())
+                if moves['turn_deg']:
+                    turned += abs(moves['turn_deg'])
+                    if turned > 10:
+                        raise ValueError('Fetch rotation budget exhausted')
+                    current()
+                    self.status = 'Aligning left/right with base rotation'
+                    self.turn_fetch(moves['turn_deg'])
+                    moves['X'] = 0  # Rotation changes the arm view; recapture before advancing.
+                travel += abs(moves['X'])
                 if travel > config['max_total_mm']:
                     raise ValueError('Fetch alignment travel budget exhausted')
-                for axis, delta in moves.items():
+                for axis, delta in [('X', moves['X'])]:
                     remaining = abs(delta)
                     while remaining >= .001:
                         current()
                         step = min(1, remaining)
                         self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=step)
                         remaining -= step
-                history = (history + [dict(images=images, commanded_mm=moves,
+                history = (history + [dict(images=images, commanded=moves,
                     positions=response.get('positions'))])[-2:]
         finally:
+            self.base_enabled = False
+            self.robot.zero()
             request_path.unlink(missing_ok=True)
             response_path.unlink(missing_ok=True)
 

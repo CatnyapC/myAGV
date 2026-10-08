@@ -124,7 +124,8 @@ J1=90 degrees faces vehicle forward, where the item is located. The arm-top came
 is mounted 90 degrees clockwise. It sees only a SMALL FRAGMENT of the item entering
 from the BOTTOM edge; the gripper is NEVER visible. This is the intended view.
 Arm-camera image X corresponds to logical arm X/base Y (forward/back). Front-camera
-image X corresponds to logical arm Y/base X (left/right). These are context only;
+image X measures left/right error; the controller corrects it by rotating the base
+in place (clockwise for a target right of GOAL), never by moving arm Y. These are context only;
 return image positions, not hardware coordinates or commands. Do not rotate images.
 
 Pair GOAL and CURRENT by camera label. In arm views, locate the matching bottom-edge
@@ -155,8 +156,8 @@ async def locate_pickup(images, item, key, goal, history, prompt=PICKUP_PROMPT, 
     content = [dict(type='text', text=json.dumps(dict(name=item['name'], appearance=item['appearance'], limits=calibration_config(limits)), ensure_ascii=False))]
     states = [('Correct grasp GOAL', goal)]
     for previous in history:
-        commanded = alignment_command(dict(x_mm=previous['commanded_mm']['X'], y_mm=previous['commanded_mm']['Y']), None)
-        states.append(('Before executed adjustment ' + json.dumps(commanded) + ' mm', previous['images']))
+        commanded = alignment_command(dict(x_mm=previous['commanded']['X'], turn_deg=previous['commanded']['turn_deg']), None)
+        states.append(('Before executed adjustment ' + json.dumps(commanded) + ' (X mm, turn_deg clockwise)', previous['images']))
     states.append(('CURRENT; measure target horizontal position', images))
     for label, pair in states:
         for camera in ('front', 'arm'):

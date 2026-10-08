@@ -7,7 +7,7 @@ type Part = { type: string; text?: string; image_url?: { url: string } };
 type Round = {
   id: string; round: number; mode?: 'grasp' | 'approach'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
   model?: string; messages?: [{ content: string }, { content: Part[] }];
-  result_json?: string; limited_mm?: { X: number; Y: number }; error?: string;
+  result_json?: string; correction?: { X: number; turn_deg: number }; error?: string;
   base_command?: { forward_m: number; turn_deg: number }; corrected_location?: { x_m: number; y_m: number; uncertainty_m: number };
 };
 
@@ -69,9 +69,9 @@ export function FetchTest(props: {
     <span className="muted">Item: {props.itemName || 'Select an item above'} · Align accepts J1 75–105° near the object.</span>
     {draft && <>
       <div className="goal-inputs">
-        <label>Step / axis (mm)<input type="number" min={0.1} max={2} step={0.1} value={draft.max_step_mm}
+        <label>Arm X step (mm)<input type="number" min={0.1} max={2} step={0.1} value={draft.max_step_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_step_mm: Number(event.target.value) })} /></label>
-        <label>Total X + Y (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
+        <label>Total arm X (mm)<input type="number" min={draft.max_step_mm} max={30} step={1} value={draft.max_total_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_total_mm: Number(event.target.value) })} /></label>
       </div>
       <label className="photo-field">Calibration prompt<textarea className="fetch-prompt" rows={10} maxLength={8000} value={draft.prompt}
@@ -84,7 +84,7 @@ export function FetchTest(props: {
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
-    <span className="muted">Preview: no movement. Align: arm X/Y only, up to 8 corrections; base and gripper stay still.</span>
+    <span className="muted">Preview: no movement. Align: arm X and base rotation, up to 8 corrections. Base turn ≤2°/round, ≤10° total; no translation or gripper motion. Rotation runs first, then fresh photos before arm movement.</span>
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
@@ -96,7 +96,7 @@ export function FetchTest(props: {
         <header><strong>Round {round.round}</strong><span>{round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
         <span className="muted">{new Date(round.started_at_s * 1000).toLocaleTimeString()} · {round.model}</span>
         {round.result_json && <pre>LLM: {round.result_json}</pre>}
-        {round.limited_mm && <span>Limited suggestion: X {round.limited_mm.X} mm · Y {round.limited_mm.Y} mm</span>}
+        {round.correction && <span>Suggestion: arm X {round.correction.X} mm · base {round.correction.turn_deg}° (positive = clockwise)</span>}
         {round.base_command && <span>Base suggestion: forward {(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
         {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}
         <span className="muted">Request log; movement completion appears in TASK. History labels show previously executed commands.</span>

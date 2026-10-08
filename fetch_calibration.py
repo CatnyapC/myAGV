@@ -1,4 +1,4 @@
-"""Dual-camera pickup calibration; logical X is forward, Y is right, in mm."""
+"""Dual-camera pickup calibration; arm X is forward in mm; base turn is clockwise in degrees."""
 import base64
 import math
 
@@ -24,10 +24,10 @@ def calibration_config(value):
 
 def alignment_command(result, config):
     config = calibration_config(config)
-    if not isinstance(result, dict) or set(result) != {'x_mm', 'y_mm'}:
+    if not isinstance(result, dict) or set(result) != {'x_mm', 'turn_deg'}:
         raise ValueError('Invalid model alignment JSON')
     moves = {}
-    for field, axis in (('x_mm', 'X'), ('y_mm', 'Y')):
+    for field, axis in (('x_mm', 'X'), ('turn_deg', 'turn_deg')):
         delta = result[field]
         if delta is None:
             raise ValueError('Pickup target missing or ambiguous')
@@ -35,7 +35,7 @@ def alignment_command(result, config):
             raise ValueError('Invalid model arm adjustment')
         if 0 < abs(delta) < .1:
             raise ValueError('Model arm adjustment is below measurable step size')
-        limit = config['max_step_mm']
+        limit = config['max_step_mm'] if axis == 'X' else 2
         moves[axis] = max(-limit, min(limit, delta))
     return moves
 
@@ -51,17 +51,18 @@ def position_alignment(positions, config, history):
         if type(value) not in (float, int) or not math.isfinite(value) or not 0 <= value <= 1:
             raise ValueError('Invalid target image position')
     moves = {}
-    for camera, axis in (('arm', 'X'), ('front', 'Y')):
+    for camera, axis in (('arm', 'X'), ('front', 'turn_deg')):
         error = positions[camera + '_current'] - positions[camera + '_goal']
-        step = config['max_step_mm'] * min(1, abs(error) / .05)
+        limit = config['max_step_mm'] if axis == 'X' else 2
+        step = limit * min(1, abs(error) / .05)
         if history and history[-1].get('positions'):
             previous = history[-1]
             change = positions[camera + '_current'] - previous['positions'][camera + '_current']
-            executed = previous['commanded_mm'][axis]
+            executed = previous['commanded'][axis]
             if abs(change) >= .01 and change * executed < 0:
                 step = abs(error * executed / change)
-        step = min(config['max_step_mm'], max(.1, step))
-        moves[axis.lower() + '_mm'] = 0 if abs(error) <= .010001 else round(math.copysign(step, error), 3)
+        step = min(limit, max(.1, step))
+        moves['x_mm' if axis == 'X' else 'turn_deg'] = 0 if abs(error) <= .010001 else round(math.copysign(step, error), 3)
     alignment_command(moves, config)
     return moves
 

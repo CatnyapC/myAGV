@@ -773,7 +773,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             fetch_log['revision'] += 1
                             result = await locate_pickup(value['images'], value['item'], llm_key, goal, value['history'],
                                                          prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'))
-                            entry.update(limited_mm=alignment_command(result, value.get('limits')))
+                            entry.update(correction=alignment_command(result, value.get('limits')))
                     entry.update(status='returned')
                     response = dict(id=handled, result=result)
                     if 'positions' in entry:
