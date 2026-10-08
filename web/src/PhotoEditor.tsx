@@ -44,21 +44,23 @@ export function PhotoEditor(props: {
   const [stationConfirmed, setStationConfirmed] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [describeRequested, setDescribeRequested] = useState(props.photo?.kind === 'reference' && !currentItem?.appearance);
-  useEffect(() => { if (!props.enabled) setDescribeRequested(false); }, [props.enabled]);
+  const [describeRequested, setDescribeRequested] = useState<{ name?: string } | null>(props.photo?.kind === 'reference' && !currentItem?.appearance ? {} : null);
+  useEffect(() => { if (!props.enabled) setDescribeRequested(null); }, [props.enabled]);
   useEffect(() => {
     if (!describeRequested || !props.photo || !props.enabled) return;
     const controller = new AbortController();
     setBusy(true); props.onBusy(true); setError('');
-    void api<{ name: string; appearance: string }>(`/api/photos/${props.photo.id}/describe`, {
-      method: 'POST', signal: controller.signal, body: JSON.stringify({ expected_revision: revision }),
+    void api<{ name?: string; appearance: string }>(`/api/photos/${props.photo.id}/describe`, {
+      method: 'POST', signal: controller.signal, body: JSON.stringify({ expected_revision: revision, ...describeRequested }),
     }).then(result => {
       if (controller.signal.aborted) return;
-      setItemId(id => id || 'new'); setName(value => value.trim() ? value : result.name); setAppearance(result.appearance);
+      setItemId(id => id || 'new');
+      if (!('name' in describeRequested)) setName(value => value.trim() ? value : result.name ?? value);
+      setAppearance(result.appearance);
     }).catch(failure => {
       if (!controller.signal.aborted) setError((failure as Error).message);
     }).finally(() => {
-      if (!controller.signal.aborted) { setDescribeRequested(false); setBusy(false); props.onBusy(false); }
+      if (!controller.signal.aborted) { setDescribeRequested(null); setBusy(false); props.onBusy(false); }
     });
     return () => { controller.abort(); setBusy(false); props.onBusy(false); };
   }, [describeRequested, props.photo?.id, props.enabled]);
@@ -94,7 +96,7 @@ export function PhotoEditor(props: {
           <span className="muted">LLM generates name and appearance after import · no map point</span></> : <>
           {photo.available && <img className="photo-preview" src={photo.image_url} alt="Stored photo" />}
           {photo.kind === 'observation' && <span className="muted">Synthetic observation · simulated capture pose</span>}
-          <Button disabled={!props.enabled || busy || !photo.available} onClick={() => setDescribeRequested(true)}>
+          <Button disabled={!props.enabled || busy || !photo.available} onClick={() => setDescribeRequested({ name })}>
             {describeRequested && busy ? 'Generating description…' : 'Generate with LLM'}</Button>
           {photo.kind === 'observation' && <details><summary className="muted">Capture metadata</summary><div className="photo-metadata">
             <span>{new Date(photo.captured_at_s * 1000).toLocaleString()} · {photo.camera_id}</span>

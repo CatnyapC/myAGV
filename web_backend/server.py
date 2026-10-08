@@ -269,7 +269,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         async with resolve_lock:
             generation, settings_revision = editor.generation, editor.settings['revision']
             image = await asyncio.to_thread(path.read_bytes)
-            result = await describe_photo(image, llm_key, editor.settings['values']['reasoning_effort'])
+            result = await describe_photo(image, llm_key, editor.settings['values']['reasoning_effort'], data.get('name'))
             photo_stopped()
             photos.check(data['expected_revision'])
             if generation != editor.generation or settings_revision != editor.settings['revision']:
