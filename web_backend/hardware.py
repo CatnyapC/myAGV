@@ -90,6 +90,7 @@ class Hardware:
         return True
 
     async def command(self, data, wait=False):
+        await asyncio.to_thread(self.refresh)
         state = self.sessions.get(data.get('session_id'), {})
         if not self.control or not self.fresh(self.control.get('stamp_s'), 1):
             raise RuntimeError('Hardware controller unavailable')

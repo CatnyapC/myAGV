@@ -17,7 +17,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from robot_control import Control
 from robot_ros import RobotROS
-from web_backend.map_data import demo_map
+from web_backend.map_data import demo_map, render_map
 from web_backend.server import EDITOR, create_app
 from web_backend.storage import atomic_json
 
@@ -43,6 +43,29 @@ def robot_at(root):
 
 
 class MapResetTest(unittest.TestCase):
+    def test_slam_pose_auto_confirmation_requires_map_pose_and_fresh_sensors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            robot = robot_at(root)
+            robot.control.localized = False
+            robot.sensors_ready = Mock(return_value=True)
+            atomic_json(root / 'mapping.json', dict(session_id='session'))
+            pose = dict(x_m=0., y_m=0., yaw_rad=0.)
+            robot.confirm_slam_pose(pose)
+            self.assertFalse(robot.control.localized)  # Saved AMCL maps retain manual confirmation.
+            robot.grid.update(map_id='slam-session-run', revision=0)
+            robot.confirm_slam_pose(pose)
+            self.assertFalse(robot.control.localized)
+            robot.grid['revision'] = 1
+            robot.confirm_slam_pose(None)
+            self.assertFalse(robot.control.localized)
+            robot.sensors_ready.return_value = False
+            robot.confirm_slam_pose(pose)
+            self.assertFalse(robot.control.localized)
+            robot.sensors_ready.return_value = True
+            robot.confirm_slam_pose(pose)
+            self.assertTrue(robot.control.localized)
+
     def test_reset_survives_passive_ui_release_but_honors_explicit_stop(self):
         with tempfile.TemporaryDirectory() as directory:
             c = robot_at(Path(directory)).control
@@ -131,6 +154,37 @@ class MapResetTest(unittest.TestCase):
 
 
 class LiveMapAPITest(unittest.IsolatedAsyncioTestCase):
+    async def test_slow_map_render_does_not_freeze_controller_or_pose_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            grid = demo_map()
+            atomic_json(root / 'ros' / 'map.json', grid)
+            app = create_app(root / 'ui', stations_path=root / 'stations.json', hardware_dir=root / 'ros')
+            rendering, release = threading.Event(), threading.Event()
+            def slow_render(*args, **kwargs):
+                rendering.set()
+                release.wait(3)
+                return render_map(*args, **kwargs)
+            with patch('web_backend.server.render_map', side_effect=slow_render):
+                async with TestClient(TestServer(app)) as client:
+                    try:
+                        atomic_json(root / 'ros' / 'map.json', {**grid, 'revision': 2})
+                        self.assertTrue(await asyncio.to_thread(rendering.wait, 2))
+                        pose = dict(x_m=9., y_m=2., yaw_rad=0.)
+                        atomic_json(root / 'ros' / 'state.json', dict(map_id=grid['map_id'], frame='map', pose=pose, stamp_s=time(), pose_stamp_s=time()))
+                        atomic_json(root / 'ros' / 'control.json', dict(phase='working', stamp_s=time()))
+                        atomic_json(root / 'ros' / 'zones.json', dict(map_id=grid['map_id'], revision=0, zones=[]))
+                        for _ in range(20):
+                            state = await (await client.get('/api/state')).json()
+                            if state['phase'] == 'working':
+                                break
+                            await asyncio.sleep(.05)
+                        self.assertEqual(state['phase'], 'working')
+                        self.assertEqual(state['navigation']['pose'], pose)
+                        self.assertFalse(release.is_set())
+                    finally:
+                        release.set()
+
     async def test_map_and_pose_stream_while_reset_command_is_pending(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

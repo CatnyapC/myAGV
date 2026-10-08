@@ -506,11 +506,16 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             await socket.close(code=1001, message=b'Service stopping')
 
     async def simulation_tick(application):
+        async def refresh_hardware():
+            while True:
+                await asyncio.to_thread(editor.hardware.refresh)
+                await editor.emit('telemetry')
+                await asyncio.sleep(.1)
+
         async def advance():
             while True:
                 await asyncio.sleep(.1)
                 if editor.hardware:
-                    await asyncio.to_thread(editor.hardware.refresh)
                     async with editor.lock:
                         grid = editor.hardware.grid
                         new_map = grid is not None and grid['map_id'] != editor.grid['map_id']
@@ -537,7 +542,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                     if (editor.hardware.control.get('map_update') or {}).get('active'):
                                         await editor.hardware.stop('Map update photo storage failed: ' + str(exc))
                                     break
-                    await editor.emit('map' if changed else 'telemetry')
+                    if changed:
+                        await editor.emit('map')
                     continue
                 async with editor.lock:
                     running = editor.sim.phase == 'running'
@@ -546,10 +552,17 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 if running:
                     await editor.emit('telemetry')
         task = asyncio.create_task(advance())
-        yield
-        task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        refresh_task = asyncio.create_task(refresh_hardware()) if editor.hardware else None
+        try:
+            yield
+        finally:
+            for pending in (task, refresh_task):
+                if pending:
+                    pending.cancel()
+            for pending in (task, refresh_task):
+                if pending:
+                    with suppress(asyncio.CancelledError):
+                        await pending
 
     async def static(request):
         dist = ROOT / 'web' / 'dist'

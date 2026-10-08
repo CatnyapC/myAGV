@@ -208,6 +208,12 @@ class RobotROS:
         twist = sample[1].twist.twist
         return math.hypot(twist.linear.x, twist.linear.y) <= .01 and abs(twist.angular.z) <= .02
 
+    def confirm_slam_pose(self, pose):
+        if (pose is not None and self.grid and self.grid.get('revision', 0) > 0
+                and self.grid['map_id'].startswith('slam-')
+                and (self.directory.parent / 'mapping.json').exists() and self.sensors_ready()):
+            self.control.localized = True
+
     def tick(self, _event):
         now = time.monotonic()
         control = self.control

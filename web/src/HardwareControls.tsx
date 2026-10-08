@@ -62,11 +62,11 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
       <Button disabled={confirming || !connected} onClick={() => setConfirmation({ type: 'recover_stop', values: { confirmed: true }, message: 'Have you physically verified that the base and arm have stopped? Fresh base and arm feedback is required to clear the fault. Homing confirmation will be reset.' })}>Verify stopped and clear fault</Button>
     </div>}
     <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Pose confirmed ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
-    <div className="action-line">
+    {!state?.mapping_mode && <div className="action-line">
       <Button disabled={!idle || !goal || state?.mapping_mode} onClick={() => void command('initial_pose', { goal })}>Set pose from goal</Button>
       <Button disabled={!idle} onClick={() => void command('confirm_localization')}>Confirm map pose</Button>
-    </div>
-    <span className="muted">Pose confirmation is a manual check: the map marker must match the real robot position and heading. Confirmations reset when the controller restarts.</span>
+    </div>}
+    <span className="muted">{state?.mapping_mode ? 'Live SLAM establishes the map pose automatically from fresh LiDAR and odometry.' : 'Pose confirmation is a manual check: the map marker must match the real robot position and heading. Confirmations reset when the controller restarts.'}</span>
     <div className="action-line">
       <Button disabled={!idle || state?.arm_available} onClick={() => void command('connect_arm')}>Connect P340</Button>
       <Button disabled={!idle || !state?.arm_available} onClick={() => setConfirmation({ type: 'home', message: 'Home the real arm now? Clear its full travel area.' })}>Home arm</Button>

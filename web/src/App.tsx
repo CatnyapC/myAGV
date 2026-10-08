@@ -158,7 +158,7 @@ export function App() {
           const message = JSON.parse(event.data) as { type: string; state?: State; session_id?: string; nonce?: string };
           if (message.type === 'lease') {
             session.current = message.session_id ?? '';
-            if (!document.hidden) socket?.send(JSON.stringify({ nonce: message.nonce, input: held.current }));
+            socket?.send(JSON.stringify({ nonce: message.nonce, input: held.current }));
             return;
           }
           if (message.type === 'lease_ack') { ++leaseAck.current; return; }
@@ -183,12 +183,15 @@ export function App() {
     const release = () => {
       ++actionEpoch.current;
       held.current = null;
+    };
+    const leave = () => {
+      release();
       if (hardwareMode.current) void api('/api/stop', { method: 'POST', keepalive: true, body: JSON.stringify({ passive: true }) }).catch(() => {});
     };
     const visibility = () => { if (document.hidden) release(); };
-    window.addEventListener('blur', release); window.addEventListener('pagehide', release);
+    window.addEventListener('blur', release); window.addEventListener('pagehide', leave);
     document.addEventListener('visibilitychange', visibility);
-    return () => { window.removeEventListener('blur', release); window.removeEventListener('pagehide', release); document.removeEventListener('visibilitychange', visibility); };
+    return () => { window.removeEventListener('blur', release); window.removeEventListener('pagehide', leave); document.removeEventListener('visibilitychange', visibility); };
   }, []);
   useEffect(() => {
     if (!canEdit) { resolutionRequest.current?.abort(); setDrawing(false); setDraft([]); }

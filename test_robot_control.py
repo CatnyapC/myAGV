@@ -21,6 +21,7 @@ from robot_ros import RobotROS
 from robot_safety import footprint_clear, lease_valid, manual_vector, zones_visible
 from web_backend.hardware import Hardware
 from web_backend.photos import PhotoIndex, demo_frame
+from web_backend.storage import atomic_json
 
 
 def fake_control():
@@ -291,7 +292,10 @@ class IPCtest(unittest.IsolatedAsyncioTestCase):
     async def test_challenge_replay_disconnect_and_no_socket_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
             h=Hardware(tmp)
-            h.control=dict(boot_id='boot',stamp_s=time.time(),phase='idle')
+            control=dict(boot_id='boot',stamp_s=time.time(),phase='idle')
+            atomic_json(Path(tmp)/'control.json', control)
+            atomic_json(Path(tmp)/'zones.json', dict(map_id='map', revision=2, zones=[]))
+            h.control={**control, 'stamp_s': time.time()-10}
             calls=[]
             async def rpc(p): calls.append(p); return dict(status='accepted')
             h.rpc=rpc
