@@ -1,11 +1,22 @@
 <launch>
   <arg name="map_file" />
-  <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" />
+  <arg name="mapping" default="false" />
+  <group unless="$(arg mapping)">
+    <node name="map_server" pkg="map_server" type="map_server" args="$(arg map_file)" />
+    <node name="amcl" pkg="amcl" type="amcl">
+      <rosparam file="$(find myagv_navigation)/param/amcl.yaml" command="load" />
+    </node>
+  </group>
+  <group if="$(arg mapping)">
+    <include file="$(find myagv_navigation)/launch/gmapping.launch" />
+    <param name="/gmapping/map_session" value="$(anon live_map)" />
+    <param name="/gmapping/map_update_interval" value="1.0" />
+    <param name="/gmapping/temporalUpdate" value="1.0" />
+    <param name="/gmapping/linearUpdate" value="0.1" />
+    <param name="/gmapping/angularUpdate" value="0.1" />
+  </group>
   <node name="base_to_laser" pkg="tf" type="static_transform_publisher"
         args="0.065 0.0 0.08 3.14159265 0.0 0.0 base_footprint laser_frame 10" />
-  <node name="amcl" pkg="amcl" type="amcl">
-    <rosparam file="$(find myagv_navigation)/param/amcl.yaml" command="load" />
-  </node>
   <node pkg="move_base" type="move_base" name="move_base" output="screen">
     <remap from="cmd_vel" to="/myagv/input_vel" />
     <rosparam file="$(find myagv_navigation)/param/costmap_common_params.yaml" command="load" ns="global_costmap" />

@@ -1,5 +1,4 @@
 """ROS/serial owner. Web API exchanges snapshots and bounded Unix-socket commands."""
-import hashlib
 import json
 import math
 import os
@@ -11,7 +10,7 @@ import uuid
 
 from navigation import wait_arm
 from robot_control import Control
-from robot_ros import RobotROS, grid_dict
+from robot_ros import RobotROS
 from robot_safety import fresh
 from web_backend.storage import atomic_bytes, atomic_json
 
@@ -79,31 +78,7 @@ def main():
     signal.signal(signal.SIGINT, shutdown)
     signal.signal(signal.SIGTERM, shutdown)
 
-    def receive_map(message):
-        try:
-            grid = grid_dict(message)
-            if grid['frame'] != 'map' or not 0 < grid['width'] * grid['height'] <= 2_000_000 or len(grid['cells']) != grid['width'] * grid['height'] or not math.isfinite(grid['resolution_m']) or grid['resolution_m'] <= 0:
-                raise ValueError('Invalid map geometry/frame')
-            grid['cells'] = [-1 if c < 0 else 100 if c >= 50 else 0 for c in grid['cells']]
-            digest = hashlib.sha256(json.dumps(grid, sort_keys=True, allow_nan=False).encode()).hexdigest()
-            grid.update(map_id='ros-' + digest[:16], revision=1)
-            if robot.grid and robot.grid['map_id'] == grid['map_id']:
-                return
-            control.request_stop('Map changed')
-            control.localized = False
-            zones = dict(map_id=grid['map_id'], revision=0, zones=[])
-            if control.zones_path.exists():
-                zones = json.loads(control.zones_path.read_text())
-                if zones['map_id'] != grid['map_id']:
-                    raise ValueError('Saved no-go zones belong to another map; archive/review the saved file first')
-            robot.set_map(message, grid, zones)
-            atomic_json(directory / 'map.json', grid)
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            robot.grid = None
-            control.request_stop(str(exc))
-            rospy.logerr('Map rejected: %s', exc)
-
-    rospy.Subscriber('/map', OccupancyGrid, receive_map, queue_size=1)
+    rospy.Subscriber('/map', OccupancyGrid, robot.receive_map, queue_size=1)
 
     def camera(camera_id, device):
         while not rospy.is_shutdown():

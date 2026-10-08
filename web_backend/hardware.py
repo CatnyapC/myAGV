@@ -107,7 +107,7 @@ class Hardware:
             self.owner = old_owner
             raise
         if wait and result.get('status') == 'accepted':
-            end = time.monotonic() + 15
+            end = time.monotonic() + (45 if data.get('type') == 'reset_map' else 15)
             while time.monotonic() < end:
                 await asyncio.sleep(.1)
                 result = await self.rpc(dict(op='result', id=data['id']))

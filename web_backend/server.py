@@ -374,7 +374,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Confirmed current-map station association required')
                     link = item['station_link']
                     data = {**data, 'station': link['name'], 'station_digest': link['digest']}
-                result = await editor.hardware.command(data, wait=kind in ('zone_add', 'zone_delete', 'teach', 'transport_record', 'recover_stop'))
+                result = await editor.hardware.command(data, wait=kind in ('zone_add', 'zone_delete', 'teach', 'transport_record', 'recover_stop', 'reset_map'))
                 if 'zones' in result:
                     editor.zones = result['zones']
             await editor.emit('zones' if 'zones' in result else 'state')
@@ -506,14 +506,16 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     await asyncio.to_thread(editor.hardware.refresh)
                     async with editor.lock:
                         grid = editor.hardware.grid
-                        changed = grid is not None and grid['map_id'] != editor.grid['map_id']
+                        new_map = grid is not None and grid['map_id'] != editor.grid['map_id']
+                        changed = grid is not None and (new_map or grid['revision'] != editor.grid['revision'])
                         if changed:
-                            detected = await asyncio.to_thread(dominant_angle, grid)
+                            detected = await asyncio.to_thread(dominant_angle, grid) if new_map else editor.detected
                             view = editor.metadata['display']['view_revision'] + 1
                             metadata, png = await asyncio.to_thread(render_map, grid, editor.settings['values'], view, detected)
                             editor.grid, editor.metadata, editor.png, editor.detected = grid, metadata, png, detected
-                            editor.zones = dict(map_id=grid['map_id'], revision=0, zones=[])
-                            editor.hardware.generation += 1
+                            if new_map:
+                                editor.zones = dict(map_id=grid['map_id'], revision=0, zones=[])
+                                editor.hardware.generation += 1
                     if editor.hardware.zones and editor.hardware.zones['map_id'] == editor.grid['map_id']:
                         editor.zones = editor.hardware.zones
                     captures = editor.hardware.directory / 'captures'

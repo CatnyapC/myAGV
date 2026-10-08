@@ -1,8 +1,11 @@
 """ROS sensing, virtual obstacles and the sole WebUI chassis velocity publisher."""
 from copy import deepcopy
+import hashlib
+import json
 import math
 import threading
 import time
+import uuid
 
 from navigation import Navigation
 from robot_safety import fresh, footprint_clear, zones_visible
@@ -91,6 +94,45 @@ class RobotROS:
             self.source, self.grid = deepcopy(source), grid
         self.apply_zones(zones)
 
+    def receive_map(self, message):
+        try:
+            grid = grid_dict(message)
+            if grid['frame'] != 'map' or not 0 < grid['width'] * grid['height'] <= 2_000_000 or len(grid['cells']) != grid['width'] * grid['height'] or not math.isfinite(grid['resolution_m']) or grid['resolution_m'] <= 0:
+                raise ValueError('Invalid map geometry/frame')
+            grid['cells'] = [-1 if c < 0 else 100 if c >= 50 else 0 for c in grid['cells']]
+            digest = hashlib.sha256(json.dumps(grid, sort_keys=True, allow_nan=False).encode()).hexdigest()
+            with self.lock:
+                marker = self.directory.parent / 'mapping.json'
+                mapping = marker.exists()
+                map_id = ('slam-' + json.loads(marker.read_text())['session_id'] + '-' + self.ros.get_param('/gmapping/map_session')) if mapping else 'ros-' + digest[:16]
+                previous = self.grid or {}
+                if previous.get('map_id') == map_id and previous.get('content_hash') == digest:
+                    return
+                same_map = previous.get('map_id') == map_id
+                grid.update(map_id=map_id, revision=previous['revision'] + 1 if same_map else 1, content_hash=digest)
+                if not same_map:
+                    if self.control.phase != 'resetting_map':
+                        self.control.request_stop('Map changed')
+                    self.control.localized = False
+                zones = self.zones if same_map else dict(map_id=map_id, revision=0, zones=[])
+                if not same_map and self.control.zones_path.exists():
+                    zones = json.loads(self.control.zones_path.read_text())
+                    if zones['map_id'] != map_id:
+                        if not mapping:
+                            raise ValueError('Saved no-go zones belong to another map; archive/review the saved file first')
+                        backup = self.directory.parent / 'map_backups' / str(uuid.uuid4())
+                        backup.mkdir(parents=True)
+                        for path in (self.control.zones_path, self.control.stations_path):
+                            if path.exists():
+                                path.rename(backup / path.name)
+                        zones = dict(map_id=map_id, revision=0, zones=[])
+                self.set_map(message, grid, zones)
+                atomic_json(self.directory / 'map.json', grid)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self.grid = None
+            self.control.request_stop(str(exc))
+            self.ros.logerr('Map rejected: %s', exc)
+
     def apply_zones(self, zones):
         if self.grid is None or zones['map_id'] != self.grid['map_id']:
             raise ValueError('No-go zones belong to a different map')
@@ -104,9 +146,11 @@ class RobotROS:
         message.header.stamp = self.ros.Time.now()
         message.header.seq = zones['revision']
         with self.lock:
+            zones_changed = self.zones != zones
             self.zones, self.derived, self.zone_points = zones, derived, points
             self.published_at = time.monotonic()
-            self.costmaps = {}
+            if zones_changed:
+                self.costmaps = {}
         self.maps.publish(message)
         atomic_json(self.directory / 'navigation_map.json', {**derived, 'zone_revision': zones['revision']})
 
@@ -184,7 +228,7 @@ class RobotROS:
         import rosgraph
         self.driver_watchdog = self.ros.get_param('/myagv_web/driver_watchdog', 0) == 1
         master = rosgraph.Master(self.ros.get_name())
-        amcl_uri = master.lookupNode('/amcl')
+        amcl_uri = master.lookupNode('/gmapping' if (self.directory.parent / 'mapping.json').exists() else '/amcl')
         if self.amcl_uri and amcl_uri != self.amcl_uri and self.control:
             self.control.localized = False
             self.control.request_stop('Localization process restarted; reconfirm pose')
@@ -217,6 +261,8 @@ class RobotROS:
         return self.clearance == radius
 
     def initial_pose(self, pose):
+        if (self.directory.parent / 'mapping.json').exists():
+            raise RuntimeError('Live SLAM determines the map pose; verify and confirm it instead')
         message = self.InitialPose()
         message.header.frame_id, message.header.stamp = 'map', self.ros.Time.now()
         message.pose.pose.position.x, message.pose.pose.position.y = pose['x_m'], pose['y_m']

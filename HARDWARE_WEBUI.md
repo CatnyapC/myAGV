@@ -33,12 +33,30 @@ pm2 restart myagv-api --update-env
 
 The driver patch uses a wall-clock loop and makes commands expire after 0.5 seconds. It refuses
 unknown source layouts and saves `.before-web-watchdog` beside the source.
-The ROS launch starts map_server, AMCL and move_base. Both costmaps consume
+The ROS launch initially starts map_server, AMCL and move_base. Both costmaps consume
 `/navigation_map`. The move_base output is remapped to `/myagv/input_vel`; only
 the bridge publishes `/cmd_vel`. Fresh LiDAR/odometry, exclusive publishers and
 the driver watchdog are required for motion.
 
 ## Initial setup in the UI
+
+The initial map is a saved map: AMCL updates the robot pose, not the occupancy
+cells. In the MAP toolbar, **Reset map** opens a confirmation to archive the
+current map, no-go zones and taught stations and start headless Gmapping. The
+robot must be idle and measured stopped; no arm connection or homing is needed.
+The saved room YAML/PGM, bridge map snapshots and pending captures are archived
+under `web_runtime/map_backups/<session>/`, with original paths in `manifest.json`.
+Photos remain in the library; old map positions and station associations become
+invalid. A startup failure restores the archived files.
+
+After reset, the label becomes **Live SLAM map**. Fresh scans update occupancy
+and the WebUI raster about once per second; map identity stays fixed during one
+SLAM session, even as its bounds grow. Existing no-go zones keep their world
+coordinates. Verify **Confirm map pose** before navigating; SLAM determines the
+pose, so **Set pose from goal** is disabled. The live mode survives service
+restarts through `web_runtime/mapping.json`. Restarting the SLAM launch begins
+a fresh map session; stale no-go zones and taught stations are archived and
+must be taught again. Restarting only the API or bridge keeps the SLAM session.
 
 1. Reload the page. Check front/arm camera roles and live ROS pose.
 2. Enter the actual robot pose in Goal, use **Set pose from goal**, then verify

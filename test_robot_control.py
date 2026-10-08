@@ -26,6 +26,7 @@ from web_backend.photos import PhotoIndex, demo_frame
 def fake_control():
     c = Control.__new__(Control)
     c.boot_id, c.stop_epoch = 'boot', 0
+    c.directory = Path('unused/ros')
     c.phase, c.status, c.task_id = 'idle', 'Ready', None
     c.owner, c.deadline, c.input = None, 0, None
     c.executing = c.stopping = c.base_enabled = False

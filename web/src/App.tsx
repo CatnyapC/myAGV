@@ -61,6 +61,7 @@ export function App() {
   const [requestText, setRequestText] = useState('');
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [resetMapOpen, setResetMapOpen] = useState(false);
   const [layoutEditing, setLayoutEditing] = useState(false);
   const [layoutError, setLayoutError] = useState('');
   const [maximized, setMaximized] = useState<string | null>(null);
@@ -273,8 +274,8 @@ export function App() {
       if (type === 'manual' && !held.current) return;
       await api('/api/commands', { method: 'POST', body: JSON.stringify({ ...values,
         type, id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision }) });
-      if (type === 'teach' || type === 'transport_record') await reload();
-    } catch (failure) { held.current = null; setError((failure as Error).message); }
+      if (type === 'teach' || type === 'transport_record' || type === 'reset_map') await reload();
+    } catch (failure) { held.current = null; setError((failure as Error).message); if (type === 'reset_map') throw failure; }
   }
   async function stop() {
     ++actionEpoch.current;
@@ -429,8 +430,9 @@ export function App() {
     <main className={`grid-stack ${layoutEditing ? 'layout-editing' : ''}`} ref={gridHost}>
       {panel('map', <>
         <div className="map-tools">
-          <span className="muted">{drawing ? draft.length < 2 ? 'Select two corners' : 'Preview' : state?.demo === false ? 'ROS map' : 'Demo map'}</span>
+          <span className="muted">{drawing ? draft.length < 2 ? 'Select two corners' : 'Preview' : state?.demo === false ? state.hardware?.mapping_mode ? 'Live SLAM map' : 'Saved ROS map' : 'Demo map'}</span>
           <div className="toolbar-actions">
+            {state?.demo === false && <Button disabled={!canEdit || busy} onClick={() => setResetMapOpen(true)}><RotateCcw size={14} /> Reset map</Button>}
             {drawing && <><Button variant="default" disabled={draft.length !== 2 || busy || !canEdit} onClick={() => void command('zone_add')}>Save</Button>
               <Button onClick={() => { setDrawing(false); setDraft([]); }}>Cancel</Button></>}
             {selected && !drawing && <Button disabled={!canEdit || busy} onClick={() => void command('zone_delete')}><Trash2 size={14} /> Delete</Button>}
@@ -556,6 +558,23 @@ export function App() {
     </div>
     {photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId} photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
       index={photos} stations={stations} enabled={canEdit} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}
+    <Dialog.Root open={resetMapOpen} onOpenChange={open => { if (!busy) setResetMapOpen(open); }}>
+      <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="settings-dialog">
+        <header className="dialog-header"><Dialog.Title>Reset map and rebuild?</Dialog.Title></header>
+        <div className="settings-body"><Dialog.Description>
+          Clear the current map, no-go zones and taught stations, then start live SLAM from fresh scans.
+          Old map data is archived for recovery. Photos stay, but old map positions and station links become invalid.
+          Keep the robot stopped during reset. Verify the new map pose before driving.
+        </Dialog.Description>{error && <p role="alert">{error}</p>}</div>
+        <footer className="dialog-footer"><Button disabled={busy} onClick={() => setResetMapOpen(false)}>Cancel</Button>
+          <Button variant="danger" disabled={!canEdit || busy} onClick={async () => {
+            setBusy(true);
+            try { await hardwareCommand('reset_map', { confirmed: true }); setResetMapOpen(false); }
+            catch { /* Keep the confirmation open with the reported error. */ }
+            finally { setBusy(false); }
+          }}>{busy ? 'Resetting…' : 'Reset and start live mapping'}</Button></footer>
+      </Dialog.Content></Dialog.Portal>
+    </Dialog.Root>
     <Dialog.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
       <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="settings-dialog">
         <header className="dialog-header"><Dialog.Title>SETTINGS</Dialog.Title><Dialog.Close asChild><Button variant="ghost" className="icon" aria-label="Close settings"><X size={18} /></Button></Dialog.Close></header>

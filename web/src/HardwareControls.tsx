@@ -50,7 +50,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     </div>}
     <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Pose confirmed ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
     <div className="action-line">
-      <Button disabled={!idle || !goal} onClick={() => void command('initial_pose', { goal })}>Set pose from goal</Button>
+      <Button disabled={!idle || !goal || state?.mapping_mode} onClick={() => void command('initial_pose', { goal })}>Set pose from goal</Button>
       <Button disabled={!idle} onClick={() => void command('confirm_localization')}>Confirm map pose</Button>
     </div>
     <span className="muted">Pose confirmation is a manual check: the map marker must match the real robot position and heading. Confirmations reset when the controller restarts.</span>

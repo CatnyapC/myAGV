@@ -7,8 +7,10 @@ import math
 import os
 from pathlib import Path
 import queue
+import shutil
 import signal
 import socketserver
+import subprocess
 import threading
 import time
 import uuid
@@ -192,7 +194,7 @@ class Control:
                 os.kill(os.getpid(), signal.SIGUSR1)
 
     def watchdog(self):
-        if self.phase in ('idle', 'fault', 'teleop', 'handoff') or self.stopping:
+        if self.phase in ('idle', 'fault', 'teleop', 'handoff', 'resetting_map') or self.stopping:
             return
         reason = None
         if not lease_valid(self.deadline, time.monotonic()):
@@ -365,6 +367,71 @@ class Control:
             self.robot.zero()
             self.goal = None
 
+    def reset_map(self):
+        pm2 = shutil.which('pm2')
+        if not pm2:
+            raise RuntimeError('PM2 unavailable; cannot restart mapping')
+        self.base_enabled = False
+        self.robot.zero()
+        self.robot.nav.client.cancel_all_goals()
+        self.robot.nav.wait_stopped()
+        self.phase, self.status = 'resetting_map', 'Resetting map; waiting for fresh SLAM scans'
+        self.localized = False
+        marker = self.directory.parent / 'mapping.json'
+        session_id = str(uuid.uuid4())
+        backup = self.directory.parent / 'map_backups' / session_id
+        saved_map = Path(os.environ.get('MYAGV_MAP_FILE', str(Path.home() / 'maps' / 'room.yaml')))
+        paths = [self.zones_path, self.stations_path, marker, saved_map, saved_map.with_suffix('.pgm')]
+        paths += [self.directory / name for name in ('map.json', 'navigation_map.json', 'global_costmap.json', 'zones.json', 'state.json', 'captures')]
+        moved = []
+        marker_written = False
+        previous = self.robot.source, self.robot.grid, self.robot.zones
+        def process(action):
+            subprocess.run([pm2, action, 'myagv-localization'], check=True, capture_output=True, timeout=15)
+        try:
+            process('stop')
+            with self.robot.lock:
+                backup.mkdir(parents=True)
+                for index, path in enumerate(paths):
+                    if path.exists():
+                        destination = backup / (str(index) + '-' + path.name)
+                        path.rename(destination)
+                        moved.append((path, destination))
+                atomic_json(backup / 'manifest.json', {str(dest.name): str(path) for path, dest in moved})
+                atomic_json(marker, dict(session_id=session_id))
+                marker_written = True
+                blank = {**previous[1], 'map_id': 'slam-' + session_id, 'revision': 0,
+                         'cells': [-1] * len(previous[1]['cells'])}
+                blank.pop('content_hash', None)
+                self.robot.set_map(previous[0], blank, dict(map_id=blank['map_id'], revision=0, zones=[]))
+                atomic_json(self.directory / 'map.json', blank)
+                self.robot.amcl_uri = self.robot.clearance = None
+            if self.stop_pending:
+                raise Stopped('Map reset stopped')
+            process('start')
+            end = time.monotonic() + 20
+            while not self.robot.grid or not self.robot.grid['map_id'].startswith('slam-' + session_id + '-') or self.robot.grid['revision'] == 0:
+                if self.stop_pending:
+                    raise Stopped('Map reset stopped')
+                if time.monotonic() >= end:
+                    raise RuntimeError('Fresh SLAM map unavailable; old map restored')
+                time.sleep(.1)
+        except BaseException:
+            with suppress(Exception):
+                process('stop')
+            with self.robot.lock:
+                if marker_written:
+                    marker.unlink(missing_ok=True)
+                for path, destination in reversed(moved):
+                    destination.replace(path)
+                self.robot.set_map(*previous)
+            with suppress(Exception):
+                process('start')
+            raise
+        finally:
+            self.robot.zero()
+        return dict(backup=str(backup), mapping_mode=True)
+
     def review(self, stage):
         self.base_enabled = False
         self.robot.zero()
@@ -427,6 +494,10 @@ class Control:
             self.localized = True
         elif kind == 'connect_arm':
             self.connect_arm()
+        elif kind == 'reset_map':
+            if packet.get('confirmed') is not True:
+                raise ValueError('Confirm reset of map, no-go zones and taught stations')
+            return self.reset_map()
         elif kind in ('home', 'confirm_homed'):
             self.require_arm(False)
             self.robot.nav.wait_stopped()
@@ -580,6 +651,7 @@ class Control:
                     arm_angles=self.angles if fresh(self.arm_stamp, time.monotonic(), 2) else None,
                     arm_error=self.arm_error, transport_angles=self.config['transport_angles'],
                     clearance_m=self.config['clearance_m'], localized=self.localized,
+                    mapping_mode=(self.directory.parent / 'mapping.json').exists(),
                     driver_watchdog=self.robot.driver_watchdog, exclusive=self.robot.exclusive,
                     sensors_ready=self.robot.sensors_ready(), motion_available=ready,
                     navigation_ready=ready and self.localized and self.robot.zones_ready() and self.robot.clearance_ready(self.config['clearance_m']),
