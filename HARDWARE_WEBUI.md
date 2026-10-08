@@ -171,6 +171,9 @@ motion test is performed by deployment.
 The patched chassis driver compiled on the robot. PM2 services started; P340
 reported four joint angles, LiDAR/odometry were fresh, and both ROS costmaps
 reported the active no-go revision. The frontend built and hardware-free tests
-passed. No browser or movement test was run. The arm camera `/dev/video1` was
-absent from the device list; reconnect it before Fetch. Localization, homing and
-transport-envelope confirmation remain operator actions.
+passed. No browser or movement test was run. The arm camera had dropped off USB
+port `1-1.4` with descriptor errors `-71`. Stopping the control bridge, resetting
+the USB hub, and restarting the bridge restored `/dev/video1` and the P340 serial
+connection. Both camera streams were checked through the API. A hub reset also
+resets arm USB, so stop control first and reconfirm homing afterward. Localization,
+homing and transport-envelope confirmation remain operator actions.
