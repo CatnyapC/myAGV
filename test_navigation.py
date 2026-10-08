@@ -85,13 +85,17 @@ class StationsTest(unittest.TestCase):
     def test_pickup_axis_required_but_old_records_can_be_replaced(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "stations.json"
-            old = dict(STATION, arm_angles_deg=[75, 20, 30])
+            old = dict(STATION, arm_angles_deg=[60, 20, 30])
             path.write_text(json.dumps({"cup": old, "other": old}))
             with self.assertRaisesRegex(ValueError, "J1"):
                 navigation.save_station("cup", old, path)
             navigation.save_station("cup", STATION, path)
             self.assertEqual(navigation.load_stations(path)["other"], old)
-            self.assertEqual(navigation.pickup_angles([90.5, 20, 30]), [90, 20, 30])
+            for j1 in (75, 90.5, 92.64, 105):
+                self.assertEqual(navigation.pickup_angles([j1, 20, 30]), [j1, 20, 30])
+            for j1 in (74.99, 105.01):
+                with self.assertRaisesRegex(ValueError, 'J1'):
+                    navigation.pickup_angles([j1, 20, 30])
 
     def test_record_checks_map_before_arm_and_reports_progress(self):
         args = parse_args(["--p340-port", "unused", "--arm-homed"])

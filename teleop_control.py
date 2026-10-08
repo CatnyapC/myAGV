@@ -64,8 +64,8 @@ class Controller:
         low, high = arm_keys.LIMITS[axis]
         if self.mode == "PICKUP":
             # Native Y is forward reach when J1=90.
-            if values[1] <= 0 or abs(math.degrees(math.atan2(values[1], values[0])) - 90) > 1:
-                print("Pickup arm must face forward at J1=90; position before teaching")
+            if values[1] <= 0 or abs(math.degrees(math.atan2(values[1], values[0])) - 90) > 15:
+                print("Pickup arm must face forward within 75–105 degrees; position before teaching")
                 return False
             if axis == "Y":
                 low = 0  # Do not retract through the arm's rotation axis.

@@ -29,6 +29,12 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             c.execute(packet)
             c.calibrate_fetch.assert_called_once_with(packet, {})
             c.calibrate_fetch.reset_mock()
+            c.execute(dict(packet, preview=False))
+            c.calibrate_fetch.assert_called_once_with(dict(packet, preview=False), {})
+            c.calibrate_fetch.reset_mock()
+        with patch('robot_control.wait_arm', return_value=[110, 3.65, 49.35, 92.64]):
+            c.execute(packet)
+            c.calibrate_fetch.reset_mock()
             with self.assertRaisesRegex(ValueError, 'J1'):
                 c.execute(dict(packet, preview=False))
             c.calibrate_fetch.assert_not_called()

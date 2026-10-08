@@ -43,9 +43,8 @@ def validate_angles(angles):
 def pickup_angles(angles):
     """The arm mounts facing left; J1=90 faces the chassis front."""
     angles = validate_angles(angles)
-    if abs(angles[0] - 90) > 1:
-        raise ValueError("Front pickup needs J1 within 1 degree of 90; re-teach this pose")
-    angles[0] = 90.0
+    if abs(angles[0] - 90) > 15:
+        raise ValueError("Front pickup needs J1 between 75 and 105 degrees")
     return angles
 
 

@@ -66,7 +66,7 @@ export function FetchTest(props: {
   const disabled = pending || !settings || !draft || props.reasons.length > 0;
   return <section className="fetch-test" aria-label="Grasp calibration test">
     <div className="section-divider" /><h3 className="subheading">GRASP TEST</h3>
-    <span className="muted">Item: {props.itemName || 'Select an item above'} · position arm at J1 = 90° near the object.</span>
+    <span className="muted">Item: {props.itemName || 'Select an item above'} · Align accepts J1 75–105° near the object.</span>
     {draft && <>
       <div className="goal-inputs">
         <label>Step / axis (mm)<input type="number" min={0.1} max={2} step={0.1} value={draft.max_step_mm}
