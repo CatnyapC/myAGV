@@ -93,7 +93,7 @@ export function App() {
   const angleValid = angleText.trim() !== '' && Number.isFinite(Number(angleText)) && Math.abs(Number(angleText)) <= 180;
   editingSettings.current = settingsDirty || settingsSaving || !angleValid;
   const canEdit = connected && state?.phase === 'idle';
-  const canEditPhotos = connected && (state?.phase === 'idle' || state?.phase === 'update_paused');
+  const canEditPhotos = connected && (state?.phase === 'idle' || state?.phase === 'update_paused' || state?.phase === 'teleop');
   const canLayout = canEdit;
   const canResize = canLayout && !maximized;
   const canMove = canResize && layoutEditing;
@@ -604,12 +604,12 @@ export function App() {
       </div>{photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId}
         photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
         index={photos} stations={stations} enabled={canEditPhotos}
+        heightCaptureEnabled={state?.phase === 'idle' && Boolean(state?.hardware?.arm_homed)}
         goalCaptureReason={!connected ? 'Reconnect to the robot.'
-          : state?.phase === 'teleop' ? 'Exit TELEOP, then verify stopped hardware and confirm Already homed in OPERATE. Saved grasp Z is retained.'
+          : state?.phase === 'teleop' ? state.hardware?.localized ? '' : 'Confirm the robot map pose.'
           : state?.phase === 'fault' ? 'In OPERATE, verify stopped hardware and clear the fault, then confirm Already homed.'
           : state?.phase !== 'idle' ? 'Finish or stop the current action before recording.'
           : !state?.hardware?.arm_available ? 'P340 feedback unavailable; reconnect the arm.'
-          : !state.hardware.arm_homed ? 'In OPERATE, confirm Already homed if the arm has homed since power-on.'
           : !state.hardware.localized ? 'Confirm the robot map pose in OPERATE.' : ''}
         onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}</div>)}
     </main>

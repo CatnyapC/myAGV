@@ -13,6 +13,20 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class HardwareTest(unittest.IsolatedAsyncioTestCase):
+    async def test_teleop_photo_does_not_claim_motion_session(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hardware = Hardware(Path(directory))
+            hardware.refresh = Mock()
+            hardware.control = dict(phase='teleop', stamp_s=time.time(), boot_id='boot')
+            hardware.sessions['photo-tab'] = dict(ack=time.monotonic())
+            hardware.owner = 'previous-tab'
+            hardware.rpc = AsyncMock(side_effect=[dict(status='accepted'), dict(status='completed', captures={})])
+            hardware.stop = AsyncMock()
+            await hardware.command(dict(id='photo', type='capture_grasp_goal', session_id='photo-tab'), wait=True)
+            self.assertEqual(hardware.rpc.call_args_list[0].args[0]['op'], 'observe_goal')
+            self.assertEqual(hardware.owner, 'previous-tab')
+            hardware.stop.assert_not_called()
+
     async def test_battery_endpoint_rejects_stale_or_invalid_feedback(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

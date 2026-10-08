@@ -184,7 +184,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     location_calibration = location_config(load_json(editor.directory / 'item_location_config.json', {}))
 
     def photo_stopped():
-        if (editor.sim and editor.sim.phase != 'idle') or (editor.hardware and editor.hardware.control.get('phase') not in ('idle', 'update_paused')):
+        if (editor.sim and editor.sim.phase != 'idle') or (editor.hardware and editor.hardware.control.get('phase') not in ('idle', 'update_paused', 'teleop')):
             raise web.HTTPConflict(text='Photo editing requires a stopped robot')
 
     async def photo_index(request):

@@ -98,18 +98,21 @@ class Hardware:
         if not self.control or not self.fresh(self.control.get('stamp_s'), 1):
             raise RuntimeError('Hardware controller unavailable')
         manual = data.get('type') == 'manual'
+        observation = self.control['phase'] == 'teleop' and data.get('type') == 'capture_grasp_goal'
         if not 0 <= time.monotonic() - state.get('ack', 0) <= (.3 if manual else 5):
             raise ValueError('Control heartbeat missing or stale; keep this page visible and retry')
-        if self.control['phase'] not in ('idle', 'fault') and self.owner != data.get('session_id'):
+        if not observation and self.control['phase'] not in ('idle', 'fault') and self.owner != data.get('session_id'):
             raise ValueError('Another tab owns the active task')
         # Claim before sending so the first heartbeat cannot miss an accepted command.
         old_owner, old_manual = self.owner, self.manual
-        self.owner, self.manual = data['session_id'], manual
-        packet = {**data, 'op': 'command', 'boot_id': self.control['boot_id'], 'deadline': time.monotonic() + (.45 if manual else 60)}
+        if not observation:
+            self.owner, self.manual = data['session_id'], manual
+        packet = {**data, 'op': 'observe_goal' if observation else 'command', 'boot_id': self.control['boot_id'], 'deadline': time.monotonic() + (.45 if manual else 60)}
         try:
             result = await self.rpc(packet)
         except Exception:
-            self.owner, self.manual = old_owner, old_manual
+            if not observation:
+                self.owner, self.manual = old_owner, old_manual
             raise
         if wait and result.get('status') == 'accepted':
             end = time.monotonic() + (45 if data.get('type') == 'reset_map' else 15)
@@ -119,7 +122,8 @@ class Hardware:
                 if result.get('status') != 'pending':
                     break
             else:
-                await self.stop('Command result timeout')
+                if not observation:
+                    await self.stop('Command result timeout')
                 raise RuntimeError('Command result timeout; inspect robot status before retry')
         if result.get('status') in ('failed', 'cancelled'):
             raise ValueError(result.get('error', result['status']))

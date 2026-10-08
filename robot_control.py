@@ -49,6 +49,7 @@ class Control:
         self.manual_args = {}
         self.stop_pending = None
         self.executing = False
+        self.observing = False
         self.stopping = False
         self.confirmation = None
         self.localized = False
@@ -148,7 +149,7 @@ class Control:
                 self.deadline = min(packet['deadline'], time.monotonic() + .45) if self.manual_lease else packet['deadline']
                 self.input = packet.get('input')
             return dict(status='ok')
-        if kind != 'command':
+        if kind not in ('command', 'observe_goal'):
             raise ValueError('Unknown control packet')
         command_id = str(uuid.UUID(packet['id']))
         fingerprint = json.dumps({k: v for k, v in packet.items() if k not in ('deadline', 'boot_id')}, sort_keys=True)
@@ -159,6 +160,31 @@ class Control:
         if packet.get('stop_epoch') != self.stop_epoch:
             raise ValueError('Stop state changed; refresh and issue a new action')
         command = packet.get('type')
+        if kind == 'observe_goal':
+            if command != 'capture_grasp_goal' or self.phase != 'teleop' or self.observing:
+                raise RuntimeError('TELEOP camera capture unavailable or already running')
+            if packet.get('map_id') != (self.robot.grid or {}).get('map_id') or not self.localized:
+                raise ValueError('Current map and localization required')
+            self.requests[command_id] = fingerprint
+            self.observing = True
+
+            def observe():
+                try:
+                    captures = {}
+                    for camera in ('front', 'arm'):
+                        if self.phase != 'teleop' or self.stop_epoch != packet['stop_epoch']:
+                            raise RuntimeError('TELEOP changed during camera capture')
+                        captures[camera] = self.capture(camera, grasp_goal=True, teleop_observation=True)['capture_id']
+                    if self.phase != 'teleop' or self.stop_epoch != packet['stop_epoch']:
+                        raise RuntimeError('TELEOP changed during camera capture')
+                    self.finish(packet, dict(status='completed', captures=captures))
+                except Exception as exc:
+                    self.finish(packet, dict(status='failed', error=str(exc)))
+                finally:
+                    self.observing = False
+
+            threading.Thread(target=observe, daemon=True).start()
+            return dict(status='accepted', id=command_id)
         if command in ('teleop_acquire', 'teleop_release'):
             raise ValueError('TELEOP handoff requires the local socket')
         if command in ('update_pause', 'update_start') and (command == 'update_start' or (self.map_update or {}).get('active')):
@@ -644,7 +670,7 @@ class Control:
                 raise RuntimeError('Arm coordinate feedback unavailable')
             return dict(grasp_z_mm=number(coords[2], *LIMITS['Z'], 'Arm Z feedback'))
         elif kind == 'capture_grasp_goal':
-            self.require_arm()
+            self.require_arm(False)
             self.robot.nav.wait_stopped()
             before = wait_arm(self.arm, timeout=3)
             captures = {camera: self.capture(camera, grasp_goal=True)['capture_id'] for camera in ('front', 'arm')}

@@ -153,6 +153,7 @@ class PhotoAPITest(unittest.IsolatedAsyncioTestCase):
                 for invalid in (True, float('nan'), '12.5'):
                     with self.assertRaises(ValueError):
                         PhotoIndex(ui, root / 'stations.json').save_grasp_height(item_id, invalid, height['revision'])
+                hardware.control['phase'] = 'teleop'
                 response = await client.post('/api/items/grasp-goal', json=dict(item_id=item_id,
                     map_id=grid['map_id'], expected_revision=height['revision'], zone_revision=app[EDITOR].zones['revision']))
                 self.assertEqual(response.status, 200, await response.text())

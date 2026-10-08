@@ -34,12 +34,15 @@ def main():
         p, q = transform.transform.translation, transform.transform.rotation
         return dict(x_m=p.x, y_m=p.y, yaw_rad=math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z)))
 
-    def capture(camera_id, persist=True, update_key=None, vision=False, grasp_goal=False):
+    def capture(camera_id, persist=True, update_key=None, vision=False, grasp_goal=False, teleop_observation=False):
         if camera_id not in ('front', 'arm') or not robot.grid or not control.localized:
             raise ValueError('Camera and confirmed localization required')
         robot.nav.wait_stopped()
-        before = wait_arm(control.arm, timeout=3) if camera_id == 'arm' and control.arm else None
-        if camera_id == 'arm' and before is None:
+        if teleop_observation and control.phase != 'teleop':
+            raise RuntimeError('TELEOP camera session changed')
+        # TELEOP owns the serial port; observation capture must never open or command it.
+        before = wait_arm(control.arm, timeout=3) if camera_id == 'arm' and control.arm and not teleop_observation else None
+        if camera_id == 'arm' and before is None and not teleop_observation:
             raise RuntimeError('Arm feedback required for acquisition')
         started, end = time.time(), time.monotonic() + 2
         frame = None

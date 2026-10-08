@@ -135,9 +135,14 @@ Save current grasp Z to record only the measured arm Z coordinate, in millimeter
 as `grasp_z_mm` on the item. Then release the item in place, return to OPERATE and
 raise the arm above that height to the alignment position before saving both
 camera views. The item editor explains this clearance step between the buttons.
-New goal capture requires a recorded grasp height. These actions need an idle,
-localized robot and homed arm. New items are saved before acquisition. Height
-recording does not move the arm or add automatic vertical motion to Fetch.
+New goal capture requires a recorded grasp height. Height recording needs an idle,
+localized robot and homed arm. Camera goals can be recorded while TELEOP remains
+open: release the movement keys and keep the base and arm still. The bridge checks
+fresh, stationary base feedback and camera frames without opening the TELEOP-owned
+arm serial port or taking control. Photo errors do not stop TELEOP. In idle mode,
+camera capture reads arm stability feedback without requiring a new homing
+confirmation. New items are saved before acquisition. Height recording does not
+move the arm or add automatic vertical motion to Fetch.
 The paired goal photos remain in the photo index with a compressed JPEG copy for
 LLM input. Deleting or reassigning either goal photo invalidates that item's goal.
 

@@ -32,6 +32,7 @@ def fake_control():
     c.owner, c.deadline, c.input = None, time.monotonic() + .45, None
     c.manual_lease = False
     c.executing = c.stopping = c.base_enabled = False
+    c.observing = False
     c.stop_pending = None
     c.teleop_pid = None
     c.angles, c.arm_stamp, c.arm_error, c.goal = None, 0, '', None
@@ -53,6 +54,33 @@ def packet(**values):
 
 
 class ControlTest(unittest.TestCase):
+    def test_teleop_goal_capture_preserves_control_and_never_uses_arm(self):
+        c = fake_control()
+        c.phase, c.arm, c.arm_homed, c.deadline = 'teleop', None, False, 0
+        c.capture.return_value = dict(capture_id='frame')
+        c.request_stop = Mock()
+        p = packet()
+        p.update(op='observe_goal', type='capture_grasp_goal')
+        self.assertEqual(c.receive(p)['status'], 'accepted')
+        end = time.monotonic()+1
+        while c.observing and time.monotonic()<end:
+            time.sleep(.01)
+        self.assertEqual(c.results[p['id']]['status'], 'completed')
+        self.assertEqual((c.phase, c.owner, c.deadline, c.task_id), ('teleop', None, 0, None))
+        self.assertTrue(c.queue.empty())
+        self.assertEqual(c.capture.call_count, 2)
+        for invocation in c.capture.call_args_list:
+            self.assertEqual(invocation.kwargs, dict(grasp_goal=True, teleop_observation=True))
+        c.capture.side_effect = RuntimeError('Camera missing')
+        p['id'] = str(uuid.uuid4())
+        c.receive(p)
+        end = time.monotonic()+1
+        while c.observing and time.monotonic()<end:
+            time.sleep(.01)
+        self.assertEqual(c.results[p['id']]['status'], 'failed')
+        self.assertEqual(c.phase, 'teleop')
+        c.request_stop.assert_not_called()
+
     def test_teleop_handoff_releases_hardware_and_keeps_web_control_locked(self):
         c = fake_control()
         arm = c.arm
