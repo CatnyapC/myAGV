@@ -66,6 +66,8 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .map-tools { display: flex; align-items: center; justify-content: space-between; padding: 3px 7px 3px 12px; height: 40px; flex-shrink: 0; border-bottom: 1px solid var(--gray-6); gap: 5px; }
 .toolbar-actions { display: flex; align-items: center; gap: 4px; }
 .map-tools .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obstacle-filter { display: inline-flex; align-items: center; gap: 8px; }
+.obstacle-filter input[type="range"] { margin: 0; }
 .map-canvas { flex: 1; min-height: 0; background: var(--gray-1); }
 .map-canvas.drawing { cursor: crosshair; }
 .occupancy-raster { image-rendering: pixelated; }
