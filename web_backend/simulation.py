@@ -23,7 +23,7 @@ def intersects(a, b):
 
 
 def navigation_grid(grid, zones):
-    cells = list(grid['cells'])
+    cells = [0 if cell == -1 else cell for cell in grid['cells']]
     r, width, height = grid['resolution_m'], grid['width'], grid['height']
     for zone in zones:
         polygon = [world_to_local(p, grid['origin']) for p in zone['corners']]

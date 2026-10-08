@@ -34,7 +34,7 @@
       recovery_behavior_enabled: false
       clearing_rotation_allowed: false
       shutdown_costmaps: false
-      GlobalPlanner: {allow_unknown: false, default_tolerance: 0.0}
+      GlobalPlanner: {allow_unknown: true, default_tolerance: 0.0}
       TrajectoryPlannerROS:
         max_vel_x: 0.1
         min_vel_x: 0.02

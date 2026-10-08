@@ -296,6 +296,28 @@ class ControlTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'both ROS costmaps'):
             robot.validate_goal(goal, .3)
 
+    def test_unknown_navigation_is_passable_but_obstacles_and_zones_remain_blocked(self):
+        from web_backend.simulation import navigation_grid, global_costmap, plan_path
+        grid = dict(width=30, height=30, resolution_m=.1,
+                    origin=dict(x_m=0, y_m=0, yaw_rad=0), cells=[-1]*900)
+        robot = RobotROS.__new__(RobotROS)
+        robot.zones_ready = lambda: True
+        robot.derived = navigation_grid(grid, [])
+        goal = dict(x_m=1.5, y_m=1.5)
+        robot.validate_goal(goal, .3)
+        route = plan_path(global_costmap(robot.derived), dict(x_m=.5, y_m=.5), goal)
+        self.assertTrue(route)
+        self.assertEqual(grid['cells'], [-1]*900)
+        grid['cells'][15*30+15] = 100
+        robot.derived = navigation_grid(grid, [])
+        with self.assertRaisesRegex(ValueError, 'Goal clearance'):
+            robot.validate_goal(goal, .3)
+        grid['cells'][15*30+15] = -1
+        zone = dict(corners=[[1.3, 1.3], [1.7, 1.3], [1.7, 1.7], [1.3, 1.7]])
+        robot.derived = navigation_grid(grid, [zone])
+        with self.assertRaisesRegex(ValueError, 'Goal clearance'):
+            robot.validate_goal(goal, .3)
+
     def test_real_photo_metadata_roundtrip(self):
         with tempfile.TemporaryDirectory() as tmp:
             photos=PhotoIndex(Path(tmp),Path(tmp)/'stations.json')

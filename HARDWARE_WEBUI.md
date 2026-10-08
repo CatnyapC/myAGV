@@ -102,8 +102,10 @@ it does not require the robot's current footprint to be observed as free.
 **Go** sends the selected map-frame goal to move_base. A goal requires current
 localization, live sensors, planner footprint clearance and both costmaps applying
 the current no-go revision. Go does not require an online or homed arm or a
-recorded transport pose, and does not move the arm. Unknown/occupied footprint
-clearance is rejected.
+recorded transport pose, and does not move the arm. Unknown cells are treated as
+free in the derived navigation map; the displayed source map keeps them unknown.
+Occupied footprint clearance and goals outside map bounds are rejected. Go,
+Fetch and map surveys share this policy. Live obstacles and no-go zones remain blocked.
 No-go rectangles are rasterized into a derived map. Both global and rolling
 local StaticLayers consume it; published full costmaps are checked for virtual
 obstacles. The original map is preserved. Recovery rotations are disabled.

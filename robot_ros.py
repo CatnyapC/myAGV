@@ -249,7 +249,7 @@ class RobotROS:
             raise RuntimeError('Waiting for both ROS costmaps to apply no-go zones')
         # ROS costmaps already inflate obstacles; move_base checks those costs.
         if not footprint_clear(self.derived, pose, radius):
-            raise ValueError('Goal clearance intersects a wall, unknown space or no-go zone')
+            raise ValueError('Goal clearance intersects an obstacle, no-go zone or map boundary')
 
     def stopped(self):
         sample = self.nav.odom
