@@ -13,7 +13,7 @@ type Round = {
 
 export function FetchTest(props: {
   connected: boolean; editable: boolean; reasons: string[]; itemId: string; indexRevision?: number;
-  itemName?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
+  itemName?: string; status?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
 }) {
   const [settings, setSettings] = useState<FetchSettings | null>(null);
   const [draft, setDraft] = useState<FetchSettings['values'] | null>(null);
@@ -85,6 +85,7 @@ export function FetchTest(props: {
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
     <span className="muted">Preview: no movement. Align: arm X/Y only, up to 8 corrections; base and gripper stay still.</span>
+    <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
     <span className="subheading">LLM ROUNDS</span>

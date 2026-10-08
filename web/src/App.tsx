@@ -292,7 +292,7 @@ export function App() {
     } catch (failure) {
       // Releasing a manual button aborts its pending start; a newer hold may already exist.
       if (type === 'manual' && session.current && failure instanceof DOMException && failure.name === 'AbortError') return;
-      held.current = null; setError((failure as Error).message); if (type === 'reset_map') throw failure;
+      held.current = null; setError((failure as Error).message); if (type === 'reset_map' || type === 'fetch_test') throw failure;
     }
   }
   async function stop() {
@@ -605,9 +605,9 @@ export function App() {
         {state?.demo === false && <HardwareControls stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
         <FetchTest connected={connected} editable={canEdit && !busy} itemId={selectedItemId} itemName={selectedItem?.name}
-          indexRevision={photos?.revision} command={hardwareCommand} stop={() => void stop()}
+          indexRevision={photos?.revision} command={hardwareCommand} stop={() => void stop()} status={navigation?.status}
           reasons={[
-            ...(!canEdit || busy ? ['Connect and stop the robot'] : []),
+            ...(!connected ? ['Reconnect to the robot'] : state?.phase !== 'idle' ? [`Robot busy (${state?.phase}); wait for completion`] : busy ? ['Wait for the current operation'] : []),
             ...(state?.demo !== false ? ['Live hardware required'] : []),
             ...(!state?.hardware?.arm_homed || !state.hardware.localized ? ['Home arm and confirm localization'] : []),
             ...(state?.llm?.status !== 'configured' ? ['LLM not configured'] : []),

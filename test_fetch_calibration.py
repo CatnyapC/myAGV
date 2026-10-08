@@ -21,6 +21,20 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
+    def test_preview_allows_off_axis_pose_but_alignment_requires_front_pose(self):
+        c = fake_control()
+        c.calibrate_fetch = Mock()
+        packet = dict(type='fetch_test', preview=True, fetch_settings={})
+        with patch('robot_control.wait_arm', return_value=[92.64, 3.65, 49.35, 92.64]):
+            c.execute(packet)
+            c.calibrate_fetch.assert_called_once_with(packet, {})
+            c.calibrate_fetch.reset_mock()
+            with self.assertRaisesRegex(ValueError, 'J1'):
+                c.execute(dict(packet, preview=False))
+            c.calibrate_fetch.assert_not_called()
+        c.arm.set_coords.assert_not_called()
+        c.arm.set_angles.assert_not_called()
+
     def test_grasp_height_records_only_measured_z_without_motion_or_capture(self):
         c = fake_control()
         c.arm.get_coords_info.return_value = [111, 222, 12.5]

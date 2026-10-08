@@ -684,7 +684,9 @@ class Control:
             if not self.localized or type(packet.get('preview')) is not bool:
                 raise ValueError('Confirmed localization and explicit test mode required')
             self.robot.nav.wait_stopped()
-            pickup_angles(wait_arm(self.arm, timeout=3))
+            angles = wait_arm(self.arm, timeout=3)
+            if not packet['preview']:
+                pickup_angles(angles)
             self.calibrate_fetch(packet, packet['fetch_settings'])
         elif kind == 'zones':
             self.robot.nav.wait_stopped()
@@ -895,6 +897,7 @@ class Control:
         try:
             for round_index in range(9):
                 current()
+                self.status = 'Round %d: capturing front and arm cameras' % (round_index + 1)
                 self.robot.nav.wait_stopped()
                 images = {camera: self.capture(camera, vision=True)['image'] for camera in ('front', 'arm')}
                 request_id = str(uuid.uuid4())
@@ -903,6 +906,7 @@ class Control:
                     item=packet['vision_item'], images=images, history=history,
                     round=round_index + 1, preview=packet.get('preview', False), limits=config,
                     prompt=packet.get('fetch_settings', {}).get('prompt')))
+                self.status = 'Round %d: waiting for LLM' % (round_index + 1)
                 end = time.monotonic() + 20
                 while True:
                     current()
