@@ -1,6 +1,6 @@
 import { useState, type PointerEvent } from 'react';
 import { Button } from './ui';
-import type { Origin } from './mapGeometry';
+import type { Origin, Stations } from './mapGeometry';
 
 export type HardwareState = {
   stop_epoch: number; phase: string; status: string; task_id?: string; arm_available: boolean; arm_homed: boolean;
@@ -10,11 +10,11 @@ export type HardwareState = {
 };
 export type HeldInput = { mode: string; key: string } | null;
 
-type Props = { state?: HardwareState; connected: boolean; goal: Origin | null;
+type Props = { stations: Stations; state?: HardwareState; connected: boolean; goal: Origin | null;
   command: (type: string, values?: Record<string, unknown>) => Promise<void>;
   hold: (input: HeldInput) => void; stop: () => void };
 
-export function HardwareControls({ state, connected, goal, command, hold, stop }: Props) {
+export function HardwareControls({ stations, state, connected, goal, command, hold, stop }: Props) {
   const [mode, setMode] = useState('BASE');
   const [name, setName] = useState('');
   const [radius, setRadius] = useState('0.25');
@@ -62,9 +62,9 @@ export function HardwareControls({ state, connected, goal, command, hold, stop }
     <label><input type="checkbox" checked={measured} disabled={!idle} onChange={e => setMeasured(e.target.checked)} /> Arm folded, J1=0; measured radius encloses base, arm and payload</label>
     <Button disabled={!idle || !state?.arm_homed || !measured} onClick={() => void command('transport_record', { clearance_m: Number(radius), measured })}>Record transport pose</Button>
     <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before automatic travel'}</span>
-    <label className="setting-row">New station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>
-    <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => void command('teach', { name: name.trim() })}>Teach current base + arm pose</Button>
-    <span className="muted">Use a new station name. J1 must be zero. Link the station to an item in its photo editor.</span>
+    <label className="setting-row">Station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>
+    <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => { const previous = stations[name.trim()]; if (!previous || window.confirm('Overwrite this station with the current base and arm pose? Linked items will need reconfirmation.')) void command('teach', { name: name.trim(), overwrite: Boolean(previous), expected_station: previous }); }}>Teach current base + arm pose</Button>
+    <span className="muted">Existing names require overwrite confirmation. J1 must be zero. Link the station to an item in its photo editor.</span>
     {(review || holding) && <div role="alert">
       <strong>{review ? 'Inspect live arm camera; align before grasp' : 'Inspect live arm camera; verify object held'}</strong>
       {review && <div className="action-line">{['X+', 'X-', 'Z+', 'Z-'].map(key => <Button key={key} onClick={() => void command('align_step', { axis: key[0], direction: key[1] === '+' ? 1 : -1 })}>{key} 1 mm</Button>)}</div>}

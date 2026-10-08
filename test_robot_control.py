@@ -31,9 +31,10 @@ def fake_control():
     c.localized = True
     c.config = dict(transport_angles=[0, 10, 20], clearance_m=.25)
     c.arm, c.arm_homed = Mock(), True
+    c.capture = Mock()
     c.queue, c.results, c.requests = queue.Queue(maxsize=1), OrderedDict(), OrderedDict()
     c.robot = SimpleNamespace(grid=dict(map_id='map'), zones=dict(revision=2), zero=Mock(),
-            nav=Mock(), driver_watchdog=True, exclusive=True, sensors_ready=lambda: True,
+            nav=Mock(), costmap_received={}, layers_ok=True, driver_watchdog=True, exclusive=True, sensors_ready=lambda: True,
             zones_ready=lambda: True, clearance_ready=lambda r: True, validate_goal=Mock())
     return c
 

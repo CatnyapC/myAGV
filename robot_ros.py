@@ -41,6 +41,8 @@ class RobotROS:
         self.zone_points = []
         self.published_at = float('inf')
         self.costmaps = {}
+        self.costmap_received = {}
+        self.costmap_saved = 0
         self.scan = None
         self.path = []
         self.path_at = 0
@@ -60,7 +62,7 @@ class RobotROS:
         ]
         for name in ('global', 'local'):
             self.subscribers.append(rospy.Subscriber('/move_base/%s_costmap/costmap' % name,
-                OccupancyGrid, lambda msg, name=name: self.receive_costmap(name, msg), queue_size=1))
+                OccupancyGrid, lambda msg, name=name: self.receive_costmap(name, msg), queue_size=1, buff_size=4_000_000))
         self.timer = rospy.Timer(rospy.Duration(.05), self.tick)
         rospy.on_shutdown(self.zero)
 
@@ -121,10 +123,12 @@ class RobotROS:
         # ponytail: inspect all zone cells; use a native mask if very large zones hurt throughput.
         valid = zones_visible(grid, points)
         age = (self.ros.Time.now() - message.header.stamp).to_sec()
+        self.costmap_received[name] = dict(age_s=round(age, 3), mask_applied=valid)
         with self.lock:
             if published == self.published_at and time.monotonic() > published + .4 and -.1 <= age <= 2:
                 self.costmaps[name] = (time.monotonic(), revision, valid, grid)
-        if name == 'global' and self.grid:
+        if name == 'global' and self.grid and time.monotonic() - self.costmap_saved > .5:
+            self.costmap_saved = time.monotonic()
             atomic_json(self.directory / 'global_costmap.json', {**grid, 'map_id': self.grid['map_id'],
                         'revision': revision, 'zone_revision': revision, 'stamp_s': time.time()})
 

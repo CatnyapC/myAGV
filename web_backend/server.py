@@ -1,4 +1,4 @@
-"""Loopback WebUI API with demo simulation or read-only ROS snapshots."""
+"""WebUI API with demo simulation or leased ROS hardware control."""
 import argparse
 import asyncio
 from contextlib import suppress
@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from aiohttp import web
 from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
-from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame
+from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_json
 from .hardware import Hardware
 from .resolve import MODEL, MODEL_OPTIONS, describe_photo, load_key, resolve_items, target_preview, validate_llm
@@ -364,6 +364,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         if len(current) == len(editor.zones['zones']):
                             raise ValueError('Zone not found')
                     data = {**data, 'type': 'zones', 'zones': current}
+                if kind == 'teach' and data.get('overwrite') is True:
+                    data = {**data, 'station_digest': digest_station(data['expected_station'])}
                 if kind == 'fetch':
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')

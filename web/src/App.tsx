@@ -499,7 +499,7 @@ export function App() {
           <Square size={14} /> Zone {i + 1}<span className="row-end">{selected === zone.id ? 'Selected' : ''}</span>
         </button>) : <span className="muted">None</span>}</div>
         <span className="muted enforcement">{state?.demo === false ? costmapReady ? 'ROS global + local no-go applied' : 'ROS no-go enforcement pending' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
-        {state?.demo === false && <HardwareControls state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
+        {state?.demo === false && <HardwareControls stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
       </div>)}
     </main>

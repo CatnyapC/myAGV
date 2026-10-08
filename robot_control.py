@@ -451,6 +451,7 @@ class Control:
             poses = [validate_pose(p) for p in goals]
             for pose in poses:
                 self.travel_guard(pose)
+            self.capture('front', persist=False)
             self.fold()
             captures = []
             for pose in poses:
@@ -477,6 +478,7 @@ class Control:
         if not len(start_arm) == len(target) == len(transport):
             raise ValueError('Arm joint counts differ')
         self.travel_guard(start_base)
+        self.capture('arm', persist=False)
         self.fold()
         self.phase, self.status, self.base_enabled = 'approach', 'Approaching taught pickup pose', True
         try:
@@ -525,6 +527,8 @@ class Control:
                     driver_watchdog=self.robot.driver_watchdog, exclusive=self.robot.exclusive,
                     sensors_ready=self.robot.sensors_ready(), motion_available=ready,
                     navigation_ready=ready and transport and self.arm is not None and self.arm_homed and self.localized and self.robot.zones_ready() and self.robot.clearance_ready(self.config['clearance_m']),
+                    costmap_feedback=self.robot.costmap_received, layers_configured=self.robot.layers_ok,
+                    planner_footprint_ready=self.robot.clearance_ready(self.config['clearance_m']),
                     zones_ready=self.robot.zones_ready(), zone_revision=self.robot.zones['revision'] if self.robot.zones else -1,
                     goal=self.goal, moving=self.base_enabled, stop_confirmed=self.phase == 'idle' and self.status.endswith('; stopped'))
 
