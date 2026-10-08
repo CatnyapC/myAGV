@@ -272,6 +272,38 @@ remain in `stations.json`. Keep these files with the robot's configuration.
 
 ## LLM key
 
+### Estimated item positions
+
+Each current front-camera observation is automatically analyzed against the named
+item catalog. The LLM receives the scene, occupancy-map image and acquisition-time
+base pose. Camera-relative bearing/range estimates are transformed into map X/Y;
+they never create confirmed item or pickup-station associations. The latest view
+per item appears as an orange location pin with an uncertainty circle. Hover or
+focus the pin for the source image, coordinates, confidence and capture time.
+
+Click a pin to preview the nearest reachable approach, facing the item. Then use
+the existing **Go** button. Approach selection excludes unknown space, no-go zones,
+occupied ROS costmap cells and disconnected regions, and leaves space for the
+chassis and estimate uncertainty. Low-confidence estimates cannot provide a goal.
+**Resolve** can also select this approach. Fetch and grasping are unchanged.
+
+**Map actions > Estimate item positions** retries existing front observations.
+Missing credentials, malformed results and STOP/map changes retain the photos
+without applying a location result. Simulator fixtures are analyzed only on
+explicit request. Background estimation does not hold the grasp-calibration lock.
+
+Calibration defaults can be overridden in `web_runtime/item_location_config.json`
+before restarting `myagv-api`:
+
+```json
+{"camera_yaw_deg": 0, "camera_forward_m": 0, "camera_left_m": 0,
+ "stand_off_m": 0.45, "minimum_uncertainty_m": 0.35}
+```
+
+Camera yaw is positive left from chassis forward; offsets are chassis forward/left
+in meters. A single RGB image supplies approximate depth, not a measured object
+position. This version uses the newest observation, not multi-view triangulation.
+
 Run in Bash on the robot:
 
 ```bash

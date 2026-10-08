@@ -19,6 +19,7 @@ from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
 from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
+from .item_locations import approach_goal, catalog_signature, estimate_items, location_config
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off')
@@ -180,6 +181,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     async def fetch_rounds(request):
         return web.json_response(fetch_log if request.query.get('after') != str(fetch_log['revision'])
                                  else dict(revision=fetch_log['revision']), headers={'Cache-Control': 'no-store'})
+    location_calibration = location_config(load_json(editor.directory / 'item_location_config.json', {}))
 
     def photo_stopped():
         if (editor.sim and editor.sim.phase != 'idle') or (editor.hardware and editor.hardware.control.get('phase') not in ('idle', 'update_paused')):
@@ -187,6 +189,58 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
     async def photo_index(request):
         return web.json_response(await asyncio.to_thread(photos.snapshot, editor.grid['map_id']))
+
+    async def location_approach(estimate):
+        nav = editor.state()['navigation']
+        if not nav['pose'] or (editor.hardware and not editor.hardware.control.get('navigation_ready')):
+            raise ValueError('Fresh localization and navigation readiness required')
+        grid, map_id, zone_revision, generation = editor.grid, editor.grid['map_id'], editor.zones['revision'], editor.generation
+        cost = editor.hardware.costmap() if editor.hardware else editor.sim.costmap
+        goal = await asyncio.to_thread(approach_goal, grid, editor.zones['zones'], cost, nav['pose'],
+                                      estimate, nav['costmap']['clearance_m'] if editor.hardware else .27, location_calibration)
+        if map_id != editor.grid['map_id'] or zone_revision != editor.zones['revision'] or generation != editor.generation:
+            raise web.HTTPConflict(text='Map or stop state changed; retry approach')
+        return goal
+
+    async def estimated_approach(request):
+        data = await request.json()
+        if not isinstance(data, dict) or type(data.get('expected_revision')) is not int:
+            raise ValueError('Current photo index revision required')
+        photo_stopped()
+        if data.get('map_id') != editor.grid['map_id'] or data.get('zone_revision') != editor.zones['revision']:
+            raise web.HTTPConflict(text='Map or no-go zones changed; retry approach')
+        if data['expected_revision'] != photos.value['revision']:
+            raise web.HTTPConflict(text='Photo index changed; retry approach')
+        revision = photos.value['revision']
+        estimate = next((e for e in photos.snapshot(editor.grid['map_id'])['locations']
+                         if e['item_id'] == data.get('item_id') and e['photo_id'] == data.get('photo_id')), None)
+        if not estimate:
+            raise web.HTTPConflict(text='Item estimate changed or unavailable')
+        goal = await location_approach(estimate)
+        photo_stopped()
+        if photos.value['revision'] != revision:
+            raise web.HTTPConflict(text='Item estimate changed; retry approach')
+        return web.json_response(dict(goal=goal, estimate=estimate, map_id=editor.grid['map_id'], index_revision=revision))
+
+    async def queue_locations(request):
+        data = await request.json()
+        if not isinstance(data, dict) or type(data.get('expected_revision')) is not int:
+            raise ValueError('Current photo index revision required')
+        photo_stopped()
+        if data.get('map_id') != editor.grid['map_id']:
+            raise web.HTTPConflict(text='Map changed; retry estimation')
+        if not llm_key:
+            raise web.HTTPServiceUnavailable(text='OpenRouter key unavailable')
+        async with photo_lock:
+            photos.check(data.get('expected_revision'))
+            if not photos.value['items']:
+                raise ValueError('Add named reference items before estimating positions')
+            signature = catalog_signature(photos.value['items'])
+            for photo in list(photos.value['photos']):
+                if photo.get('map_id') == editor.grid['map_id'] and photo.get('frame') == editor.grid['frame'] and photo.get('camera_id') == 'front' and photo.get('current', True):
+                    photos.set_locations(photo['id'], dict(status='queued', catalog_signature=signature, estimates=[]), photos.value['revision'])
+        await editor.emit('photos')
+        return web.json_response(photos.snapshot(editor.grid['map_id']), status=202)
 
     async def resolve(request):
         data = await request.json()
@@ -219,6 +273,15 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             check_current()
             if result['status'] == 'matched':
                 result.update(target_preview(index, records, result['item_ids'][0]))
+                estimate = next((e for e in index['locations'] if e['item_id'] == result['item_ids'][0]), None)
+                if estimate:
+                    try:
+                        result.update(goal=await location_approach(estimate), photo_id=estimate['photo_id'], target_source='estimated')
+                        result.pop('blocked_reason', None)
+                    except (ValueError, RuntimeError) as exc:
+                        result.pop('goal', None)
+                        result.update(photo_id=estimate['photo_id'], blocked_reason=str(exc))
+                    check_current()
             return web.json_response({**result, 'index_revision': data['expected_revision'], 'map_id': data['map_id'], 'settings_revision': settings_revision})
 
     async def stations(request):
@@ -575,6 +638,45 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             await socket.close(code=1001, message=b'Service stopping')
 
     async def simulation_tick(application):
+        async def estimate_observations():
+            while True:
+                await asyncio.sleep(.5)
+                if not llm_key or resolve_lock.locked() or not photos.value['items']:
+                    continue
+                if editor.hardware and editor.hardware.control.get('phase') not in ('idle', 'update_paused', 'updating_map', 'navigating'):
+                    continue
+                signature = catalog_signature(photos.value['items'])
+                photo = next((p for p in photos.value['photos']
+                              if p.get('map_id') == editor.grid['map_id'] and p.get('camera_id') == 'front'
+                              and p.get('frame') == editor.grid['frame']
+                              and (p.get('source') == 'ros' or p.get('location_analysis', {}).get('status') in ('queued', 'running'))
+                              and p.get('current', True) and photos.image_path(p['id']).is_file()
+                              and (p.get('location_analysis', {}).get('catalog_signature') != signature
+                                   or p.get('location_analysis', {}).get('status') in ('queued', 'running'))), None)
+                if not photo:
+                    continue
+                grid, map_info, map_png, generation = editor.grid, editor.metadata, editor.png, editor.generation
+                items = [dict(i) for i in photos.value['items']]
+                async with photo_lock:
+                    photos.set_locations(photo['id'], dict(status='running', catalog_signature=signature, estimates=[]), photos.value['revision'])
+                await editor.emit('photos')
+                try:
+                    image = await asyncio.to_thread(photos.image_path(photo['id']).read_bytes)
+                    estimates = await estimate_items(image, map_png, map_info, photo, items, llm_key, location_calibration)
+                    analysis = dict(status='complete', catalog_signature=signature, estimates=estimates)
+                except (web.HTTPException, OSError, ValueError, RuntimeError) as exc:
+                    analysis = dict(status='error', catalog_signature=signature, estimates=[], error=str(exc)[:300])
+                async with photo_lock:
+                    current = next((p for p in photos.value['photos'] if p['id'] == photo['id']), None)
+                    if not current or not current.get('current', True):
+                        continue
+                    if grid['map_id'] != editor.grid['map_id'] or generation != editor.generation:
+                        analysis = dict(status='cancelled', catalog_signature=signature, estimates=[])
+                    elif catalog_signature(photos.value['items']) != signature:
+                        continue
+                    photos.set_locations(photo['id'], analysis, photos.value['revision'])
+                await editor.emit('photos')
+
         async def fetch_vision():
             directory = editor.hardware.directory
             request_path, response_path = directory / 'fetch_vision_request.json', directory / 'fetch_vision_response.json'
@@ -679,13 +781,14 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         task = asyncio.create_task(advance())
         refresh_task = asyncio.create_task(refresh_hardware()) if editor.hardware else None
         vision_task = asyncio.create_task(fetch_vision()) if editor.hardware else None
+        location_task = asyncio.create_task(estimate_observations())
         try:
             yield
         finally:
-            for pending in (task, refresh_task, vision_task):
+            for pending in (task, refresh_task, vision_task, location_task):
                 if pending:
                     pending.cancel()
-            for pending in (task, refresh_task, vision_task):
+            for pending in (task, refresh_task, vision_task, location_task):
                 if pending:
                     with suppress(asyncio.CancelledError):
                         await pending
@@ -714,6 +817,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app.router.add_get('/api/battery', battery)
     app.router.add_get('/api/items', photo_index)
     app.router.add_post('/api/resolve', resolve)
+    app.router.add_post('/api/item-locations/estimate', queue_locations)
+    app.router.add_post('/api/item-locations/approach', estimated_approach)
     app.router.add_get('/api/stations', stations)
     app.router.add_post('/api/photos/reference', reference_upload)
     app.router.add_post('/api/photos/capture', capture_photo)

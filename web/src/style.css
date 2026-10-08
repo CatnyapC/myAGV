@@ -166,3 +166,13 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .map-updates details[open] > * { margin-top: 6px; }
 .map-updates summary { cursor: pointer; }
 .map-updates input[type="number"] { max-width: 90px; }
+.item-map-pin { background: none; border: 0; }
+.item-map-pin svg { width: 28px; height: 36px; filter: drop-shadow(0 2px 3px #0008); }
+.item-map-pin path { fill: var(--orange-9); stroke: var(--orange-12); stroke-width: 1.5; }
+.item-map-pin circle { fill: var(--gray-1); }
+.item-map-pin:focus-visible { outline: 2px solid var(--cyan-11); outline-offset: 3px; }
+.item-location-tooltip { background: var(--gray-2); border-color: var(--gray-7); color: var(--gray-12); }
+.item-location-preview { display: grid; gap: 5px; width: 200px; white-space: normal; }
+.item-location-preview img { width: 200px; height: 140px; object-fit: contain; background: var(--gray-1); }
+.item-location-preview small { color: var(--gray-11); }
+.location-status { padding: 4px 10px; }

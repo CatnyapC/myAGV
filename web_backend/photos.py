@@ -15,6 +15,7 @@ from navigation import load_stations
 from .map_data import png_rgb
 from .simulation import validate_pose
 from .storage import atomic_bytes, atomic_json
+from .item_locations import location_records, validate_estimates
 
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
@@ -125,6 +126,11 @@ class PhotoIndex:
                 raise ValueError('Unknown photo kind')
             if photo.get('item_id') and photo['item_id'] not in item_ids:
                 raise ValueError('Photo refers to a missing item')
+            if 'location_analysis' in photo:
+                analysis = photo['location_analysis']
+                if photo['kind'] != 'observation' or photo['camera_id'] != 'front' or not isinstance(analysis, dict) or analysis.get('status') not in ('queued', 'running', 'complete', 'error', 'cancelled') or not isinstance(analysis.get('catalog_signature'), str):
+                    raise ValueError('Invalid item location analysis')
+                validate_estimates(analysis.get('estimates', []), item_ids)
         by_id = {p['id']: p for p in value['photos']}
         for item in value['items']:
             goal = item.get('grasp_goal')
@@ -158,6 +164,7 @@ class PhotoIndex:
             item['fetch_available'] = False  # Task/grasp gates are not part of the photo milestone.
             goal = item.get('grasp_goal')
             item['grasp_goal_ready'] = bool(goal) and all(self.image_path(photo_id).is_file() and self.image_path(photo_id).with_suffix('.jpg').is_file() for photo_id in goal.values())
+        value['locations'] = location_records(value, map_id)
         return value
 
     def image_path(self, photo_id):
@@ -169,6 +176,11 @@ class PhotoIndex:
 
     def commit(self, value):
         by_id = {p['id']: p for p in value['photos']}
+        item_ids = {i['id'] for i in value['items']}
+        for photo in value['photos']:
+            if 'location_analysis' in photo:
+                analysis = photo['location_analysis']
+                analysis['estimates'] = [e for e in analysis.get('estimates', []) if e['item_id'] in item_ids]
         for item in value['items']:
             if item.get('grasp_goal') and any(by_id.get(photo_id, {}).get('item_id') != item['id']
                                              for photo_id in item['grasp_goal'].values()):
@@ -177,6 +189,15 @@ class PhotoIndex:
         self.validate(value)
         atomic_json(self.directory / 'photo_index.json', value)
         self.value = value
+
+    def set_locations(self, photo_id, analysis, revision):
+        self.check(revision)
+        value = deepcopy(self.value)
+        photo = next((p for p in value['photos'] if p['id'] == photo_id), None)
+        if photo is None:
+            raise ValueError('Observation no longer available')
+        photo['location_analysis'] = analysis
+        self.commit(value)
 
     def add(self, image, metadata, revision):
         self.check(revision)

@@ -4,7 +4,7 @@ import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
 import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu, MoreHorizontal, Play, Plus, RotateCcw, Search, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
-import { type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
+import { type ItemLocation, type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
 import { BatteryStatus } from './BatteryStatus';
 import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
@@ -14,7 +14,7 @@ import { FetchTest } from './FetchTest';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
 type State = { hardware?: HardwareState; robot_id: string; demo: boolean; phase: string; navigation: Navigation; cameras?: Partial<Record<'front' | 'arm', { url: string; stamp_s: number }>>; llm: { model: string; status: string; reasoning_effort: string } };
-type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; settings_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string };
+type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; settings_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string; target_source?: 'estimated' };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v2';
 const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
 const REQUEST_EXAMPLES = [
@@ -102,6 +102,7 @@ export function App() {
   const goal = goalValid ? { x_m: Number(goalText[0]), y_m: Number(goalText[1]), yaw_rad: Number(goalText[2]) * Math.PI / 180 } : null;
   const costmapReady = navigation?.costmap.ready && navigation.costmap.applied_zone_revision === zones?.revision;
   const selectedPhoto = photos?.photos.find(p => p.id === selectedPhotoId) ?? null;
+  const locationPhotos = photos?.photos.filter(p => p.kind === 'observation' && p.map_id === packet?.info.map_id && p.current !== false) ?? [];
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
   const hardwareReasons = !connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware);
   const goReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)), ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
@@ -322,6 +323,30 @@ export function App() {
     setSelectedItemId(id);
     setSelectedPhotoId(photos?.photos.find(p => p.item_id === id && p.kind === 'observation' && p.map_matches && p.available)?.id ?? photos?.photos.find(p => p.item_id === id)?.id ?? null);
   }
+  async function selectLocation(location: ItemLocation) {
+    if (!canEdit || busy || !packet || !photos || !zones) return;
+    const epoch = actionEpoch.current, mapId = packet.info.map_id;
+    setBusy(true); setError(''); setResolution(null); setGoalText(['', '', '0']);
+    setSelectedItemId(location.item_id); setSelectedPhotoId(location.photo_id); setSelected(null);
+    try {
+      const result = await api<{ goal: Origin; map_id: string }>('/api/item-locations/approach', { method: 'POST',
+        body: JSON.stringify({ map_id: mapId, item_id: location.item_id, photo_id: location.photo_id,
+          expected_revision: photos.revision, zone_revision: zones.revision }) });
+      if (epoch !== actionEpoch.current || !previousMap.current.startsWith(`${result.map_id}:`)) return;
+      setGoalText([result.goal.x_m.toFixed(3), result.goal.y_m.toFixed(3), (result.goal.yaw_rad * 180 / Math.PI).toFixed(1)]);
+    } catch (failure) { setError((failure as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function estimatePositions() {
+    if (!photos || !packet || busy || !canEditPhotos) return;
+    setBusy(true); setError('');
+    try {
+      const index = await api<PhotoIndex>('/api/item-locations/estimate', { method: 'POST',
+        body: JSON.stringify({ map_id: packet.info.map_id, expected_revision: photos.revision }) });
+      setPhotos(index);
+    } catch (failure) { setError((failure as Error).message); }
+    finally { setBusy(false); }
+  }
   function updateRequest(text: string) { setRequestText(text); setResolution(null); setGoalText(['', '', '0']); }
   async function resolveRequest() {
     if (!canEdit || busy || !photos || !packet || !requestText.trim() || state?.llm?.status !== 'configured' || settingsDirty || settingsSaving || saveError) return;
@@ -472,6 +497,7 @@ export function App() {
               <Dropdown.Portal><Dropdown.Content className="menu" align="end" sideOffset={5}>
                 <Dropdown.Item className="menu-item" disabled={!canEdit || !packet || busy} onSelect={startDrawing}><Square size={15} /> No-go zone</Dropdown.Item>
                 <Dropdown.Item className="menu-item" disabled={!navigation} onSelect={() => setFocusRobotVersion(v => v + 1)}><Crosshair size={15} /> Fit robot</Dropdown.Item>
+                <Dropdown.Item className="menu-item" disabled={!canEditPhotos || busy || !photos?.items.length || state?.llm?.status !== 'configured'} onSelect={() => void estimatePositions()}><Search size={15} /> Estimate item positions</Dropdown.Item>
                 <Dropdown.CheckboxItem className="menu-item" disabled={!costmapReady} checked={showCostmap} onCheckedChange={setShowCostmap}><Square size={15} /> Global costmap {showCostmap ? '✓' : ''}</Dropdown.CheckboxItem>
                 <Dropdown.Item className="menu-item" disabled={!state?.demo || !canEdit || busy} onSelect={() => void simulationCommand('demo_reset')}><RotateCcw size={15} /> Reset demo pose</Dropdown.Item>
                 <Dropdown.Item className="menu-item" onSelect={() => setSettingsOpen(true)}><Settings2 size={15} /> Settings</Dropdown.Item>
@@ -483,7 +509,12 @@ export function App() {
           drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
           navigation={navigation} goal={goal} connected={connected} showCostmap={showCostmap} focusRobotVersion={focusRobotVersion}
           photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto} update={state?.hardware?.map_update}
+          locations={photos?.locations ?? []} onLocation={location => void selectLocation(location)}
           onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
+        {locationPhotos.some(p => p.location_analysis?.status === 'running' || p.location_analysis?.status === 'queued') &&
+          <span className="muted location-status" role="status">Estimating item positions…</span>}
+        {locationPhotos.some(p => p.location_analysis?.status === 'error') &&
+          <span className="muted location-status" role="status">Position estimation failed; retry in Map actions.</span>}
         {state?.demo === false && <MapUpdateControls state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} />}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
           <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"
@@ -508,7 +539,7 @@ export function App() {
         </form>
         {state?.llm?.status !== 'configured' && <span className="muted">LLM {state?.llm?.status === 'unavailable' ? 'unavailable' : 'not configured'}</span>}
         {resolution && <div role="status" className="resolution-result">
-          <span className="muted">{resolution.status === 'not_found' ? 'No matching item' : resolution.status === 'ambiguous' ? 'Choose item' : resolution.blocked_reason ?? 'Target selected'}</span>
+          <span className="muted">{resolution.status === 'not_found' ? 'No matching item' : resolution.status === 'ambiguous' ? 'Choose item' : resolution.blocked_reason ?? (resolution.target_source === 'estimated' ? 'Estimated approach selected; use Go' : 'Target selected')}</span>
           {resolution.status === 'ambiguous' && <div className="candidate-list">{resolution.item_ids.map(id => <Button key={id} disabled={!canEdit || busy} onClick={() => selectItem(id)}>{photos?.items.find(i => i.id === id)?.name}</Button>)}</div>}
         </div>}
         <label className="subheading" htmlFor="item-select">ITEM</label>

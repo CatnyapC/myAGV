@@ -39,10 +39,10 @@ def navigation_grid(grid, zones):
     return {**grid, 'cells': cells}
 
 
-def global_costmap(grid):
+def global_costmap(grid, radius_m=RADIUS_M):
     r, width, height = grid['resolution_m'], grid['width'], grid['height']
     # Extra cell diagonal covers off-center poses and cell-to-cell segments.
-    radius = RADIUS_M + math.sqrt(2) * r
+    radius = radius_m + math.sqrt(2) * r
     reach = math.ceil(radius / r)
     offsets = [(dx, dy) for dy in range(-reach, reach + 1) for dx in range(-reach, reach + 1)
                if math.hypot(dx*r, dy*r) <= radius]

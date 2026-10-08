@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { chassisOutline, rectangleCorners, toView, toWorld, type MapInfo, type Navigation, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
+import { chassisOutline, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
 
 export function MapView(props: {
   info: MapInfo; image: string; zones: Zone[]; selected: string | null;
@@ -9,6 +9,7 @@ export function MapView(props: {
   onDraft: (points: Point[]) => void; onSelect: (id: string | null) => void;
   onGoal: (point: Point) => void;
   photos: Photo[]; selectedPhotoId: string | null; onPhoto: (id: string) => void;
+  locations: ItemLocation[]; onLocation: (location: ItemLocation) => void;
   update?: { map_id: string; goals: Origin[]; completed: number; active: boolean; state: string };
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -25,6 +26,7 @@ export function MapView(props: {
   const targetHeading = useRef<L.Polyline | null>(null);
   const observations = useRef<L.LayerGroup | null>(null);
   const updatePoints = useRef<L.LayerGroup | null>(null);
+  const itemPoints = useRef<L.LayerGroup | null>(null);
 
   useEffect(() => {
     if (!host.current) return;
@@ -36,6 +38,7 @@ export function MapView(props: {
     polygons.current = L.layerGroup().addTo(instance);
     observations.current = L.layerGroup().addTo(instance);
     updatePoints.current = L.layerGroup().addTo(instance);
+    itemPoints.current = L.layerGroup().addTo(instance);
     path.current = L.polyline([], { color: 'var(--cyan-9)', weight: 2, opacity: .85, interactive: false }).addTo(instance);
     robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 1.8, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
     heading.current = L.polyline([], { color: 'var(--cyan-11)', weight: 1.5, interactive: false }).addTo(instance);
@@ -153,6 +156,34 @@ export function MapView(props: {
       });
     }
   }, [props.photos, props.selectedPhotoId, props.info]);
+
+  useEffect(() => {
+    const group = itemPoints.current;
+    if (!group) return;
+    group.clearLayers();
+    for (const location of props.locations) {
+      if (location.map_id !== props.info.map_id) continue;
+      const position = toView([location.x_m, location.y_m], props.info.display.origin);
+      L.circle(position, { radius: location.uncertainty_m, color: 'var(--orange-9)', weight: 1,
+        dashArray: '3 4', fillOpacity: .04, interactive: false }).addTo(group);
+      const icon = L.divIcon({ className: 'item-map-pin', iconSize: [28, 36], iconAnchor: [14, 36],
+        tooltipAnchor: [0, -34], html: '<svg viewBox="0 0 24 32" aria-hidden="true"><path d="M12 31S1 19 1 12a11 11 0 0 1 22 0c0 7-11 19-11 19Z"/><circle cx="12" cy="12" r="4"/></svg>' });
+      const title = `${location.name} · estimated X ${location.x_m.toFixed(2)}, Y ${location.y_m.toFixed(2)} m`;
+      const marker = L.marker(position, { icon, title, alt: title, keyboard: true, bubblingMouseEvents: false }).addTo(group);
+      const preview = document.createElement('div'); preview.className = 'item-location-preview';
+      const name = document.createElement('strong'); name.textContent = location.name;
+      const image = document.createElement('img'); image.src = location.image_url; image.alt = `Observation of ${location.name}`;
+      const coordinates = document.createElement('span'); coordinates.textContent = `X ${location.x_m.toFixed(2)} m · Y ${location.y_m.toFixed(2)} m`;
+      const detail = document.createElement('small'); detail.textContent = `Estimated ±${location.uncertainty_m.toFixed(2)} m · ${Math.round(location.confidence * 100)}% confidence`;
+      const time = document.createElement('small'); time.textContent = new Date(location.captured_at_s * 1000).toLocaleString();
+      const action = document.createElement('small'); action.textContent = 'Click to select a reachable approach for Go';
+      preview.append(name, image, coordinates, detail, time, action);
+      marker.bindTooltip(preview, { direction: 'auto', opacity: 1, className: 'item-location-tooltip' })
+        .on('click', () => { if (!latest.current.drawing) latest.current.onLocation(location); });
+      marker.getElement()?.addEventListener('focus', () => marker.openTooltip());
+      marker.getElement()?.addEventListener('blur', () => marker.closeTooltip());
+    }
+  }, [props.locations, props.info]);
 
   useEffect(() => {
     const group = updatePoints.current;
