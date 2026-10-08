@@ -435,7 +435,7 @@ export function App() {
       <BatteryStatus />
       <Button variant="danger" onClick={() => void stop()} className="stop">STOP</Button>
     </header>
-    {error && <div role="alert" className="error-bar"><span>{error}</span><Button variant="ghost" className="icon" aria-label="Dismiss error" onClick={() => setError('')}><X size={15} /></Button></div>}
+    {error && <div role="alert" className="error-bar"><span>{error}</span></div>}
     <div className="workspace" ref={workspaceHost}>
     <main className={`grid-stack ${layoutEditing ? 'layout-editing' : ''}`} ref={gridHost}>
       {panel('map', <>
