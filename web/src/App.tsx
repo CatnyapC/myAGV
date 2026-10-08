@@ -418,7 +418,6 @@ export function App() {
 
   return <div className="dark app">
     <header className="topbar">
-      <BatteryStatus />
       <Dropdown.Root><Dropdown.Trigger asChild><Button variant="ghost" className="icon" aria-label="Open navigation"><Menu size={18} /></Button></Dropdown.Trigger>
         <Dropdown.Portal><Dropdown.Content className="menu" align="start" sideOffset={6}>
           <Dropdown.Item className="menu-item" onSelect={() => { setSettingsOpen(true); }}><Settings2 size={16} /> Settings</Dropdown.Item>
@@ -429,6 +428,7 @@ export function App() {
       </Dropdown.Root>
       <strong className="brand">MYAGV CONTROL</strong><span className="demo-tag">{state?.demo === false ? 'HARDWARE' : 'DEMO'}</span>
       <span className={`connection ${connected ? 'online' : ''}`}>{connected ? 'Connected' : 'Offline'}</span>
+      <BatteryStatus />
       <Button variant="danger" onClick={() => void stop()} className="stop">STOP</Button>
     </header>
     {error && <div role="alert" className="error-bar"><span>{error}</span><Button variant="ghost" className="icon" aria-label="Dismiss error" onClick={() => setError('')}><X size={15} /></Button></div>}
