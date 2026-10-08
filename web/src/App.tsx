@@ -281,7 +281,11 @@ export function App() {
       await api('/api/commands', { method: 'POST', body: JSON.stringify({ ...values,
         type, id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision }) });
       if (type === 'teach' || type === 'transport_record' || type === 'reset_map') await reload();
-    } catch (failure) { held.current = null; setError((failure as Error).message); if (type === 'reset_map') throw failure; }
+    } catch (failure) {
+      // Releasing a manual button aborts its pending start; a newer hold may already exist.
+      if (type === 'manual' && session.current && failure instanceof DOMException && failure.name === 'AbortError') return;
+      held.current = null; setError((failure as Error).message); if (type === 'reset_map') throw failure;
+    }
   }
   async function stop() {
     ++actionEpoch.current;

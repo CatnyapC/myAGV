@@ -10,13 +10,16 @@ test('commands wait for a fresh receipt, and STOP or hidden page cancels pending
   assert.equal(ready, false);
   state.ack++;
   await waiting;
-  const stopped = waitForControlLease(() => state);
+  let sent = false;
+  const stopped = waitForControlLease(() => state).then(() => { sent = true; });
   state.epoch++;
-  await assert.rejects(stopped, /cancelled/);
+  state.ack++;
+  await assert.rejects(stopped, { name: 'AbortError' });
+  assert.equal(sent, false);
   state.visible = false;
-  await assert.rejects(waitForControlLease(() => state), /cancelled/);
+  await assert.rejects(waitForControlLease(() => state), { name: 'AbortError' });
   state = { ack: 0, epoch: 0, visible: true };
-  await assert.rejects(waitForControlLease(() => state), /heartbeat unavailable/);
+  await assert.rejects(waitForControlLease(() => state, 40), { name: 'Error', message: 'Control heartbeat unavailable; reconnect before retrying' });
 });
 
 test('hardware action locks explain calibration, faults and unavailable feedback', () => {

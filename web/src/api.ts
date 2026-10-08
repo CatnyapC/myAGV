@@ -11,7 +11,7 @@ export async function waitForControlLease(read: () => { ack: number; epoch: numb
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
     const current = read();
-    if (!current.visible || current.epoch !== epoch) throw new Error('Action cancelled; page lost focus or STOP was pressed');
+    if (!current.visible || current.epoch !== epoch) throw new DOMException('Action cancelled; page lost focus or STOP was pressed', 'AbortError');
     if (current.ack > ack) return;
     await new Promise(resolve => setTimeout(resolve, 20));
   }
