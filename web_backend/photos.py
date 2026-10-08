@@ -163,11 +163,24 @@ class PhotoIndex:
             item['observation_current'] = any(p.get('current', True) for p in observations)
             item['last_seen_s'] = max((p['captured_at_s'] for p in observations), default=0)
             item['station_status'] = 'none' if not link else 'unavailable' if stations is None else 'map_mismatch' if link['map_id'] != map_id else 'ready' if link['name'] in stations and digest_station(stations[link['name']]) == link['digest'] else 'stale'
+            item['reference_photo_id'] = next((p['id'] for p in reversed(value['photos'])
+                if p.get('item_id') == item['id'] and p['kind'] == 'reference' and p['available']), None)
             item['fetch_available'] = False  # Task/grasp gates are not part of the photo milestone.
             goal = item.get('grasp_goal')
             item['grasp_goal_ready'] = bool(goal) and all(self.image_path(photo_id).is_file() and self.image_path(photo_id).with_suffix('.jpg').is_file() for photo_id in goal.values())
         value['locations'] = location_records(value, map_id)
         return value
+
+    def reference_image(self, photo_id):
+        from io import BytesIO
+        import base64
+        from PIL import Image
+        with Image.open(self.image_path(photo_id)) as source:
+            image = source.convert('RGB')
+            image.thumbnail((640, 640))
+            output = BytesIO()
+            image.save(output, format='JPEG', quality=75)
+        return 'data:image/jpeg;base64,' + base64.b64encode(output.getvalue()).decode('ascii')
 
     def image_path(self, photo_id):
         return self.directory / 'images' / f'{str(uuid.UUID(photo_id))}.png'

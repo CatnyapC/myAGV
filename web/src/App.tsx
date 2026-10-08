@@ -113,7 +113,7 @@ export function App() {
     ...(busy ? ['Current request running'] : [])];
   const hardwareReasons = !connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware);
   const goReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)), ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
-  const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : !selectedItem.observation_current ? ['Confirm this item in a current observation'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : state?.llm?.status === 'configured' && !selectedItem.grasp_goal_ready ? ['Record correct-grasp views in the item editor'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
+  const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : !selectedItem.observation_current ? ['Confirm this item in a current observation'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : state?.llm?.status === 'configured' && !selectedItem.reference_photo_id ? ['Upload an item reference photo'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -616,7 +616,7 @@ export function App() {
             ...(state?.demo !== false ? ['Live hardware required'] : []),
             ...(!state?.hardware?.arm_homed || !state.hardware.localized ? ['Home arm and confirm localization'] : []),
             ...(state?.llm?.status !== 'configured' ? ['LLM not configured'] : []),
-            ...(!selectedItem?.grasp_goal_ready ? ['Select an item with saved grasp GOAL views'] : []),
+            ...(!selectedItem?.reference_photo_id ? ['Select an item with an uploaded reference photo'] : []),
           ]} />
       </div>{photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId}
         photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}

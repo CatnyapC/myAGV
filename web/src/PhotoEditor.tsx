@@ -130,8 +130,8 @@ export function PhotoEditor(props: {
             <Button disabled={Boolean(recordReason) || !props.heightCaptureEnabled} title={recordReason || (!props.heightCaptureEnabled ? 'Height recording needs WebUI arm feedback.' : '')}
               onClick={() => void mutate(false, 'height')}>Save current grasp Z</Button>
             <span className="muted">{editingItem?.grasp_z_mm != null ? `Grasp Z saved: ${editingItem.grasp_z_mm.toFixed(1)} mm` : 'Grasp height not recorded yet.'}</span>
-            <span className="muted">Next, release the item in place and raise the arm above the saved grasp height so adjustments will not knock over the item. Keep the base and arm still while saving both camera views. TELEOP can stay open.</span>
-            <span className="subheading">2. ALIGNMENT CAMERA GOAL</span>
+            <span className="muted">Release the item and raise the arm above grasp height before alignment. Fetch centers the item in both current camera views using its uploaded reference photo. Saved camera views below are optional archives.</span>
+            <span className="subheading">OPTIONAL CAMERA ARCHIVE (NOT USED BY FETCH)</span>
             <Button disabled={Boolean(goalReason)} title={goalReason} aria-describedby={goalReason ? 'grasp-capture-reason' : undefined}
               onClick={() => void mutate(false, 'goal')}><Camera size={15} />Save item & capture both cameras</Button>
             {goalReason && <span id="grasp-capture-reason" role="status" className="muted">{goalReason}</span>}

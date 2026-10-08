@@ -7,4 +7,4 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-web = ["aiohttp>=3.9,<4"]
+web = ["aiohttp>=3.9,<4", "Pillow>=10,<12"]

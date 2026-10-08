@@ -522,13 +522,13 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             raise ValueError('Configure the LLM before testing alignment')
                         if data.get('fetch_revision') != fetch_settings['revision'] or type(data.get('preview')) is not bool:
                             raise ValueError('Fetch settings changed or test mode missing; retry')
-                    if llm_key and not item['grasp_goal_ready']:
-                        raise ValueError('Record this item\'s correct-grasp front and arm views first')
+                    if llm_key and not item['reference_photo_id']:
+                        raise ValueError('Upload and associate an item reference photo first')
                     if kind == 'fetch':
                         link = item['station_link']
                         data = {**data, 'station': link['name'], 'station_digest': link['digest']}
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
-                            'vision_item': dict(name=item['name'], appearance=item['appearance'], goal=item['grasp_goal']) if llm_key else None}
+                            'vision_item': dict(name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id']) if llm_key else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):
                         raise ValueError('Fresh front camera required for map updating')
@@ -767,11 +767,13 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             entry.update(corrected_location=corrected, base_command={k: result[k] for k in ('forward_m', 'turn_deg')})
                             await editor.emit('photos')
                         else:
-                            goal = {camera: 'data:image/jpeg;base64,' + base64.b64encode(
-                                await asyncio.to_thread(photos.image_path(value['item']['goal'][camera]).with_suffix('.jpg').read_bytes)
-                            ).decode('ascii') for camera in ('front', 'arm')}
+                            reference = next((p for p in photos.value['photos']
+                                if p['id'] == value['item']['reference_photo_id'] and p['kind'] == 'reference'), None)
+                            if reference is None:
+                                raise ValueError('Item reference photo unavailable')
+                            reference_image = await asyncio.to_thread(photos.reference_image, reference['id'])
                             fetch_log['revision'] += 1
-                            result = await locate_pickup(value['images'], value['item'], llm_key, goal, value['history'],
+                            result = await locate_pickup(value['images'], value['item'], llm_key, reference_image, value['history'],
                                                          prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'))
                             entry.update(correction=alignment_command(result, value.get('limits')))
                     entry.update(status='returned')
