@@ -597,6 +597,9 @@ class Control:
             self.phase, self.status = 'manual', 'Hold to move; manual base motion is outside no-go enforcement'
             self.manual_args = packet
             self.input = packet.get('input')
+        elif kind == 'transport':
+            self.robot.nav.wait_stopped()
+            self.fold()
         elif kind == 'transport_record':
             self.require_arm()
             self.robot.nav.wait_stopped()

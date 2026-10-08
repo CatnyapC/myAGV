@@ -48,7 +48,7 @@ export function hardwareBlocks(state?: HardwareState, requireArm = true): string
   if (!state.exclusive) reasons.push('Close competing chassis controllers');
   if (!state.localized) reasons.push('Confirm the robot position and heading on the map');
   if (requireArm) {
-    if (!state.arm_available) reasons.push('Connect P340');
+    if (!state.arm_available) reasons.push('P340 unavailable');
     else if (!state.arm_homed) reasons.push('Home arm, or confirm already homed');
     if (!state.transport_angles) reasons.push('Record folded transport pose and measured clearance');
   }

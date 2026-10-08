@@ -54,7 +54,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     </div>}
     <span className="muted">{state?.mapping_mode ? 'Live SLAM establishes the map pose automatically from fresh LiDAR and odometry.' : 'Pose confirmation is a manual check: the map marker must match the real robot position and heading. Confirmations reset when the controller restarts.'}</span>
     <div className="action-line">
-      <Button disabled={!idle || state?.arm_available} onClick={() => void command('connect_arm')}>Connect P340</Button>
+      <Button disabled={!idle || !state?.arm_available || !state.arm_homed || !state.transport_angles} onClick={() => void command('transport')}>Transport pose</Button>
       <Button disabled={!idle || !state?.arm_available} onClick={() => setConfirmation({ type: 'home', message: 'Home the real arm now? Clear its full travel area.' })}>Home arm</Button>
       <Button disabled={!idle || !state?.arm_available} onClick={() => setConfirmation({ type: 'confirm_homed', message: 'Confirm the arm has already completed homing since power-on?' })}>Already homed</Button>
     </div>
