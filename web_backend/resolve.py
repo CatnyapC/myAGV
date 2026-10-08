@@ -162,10 +162,10 @@ async def locate_pickup(images, item, key, goal, history, prompt=PICKUP_PROMPT, 
     for label, pair in states:
         for camera in ('front', 'arm'):
             image = pair[camera]
-            if not isinstance(image, str) or not image.startswith('data:image/jpeg;base64,') or len(image) > 220000:
+            if not isinstance(image, str) or not image.startswith('data:image/jpeg;base64,') or len(image) > 6 * 1024 * 1024:
                 raise ValueError('Invalid compressed fetch camera')
             content.extend([dict(type='text', text=label + ': ' + camera + ' camera'),
-                            dict(type='image_url', image_url=dict(url=image, detail='low'))])
+                            dict(type='image_url', image_url=dict(url=image, detail='high'))])
     body = dict(model=MODEL, messages=[dict(role='system', content=prompt),
         dict(role='user', content=content)],
         response_format=dict(type='json_schema', json_schema=dict(name='pickup_alignment', strict=True, schema=schema)),

@@ -67,14 +67,14 @@ def pickup_delta(axis, delta):
     return {'X': (0, delta, 0), 'Y': (-delta, 0, 0), 'Z': (0, 0, delta)}[axis]
 
 
-def vision_image(frame, cv2):
+def vision_image(frame, cv2, original_resolution=False):
     """Reuse bridge OpenCV; preserve the camera's mounted orientation."""
     height, width = frame.shape[:2]
-    scale = min(1, 480 / max(width, height))
+    scale = 1 if original_resolution else min(1, 480 / max(width, height))
     if scale < 1:
         frame = cv2.resize(frame, (max(1, round(width * scale)), max(1, round(height * scale))),
                            interpolation=cv2.INTER_AREA)
     ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
-    if not ok or len(encoded) > 160 * 1024:
+    if not ok or len(encoded) > (4 * 1024 * 1024 if original_resolution else 160 * 1024):
         raise RuntimeError('Fetch camera compression failed')
     return 'data:image/jpeg;base64,' + base64.b64encode(encoded.tobytes()).decode('ascii')

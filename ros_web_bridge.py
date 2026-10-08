@@ -62,7 +62,7 @@ def main():
             if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
                 raise RuntimeError('Arm moved during acquisition')
             metadata = dict(metadata, arm_angles_deg=after)
-        compressed = vision_image(frame, cv2) if vision or grasp_goal else None
+        compressed = vision_image(frame, cv2, original_resolution=grasp_goal or update_key is None) if vision or grasp_goal else None
         if vision and update_key is None:
             return dict(image=compressed)
         if not persist:

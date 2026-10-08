@@ -106,6 +106,12 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(vision_image(SimpleNamespace(shape=(480, 640, 3)), cv2).startswith('data:image/jpeg;base64,'))
         self.assertEqual(cv2.resize.call_args.args[1], (480, 360))
         cv2.imencode.assert_called_once_with('.jpg', 'small', [1, 60])
+        cv2.resize.reset_mock()
+        cv2.imencode.reset_mock()
+        frame = SimpleNamespace(shape=(1080, 1920, 3))
+        vision_image(frame, cv2, original_resolution=True)
+        cv2.resize.assert_not_called()
+        cv2.imencode.assert_called_once_with('.jpg', frame, [1, 60])
         c = fake_control()
         c.arm.get_coords_info.side_effect = [[0, 200, 0], [0, 201, 0]]
         c.arm.get_angles_info.return_value = [90, 0, 0]
@@ -126,7 +132,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body['max_tokens'], 64)
         self.assertTrue(body['response_format']['json_schema']['strict'])
         self.assertEqual([part['image_url']['detail'] for part in body['messages'][1]['content']
-                          if part['type'] == 'image_url'], ['low'] * 8)
+                          if part['type'] == 'image_url'], ['high'] * 8)
         labels = [part['text'] for part in body['messages'][1]['content'] if part['type'] == 'text']
         self.assertTrue(any('GOAL' in label for label in labels))
         self.assertTrue(any('"X": 1' in label and '"turn_deg": -1' in label for label in labels))
