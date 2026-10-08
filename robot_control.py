@@ -50,6 +50,7 @@ class Control:
         self.angles = None
         self.arm_stamp = 0
         self.arm_error = ''
+        self.teleop_pid = None
         self.goal = None
         self.base_enabled = False
         self.queue = queue.Queue(maxsize=1)
@@ -58,7 +59,7 @@ class Control:
         self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else dict(transport_angles=None, clearance_m=.25)
         number(self.config['clearance_m'], .15, 1, 'Measured clearance radius')
         if self.config['transport_angles'] is not None:
-            pickup_angles(self.config['transport_angles'])
+            validate_angles(self.config['transport_angles'])
         self.stations_path = Path(__file__).with_name('stations.json')
         self.zones_path = self.directory.parent / 'hardware_no_go_zones.json'
         robot.control = self
@@ -108,8 +109,28 @@ class Control:
         if kind == 'result':
             return self.results.get(packet['id'], dict(status='pending'))
         if kind == 'stop':
+            if packet.get('passive') is True and self.phase in ('teleop', 'handoff'):
+                return dict(status='ignored', reason='TELEOP owns hardware')
             self.request_stop(packet.get('reason', 'Stopped'))
             return dict(status='stopping')
+        if kind == 'teleop':
+            pid, active = packet.get('pid'), packet.get('active')
+            if type(pid) is not int or pid <= 0 or type(active) is not bool:
+                raise ValueError('Valid TELEOP process and ownership action required')
+            command_id = str(uuid.UUID(packet['id']))
+            if not active and self.teleop_pid is None:
+                return dict(status='completed')
+            if active and self.phase not in ('idle', 'fault'):
+                raise RuntimeError('Stop the WebUI task before starting TELEOP')
+            if not active and self.teleop_pid != pid:
+                raise RuntimeError('Another TELEOP process owns hardware')
+            if self.executing or self.stopping or self.stop_pending or not self.queue.empty():
+                raise RuntimeError('Hardware handoff busy; retry after stopping')
+            if active:
+                os.kill(pid, 0)
+            self.queue.put_nowait(dict(id=command_id, op='teleop', pid=pid,
+                                       type='teleop_acquire' if active else 'teleop_release', stop_epoch=self.stop_epoch))
+            return dict(status='accepted', id=command_id)
         if packet.get('boot_id') != self.boot_id or not lease_valid(packet.get('deadline'), time.monotonic()):
             raise ValueError('Expired controller session; reconnect and retry explicitly')
         if kind == 'heartbeat':
@@ -128,6 +149,8 @@ class Control:
         if packet.get('stop_epoch') != self.stop_epoch:
             raise ValueError('Stop state changed; refresh and issue a new action')
         command = packet.get('type')
+        if command in ('teleop_acquire', 'teleop_release'):
+            raise ValueError('TELEOP handoff requires the local socket')
         if self.phase in ('review_grasp', 'verify_grasp') and packet.get('session_id') == self.owner:
             if command == 'confirm' and packet.get('task_id') == self.task_id and packet.get('stage') == self.phase:
                 self.confirmation = self.phase
@@ -152,6 +175,10 @@ class Control:
         return dict(status='accepted', id=command_id)
 
     def request_stop(self, reason):
+        if self.teleop_pid is not None:
+            with suppress(ProcessLookupError):
+                os.kill(self.teleop_pid, signal.SIGTERM)
+            self.teleop_pid = None
         self.stop_epoch += 1
         self.base_enabled = False
         self.deadline = 0
@@ -165,7 +192,7 @@ class Control:
                 os.kill(os.getpid(), signal.SIGUSR1)
 
     def watchdog(self):
-        if self.phase in ('idle', 'fault') or self.stopping:
+        if self.phase in ('idle', 'fault', 'teleop', 'handoff') or self.stopping:
             return
         reason = None
         if not lease_valid(self.deadline, time.monotonic()):
@@ -286,6 +313,10 @@ class Control:
             self.requests.pop(old, None)
 
     def stop_hardware(self, reason):
+        if self.teleop_pid is not None:
+            with suppress(ProcessLookupError):
+                os.kill(self.teleop_pid, signal.SIGTERM)
+            self.teleop_pid = None
         was_homing = self.phase == 'homing'
         self.home_cancelled = self.home_cancelled or was_homing
         self.stopping = True
@@ -362,7 +393,22 @@ class Control:
 
     def execute(self, packet):
         kind = packet['type']
-        if kind == 'recover_stop':
+        if kind == 'teleop_acquire':
+            self.robot.zero()
+            self.robot.nav.client.cancel_all_goals()
+            self.robot.nav.wait_stopped()
+            if self.arm:
+                self.arm.close()
+            self.arm, self.angles, self.arm_stamp = None, None, 0
+            self.arm_homed, self.home_cancelled, self.localized = False, True, False
+            self.owner, self.deadline, self.input, self.base_enabled = None, 0, None, False
+            self.teleop_pid = packet['pid']
+            self.phase, self.status = 'teleop', 'TELEOP owns hardware; WebUI monitoring only'
+            self.arm_error = ''
+        elif kind == 'teleop_release':
+            self.teleop_pid = None
+            self.phase, self.status = 'fault', 'TELEOP finished; verify stopped hardware before resuming WebUI'
+        elif kind == 'recover_stop':
             if packet.get('confirmed') is not True:
                 raise ValueError('Physically verify stopped hardware before clearing the fault')
             self.connect_arm()
@@ -405,7 +451,7 @@ class Control:
             radius = number(packet.get('clearance_m'), .15, 1, 'Measured folded clearance radius')
             if packet.get('measured') is not True:
                 raise ValueError('Explicit measured-clearance confirmation required')
-            angles = pickup_angles(wait_arm(self.arm, timeout=5))
+            angles = validate_angles(wait_arm(self.arm, timeout=5))
             self.robot.set_clearance(radius)
             self.robot.nav.approach_settings = (.3, .03, radius)
             self.robot.nav.aligner = None
@@ -528,7 +574,7 @@ class Control:
             self.arm_step(key[0], 1 if key[1] == '+' else -1, pickup=mode == 'PICKUP')
 
     def snapshot(self):
-        ready = self.robot.driver_watchdog and self.robot.exclusive and self.robot.sensors_ready()
+        ready = self.phase not in ('teleop', 'handoff') and self.robot.driver_watchdog and self.robot.exclusive and self.robot.sensors_ready()
         return dict(boot_id=self.boot_id, stop_epoch=self.stop_epoch, stamp_s=time.time(), phase=self.phase, status=self.status,
                     task_id=self.task_id, arm_available=self.arm is not None, arm_homed=self.arm_homed,
                     arm_angles=self.angles if fresh(self.arm_stamp, time.monotonic(), 2) else None,
@@ -557,6 +603,12 @@ class Control:
             try:
                 if self.stop_pending:
                     self.stop_hardware(self.stop_pending)
+                if self.phase == 'teleop' and self.teleop_pid is not None:
+                    try:
+                        os.kill(self.teleop_pid, 0)
+                    except ProcessLookupError:
+                        self.teleop_pid = None
+                        self.stop_hardware('TELEOP disconnected; verify stopped hardware')
                 if self.phase == 'manual':
                     self.executing = True
                     self.manual_tick()
@@ -567,13 +619,14 @@ class Control:
                         packet = None
                     if packet:
                         self.executing = True
-                        if not lease_valid(self.deadline, time.monotonic()) or self.stop_pending or packet.get('stop_epoch') != self.stop_epoch:
+                        handoff = packet.get('op') == 'teleop'
+                        if (not handoff and not lease_valid(self.deadline, time.monotonic())) or self.stop_pending or packet.get('stop_epoch') != self.stop_epoch:
                             raise Stopped('Expired queued command')
                         self.task_id = packet['id']
-                        self.phase, self.status = 'working', packet['type']
+                        self.phase, self.status = 'handoff' if handoff else 'working', packet['type']
                         result = self.execute(packet)
                         self.finish(packet, dict(status='completed', **result))
-                        if self.phase != 'manual':
+                        if self.phase not in ('manual', 'teleop', 'fault'):
                             self.phase, self.status = 'idle', 'Completed: ' + packet['type']
                     elif self.arm and time.monotonic() - last_poll > 1:
                         last_poll = time.monotonic()

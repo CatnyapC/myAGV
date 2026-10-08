@@ -49,10 +49,12 @@ the driver watchdog are required for motion.
    clears this confirmation.
 4. In ARM/PICKUP mode, hold the manual buttons to position the arm. Motion uses
    bounded 1 mm targets. PICKUP allows X/Z adjustment with J1 near zero.
-5. Fold the arm, set J1=0, and measure a circular clearance radius covering the
+5. Fold the arm and measure a circular clearance radius covering the
    base, folded arm and carried object. Check the measurement box and **Record
    transport pose**. This updates both ROS planner footprints. No transport pose
    is guessed. Fetch and survey remain disabled until this is done.
+   Transport keeps the measured joint angles, including J1 rotation. Only side
+   pickup station poses require J1 near zero.
 6. Teach a named pickup station at its real base/arm pose (J1=0).
    Existing names require overwrite confirmation; changed station links must be
    reconfirmed. Capture a photo, edit its item, and explicitly associate that station.
@@ -94,6 +96,15 @@ precision visual-servo measurements. During active tasks the camera panels show
 live frames, even if a stored photo was selected previously.
 
 ## STOP and reconnect behavior
+
+Starting `teleop_control.py` requests a local hardware handoff before opening
+the P340 or publishing chassis commands. WebUI releases the arm serial port and
+pauses its chassis output while continuing camera/map monitoring. Active WebUI
+tasks must be stopped first. The terminal owns the hardware until TELEOP exits;
+browser blur or disconnect does not stop terminal control. An explicit WebUI
+STOP terminates TELEOP and leaves motion locked pending measured stop recovery.
+After TELEOP exits, verify stopped hardware in WebUI and reconfirm homing and
+localization. TELEOP also opens the arm with exclusive serial access.
 
 The controlling tab must answer fresh server challenges every 150 ms. Its lease
 expires within 450 ms, and the ROS gate sends zero velocity. Stale/duplicate

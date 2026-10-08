@@ -44,6 +44,13 @@ In another terminal, source the same ROS setup files, enter this project, and ru
 ```
 
 Use the actual P340 port. The LiDAR can also appear as a USB serial device.
+
+When the WebUI bridge is running, TELEOP automatically requests exclusive
+hardware ownership before opening the arm or publishing chassis commands.
+Stop active WebUI tasks first. The bridge keeps camera/map monitoring but pauses
+arm access and chassis output until TELEOP exits. Browser blur/disconnect does
+not interrupt TELEOP; explicit WebUI STOP terminates it. After exit, verify
+stopped hardware and reconfirm homing/localization before using WebUI motion.
 Only one process may control the P340 port. Close myBlockly and other arm scripts.
 Stop other teleop/navigation velocity publishers before using this controller;
 do not run the old direct-serial chassis `move` commands alongside the ROS driver.

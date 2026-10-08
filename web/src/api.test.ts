@@ -25,6 +25,7 @@ test('hardware action locks explain calibration, faults and unavailable feedback
     driver_watchdog: true, exclusive: true, sensors_ready: true, transport_angles: [0,10,20],
     clearance_m: .25, zones_ready: true, planner_footprint_ready: true, stop_confirmed: true };
   assert.deepEqual(hardwareBlocks(state), []);
+  assert.deepEqual(hardwareBlocks({ ...state, phase: 'teleop' }), ['Exit TELEOP, then verify stopped hardware to resume WebUI control']);
   for (const arm_available of [false, true]) {
     const baseOnly = { ...state, arm_available, arm_homed: false, transport_angles: undefined };
     assert.deepEqual(hardwareBlocks(baseOnly, false), []);

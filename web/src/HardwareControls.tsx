@@ -13,7 +13,7 @@ type Props = { stations: Stations; state?: HardwareState; connected: boolean; go
 export function HardwareControls({ stations, state, connected, goal, command, hold, stop }: Props) {
   const [mode, setMode] = useState('BASE');
   const [name, setName] = useState('');
-  const [radius, setRadius] = useState('0.25');
+  const [radius, setRadius] = useState(String(state?.clearance_m ?? .25));
   const [measured, setMeasured] = useState(false);
   const [survey, setSurvey] = useState<Origin[]>([]);
   const [confirmation, setConfirmation] = useState<{ type: string; message: string; values?: Record<string, unknown> } | null>(null);
@@ -34,6 +34,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     onKeyUp={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); release(); } }} onBlur={() => hold(null)} aria-label={`Hold ${label}`}>{label}</Button>;
   return <details className="hardware-controls" open>
     <summary>Hardware controls</summary>
+    {state?.phase === 'teleop' && <div role="status"><strong>TELEOP controls hardware · WebUI monitoring only</strong><p>Exit TELEOP, then verify stopped hardware to resume WebUI control.</p></div>}
     {confirmation && <div role="alertdialog" aria-label="Confirm hardware action">
       <p>{confirmation.message}</p>
       <Button disabled={confirming || !connected || (!idle && !(state?.phase === 'fault' && confirmation.type === 'recover_stop'))} onClick={async () => {
@@ -70,7 +71,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
       <Button disabled={!idle || !state?.arm_homed} onClick={() => void command('gripper', { value: 0 })}>Close gripper</Button>
     </div>
     <label className="setting-row">Folded clearance radius (m)<input type="number" min=".15" max="1" step=".01" value={radius} disabled={!idle} onChange={e => { setRadius(e.target.value); setMeasured(false); }} /></label>
-    <label><input type="checkbox" checked={measured} disabled={!idle} onChange={e => setMeasured(e.target.checked)} /> Arm folded, J1=0; measured radius encloses base, arm and payload</label>
+    <label><input type="checkbox" checked={measured} disabled={!idle} onChange={e => setMeasured(e.target.checked)} /> Arm folded; measured radius encloses base, arm and payload</label>
     <Button disabled={!idle || !state?.arm_homed || !measured} onClick={() => void command('transport_record', { clearance_m: Number(radius), measured })}>Record transport pose</Button>
     <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before Fetch or survey'}</span>
     <label className="setting-row">Station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>

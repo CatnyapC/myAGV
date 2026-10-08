@@ -120,16 +120,16 @@ class Hardware:
             raise ValueError(result.get('error', result['status']))
         return result
 
-    async def stop(self, reason='Stopped'):
+    async def stop(self, reason='Stopped', passive=False):
         self.generation += 1
         self.owner = None
-        await self.rpc(dict(op='stop', reason=reason))
-        return dict(status='stopping', reason='Waiting for measured base/arm stop')
+        result = await self.rpc(dict(op='stop', reason=reason, passive=passive))
+        return result if result.get('status') == 'ignored' else dict(status='stopping', reason='Waiting for measured base/arm stop')
 
     async def disconnect(self, session):
         self.sessions.pop(session, None)
         if self.owner == session:
-            await self.stop('Controlling UI disconnected')
+            await self.stop('Controlling UI disconnected', passive=True)
 
     def costmap(self, navigation=False):
         name = 'navigation_map.json' if navigation else 'global_costmap.json'

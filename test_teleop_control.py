@@ -1,11 +1,33 @@
 import time
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
-from teleop_control import Controller, keyboard_loop, parse_args
+from teleop_control import Controller, keyboard_loop, parse_args, web_handoff
 
 
 class TeleopTest(unittest.TestCase):
+    def test_web_handoff_waits_for_release_and_reports_failure(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict('os.environ', MYAGV_HARDWARE_DIR=directory):
+            self.assertFalse(web_handoff(True))
+            (Path(directory) / 'control.sock').touch()
+            with patch('teleop_control.socket.socket') as connection:
+                reader = connection.return_value.__enter__.return_value.makefile.return_value.__enter__.return_value
+                reader.readline.side_effect = [json.dumps(reply) for reply in (
+                    dict(status='accepted'), dict(status='pending'), dict(status='completed'))]
+                self.assertTrue(web_handoff(True))
+                send = connection.return_value.__enter__.return_value.sendall
+                packets = [json.loads(call.args[0]) for call in send.call_args_list]
+                self.assertEqual(packets[0]['op'], 'teleop')
+                self.assertTrue(packets[0]['active'])
+                self.assertEqual(packets[-1], dict(op='result', id=packets[0]['id']))
+                reader.readline.side_effect = None
+                reader.readline.return_value = json.dumps(dict(error='WebUI task active'))
+                with self.assertRaisesRegex(RuntimeError, 'WebUI task active'):
+                    web_handoff(True)
+
     def setUp(self):
         self.events = []
         self.publisher = Mock()

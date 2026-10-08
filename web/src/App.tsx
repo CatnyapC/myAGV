@@ -181,7 +181,7 @@ export function App() {
     const release = () => {
       ++actionEpoch.current;
       held.current = null;
-      if (hardwareMode.current) void api('/api/stop', { method: 'POST', keepalive: true }).catch(() => {});
+      if (hardwareMode.current) void api('/api/stop', { method: 'POST', keepalive: true, body: JSON.stringify({ passive: true }) }).catch(() => {});
     };
     const visibility = () => { if (document.hidden) release(); };
     window.addEventListener('blur', release); window.addEventListener('pagehide', release);

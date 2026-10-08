@@ -4,8 +4,10 @@ from collections import OrderedDict
 from contextlib import nullcontext
 import json
 import math
+import os
 from pathlib import Path
 import queue
+import signal
 import tempfile
 import time
 from types import SimpleNamespace
@@ -28,6 +30,8 @@ def fake_control():
     c.owner, c.deadline, c.input = None, 0, None
     c.executing = c.stopping = c.base_enabled = False
     c.stop_pending = None
+    c.teleop_pid = None
+    c.angles, c.arm_stamp, c.arm_error, c.goal = None, 0, '', None
     c.localized = True
     c.config = dict(transport_angles=[0, 10, 20], clearance_m=.25)
     c.arm, c.arm_homed, c.home_cancelled = Mock(), True, False
@@ -45,6 +49,81 @@ def packet(**values):
 
 
 class ControlTest(unittest.TestCase):
+    def test_teleop_handoff_releases_hardware_and_keeps_web_control_locked(self):
+        c = fake_control()
+        arm = c.arm
+        acquire = dict(op='teleop', active=True, pid=os.getpid(), id=str(uuid.uuid4()))
+        release = dict(acquire, active=False, id=str(uuid.uuid4()))
+        c.receive(acquire)
+        c.connect_arm, c.server = Mock(), Mock()
+        def shutdown():
+            if release['id'] in c.results:
+                return True
+            if acquire['id'] in c.results:
+                self.assertEqual(c.phase, 'teleop')
+                self.assertIsNone(c.arm)
+                self.assertFalse(c.snapshot()['motion_available'])
+                c.watchdog()
+                self.assertIsNone(c.stop_pending)
+                robot = RobotROS.__new__(RobotROS)
+                robot.control, robot.output = c, Mock()
+                robot.tick(None)
+                robot.output.publish.assert_not_called()
+                self.assertEqual(c.receive(dict(op='stop', passive=True))['status'], 'ignored')
+                with self.assertRaises(RuntimeError):
+                    c.receive(packet())
+                with self.assertRaises(RuntimeError):
+                    c.receive(dict(release, pid=os.getpid() + 1))
+                c.receive(release)
+            return False
+        c.robot.ros = SimpleNamespace(is_shutdown=shutdown)
+        c.run()
+        arm.close.assert_called_once()
+        self.assertEqual(c.results[acquire['id']]['status'], 'completed')
+        self.assertEqual(c.results[release['id']]['status'], 'completed')
+        self.assertEqual(c.phase, 'fault')
+        self.assertIsNone(c.teleop_pid)
+        self.assertFalse(c.arm_homed)
+
+    def test_explicit_web_stop_terminates_teleop_and_busy_handoff_is_refused(self):
+        c = fake_control()
+        acquire = dict(op='teleop', active=True, pid=1234, id=str(uuid.uuid4()))
+        c.phase = 'homing'
+        with self.assertRaises(RuntimeError):
+            c.receive(acquire)
+        c.phase, c.teleop_pid, c.arm = 'teleop', 1234, None
+        with patch('robot_control.os.kill') as kill:
+            self.assertEqual(c.receive(dict(op='stop'))['status'], 'stopping')
+            kill.assert_called_with(1234, signal.SIGTERM)
+            c.stop_hardware('Stopped')
+            kill.assert_called_once_with(1234, signal.SIGTERM)
+        self.assertEqual(c.phase, 'fault')
+        self.assertIsNone(c.teleop_pid)
+        for pid in (0, -1, True):
+            with self.assertRaises(ValueError):
+                c.receive(dict(acquire, pid=pid))
+
+    def test_transport_retains_measured_rotation_and_requires_clearance_confirmation(self):
+        c = fake_control()
+        angles = [92.64, 3.65, 49.35, 92.64]
+        c.robot.set_clearance = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            c.config_path = Path(directory) / 'robot_config.json'
+            command = dict(type='transport_record', clearance_m=.30, measured=True)
+            with self.assertRaises(ValueError):
+                c.execute(dict(command, measured=False))
+            self.assertFalse(c.config_path.exists())
+            with patch('robot_control.wait_arm', return_value=angles):
+                c.execute(command)
+            saved = dict(transport_angles=angles, clearance_m=.30)
+            self.assertEqual(c.config, saved)
+            self.assertEqual(json.loads(c.config_path.read_text()), saved)
+            c.robot.set_clearance.assert_called_once_with(.30)
+            with patch('robot_control.wait_arm', return_value=[float('nan'), 0, 0]):
+                with self.assertRaises(ValueError):
+                    c.execute(command)
+            self.assertEqual(json.loads(c.config_path.read_text()), saved)
+
     def test_go_needs_no_arm_or_transport_pose(self):
         for arm in (None, Mock()):
             with self.subTest(arm_online=arm is not None):

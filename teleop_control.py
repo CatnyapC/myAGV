@@ -3,12 +3,16 @@
 import argparse
 import importlib.util
 import math
+import json
+import os
 from pathlib import Path
 import signal
+import socket
 import sys
 import termios
 import time
 import tty
+import uuid
 
 from P340 import keyboard_control as arm_keys
 from navigation import Navigation, STATIONS, arm_deadline, save_station, wait_arm
@@ -235,6 +239,34 @@ def parse_args(argv=None):
     return args
 
 
+def web_handoff(active):
+    path = Path(os.environ.get('MYAGV_HARDWARE_DIR', Path(__file__).parent / 'web_runtime' / 'ros')) / 'control.sock'
+    if not path.exists():
+        return False
+
+    def rpc(packet):
+        with socket.socket(socket.AF_UNIX) as connection:
+            connection.settimeout(1)
+            connection.connect(str(path))
+            connection.sendall((json.dumps(packet) + '\n').encode())
+            with connection.makefile('r') as reader:
+                reply = json.loads(reader.readline())
+        if reply.get('error'):
+            raise RuntimeError(reply['error'])
+        return reply
+
+    command_id = str(uuid.uuid4())
+    reply = rpc(dict(op='teleop', active=active, pid=os.getpid(), id=command_id))
+    end = time.monotonic() + 10
+    while reply['status'] in ('accepted', 'pending') and time.monotonic() < end:
+        time.sleep(.05)
+        reply = rpc(dict(op='result', id=command_id))
+    if reply['status'] != 'completed':
+        raise RuntimeError(reply.get('error', 'WebUI hardware handoff timed out'))
+    print('WebUI hardware ' + ('released to TELEOP' if active else 'returned; verify stopped in WebUI'))
+    return True
+
+
 def main():
     import rospy
 
@@ -257,12 +289,15 @@ def main():
         signal.signal(signum, interrupt)
 
     settings = termios.tcgetattr(sys.stdin)
-    publisher = upstream.PublishThread(10)
-    controller = None
+    publisher = controller = arm = None
+    handed_off = False
     try:
+        handed_off = web_handoff(True)
+        publisher = upstream.PublishThread(10)
         publisher.wait_for_subscribers()
         with arm_deadline():
             arm = arm_keys.ultraArmP340(args.p340_port, 115200)
+            arm._serial_port.exclusive = True
         controller = Controller(publisher, arm, upstream.moveBindings, args)
         nav = None
 
@@ -294,11 +329,18 @@ def main():
         pass
     finally:
         try:
-            publisher.stop()
+            if publisher is not None:
+                publisher.stop()
             if controller is not None:
                 controller.stop()
         finally:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
+            try:
+                if arm is not None:
+                    arm.close()
+                if handed_off:
+                    web_handoff(False)
+            finally:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
 
 
 if __name__ == "__main__":

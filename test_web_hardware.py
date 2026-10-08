@@ -78,6 +78,8 @@ class HardwareTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.post('/api/photos/capture', json={})).status, 409)
                 self.assertEqual((await client.get('/api/cameras/front.jpg')).status, 503)
                 self.assertEqual((await client.get('/api/global-costmap')).status, 503)
+                for invalid in ([], dict(passive='true')):
+                    self.assertEqual((await client.post('/api/stop', json=invalid)).status, 400)
                 response = await client.post('/api/stop', json={})
                 self.assertEqual(response.status, 503)
                 self.assertEqual((await response.json())['error'], 'Hardware controller unavailable; stop unconfirmed')

@@ -36,6 +36,7 @@ export type HardwareState = {
 export function hardwareBlocks(state?: HardwareState, requireArm = true): string[] {
   if (!state) return ['Controller unavailable'];
   const reasons: string[] = [];
+  if (state.phase === 'teleop') return ['Exit TELEOP, then verify stopped hardware to resume WebUI control'];
   if (state.phase === 'fault') reasons.push('Verify stopped hardware and clear the fault');
   else if (state.phase !== 'idle') reasons.push('Finish or stop the current task');
   if (!state.driver_watchdog) reasons.push('Driver watchdog unavailable');

@@ -167,6 +167,8 @@ class RobotROS:
     def tick(self, _event):
         now = time.monotonic()
         control = self.control
+        if control and control.phase == 'teleop':
+            return
         if control:
             control.watchdog()
         allowed = bool(control and control.base_allowed() and self.driver_watchdog and self.exclusive

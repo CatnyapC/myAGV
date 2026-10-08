@@ -449,7 +449,10 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
     async def stop(request):
         if editor.hardware:
-            return web.json_response(await editor.hardware.stop())
+            data = await request.json() if request.can_read_body else {}
+            if not isinstance(data, dict) or type(data.get('passive', False)) is not bool:
+                raise ValueError('Invalid stop request')
+            return web.json_response(await editor.hardware.stop(passive=data.get('passive') is True))
         editor.sim.stop('Stopped')
         await editor.emit('telemetry')
         return web.json_response(dict(status='completed', reason='Simulation stopped; hardware is not connected'))
@@ -491,7 +494,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     async def shutdown(application):
         if editor.hardware:
             with suppress(RuntimeError, ValueError):
-                await editor.hardware.stop('API shutdown')
+                await editor.hardware.stop('API shutdown', passive=True)
         for socket in tuple(editor.sockets):
             await socket.close(code=1001, message=b'Service stopping')
 
