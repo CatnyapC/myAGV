@@ -202,11 +202,14 @@ STOP terminates TELEOP and leaves motion locked pending measured stop recovery.
 After TELEOP exits, verify stopped hardware in WebUI and reconfirm homing and
 localization. TELEOP also opens the arm with exclusive serial access.
 
-The controlling tab must answer fresh server challenges every 150 ms. Its lease
-expires within 450 ms, and the ROS gate sends zero velocity. Stale/duplicate
+The server sends control challenges every 150 ms. Automatic tasks (Go, Fetch,
+map updates and other commands) accept replies within 5 seconds and have a
+60-second control lease, tolerating network stalls. Manual control accepts
+replies within 300 ms and keeps a 450 ms lease, enforced by the ROS controller.
+Explicit STOP and controlling-socket disconnect still stop immediately. Stale/duplicate
 heartbeats cannot extend a lease. Another tab cannot renew or take over an
-active task. Tab blur, hiding, disconnect, API shutdown, stale sensors and STOP
-cancel the task. STOP uses an independent socket request and invalidates queued
+active task. Tab blur or hiding clears held manual input. Disconnect, API shutdown,
+stale sensors and STOP cancel the task. STOP uses an independent socket request and invalidates queued
 commands. Reconnecting never resumes motion; explicitly issue a new command.
 
 STOP cancels move_base and sends zero base velocity plus P340 M15. UI reports

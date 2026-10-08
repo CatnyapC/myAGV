@@ -15,7 +15,7 @@ def number(value, low, high, label):
 
 
 def lease_valid(deadline, now):
-    return type(deadline) in (int, float) and now < deadline <= now + .6
+    return type(deadline) in (int, float) and now < deadline <= now + 60.15
 
 
 def footprint_clear(grid, pose, radius):

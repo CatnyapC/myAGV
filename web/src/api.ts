@@ -6,9 +6,9 @@ export async function api<T>(url: string, options: RequestInit = {}): Promise<T>
 }
 
 // Wait for a new server receipt; a local WebSocket send isn't a live lease yet.
-export async function waitForControlLease(read: () => { ack: number; epoch: number; visible: boolean }): Promise<void> {
+export async function waitForControlLease(read: () => { ack: number; epoch: number; visible: boolean }, timeoutMs = 5000): Promise<void> {
   const { ack, epoch } = read();
-  const until = Date.now() + 1000;
+  const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
     const current = read();
     if (!current.visible || current.epoch !== epoch) throw new Error('Action cancelled; page lost focus or STOP was pressed');

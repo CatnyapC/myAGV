@@ -30,6 +30,7 @@ def fake_control():
     c.directory = Path('unused/ros')
     c.phase, c.status, c.task_id = 'idle', 'Ready', None
     c.owner, c.deadline, c.input = None, time.monotonic() + .45, None
+    c.manual_lease = False
     c.executing = c.stopping = c.base_enabled = False
     c.stop_pending = None
     c.teleop_pid = None
@@ -268,7 +269,7 @@ class ControlTest(unittest.TestCase):
         grid['cells'][55]=100
         self.assertTrue(zones_visible(grid, [[.45,2.55]]))
         self.assertFalse(lease_valid(float('inf'),0))
-        self.assertFalse(lease_valid(.61,0))
+        self.assertFalse(lease_valid(60.16,0))
         self.assertEqual(manual_vector('PICKUP','forward'),(.03,0,0))
         with self.assertRaises(ValueError): manual_vector('PICKUP','left')
         src='double angularZ = 0.0;\nlinearX = msg.linear.x;\nros::Rate loop_rate(100);\nmyAGV.execute(linearX, linearY, angularZ);\n\treturn 0;'
@@ -329,8 +330,41 @@ class ControlTest(unittest.TestCase):
 
 
 class IPCtest(unittest.IsolatedAsyncioTestCase):
+    async def test_automatic_leases_tolerate_stalls_and_manual_stays_short(self):
+        for command in ('navigate', 'fetch', 'map_update', 'manual'):
+            with self.subTest(command=command):
+                h, c = Hardware('unused'), fake_control()
+                h.control = dict(boot_id='boot', stamp_s=time.time(), phase='idle')
+                h.refresh = Mock()
+                async def rpc(p):
+                    return c.receive(p)
+                h.rpc = rpc
+                with patch('time.monotonic', return_value=100):
+                    nonce = h.challenge('tab')['nonce']
+                    self.assertTrue(await h.heartbeat('tab', dict(nonce=nonce)))
+                issued = 100.1 if command == 'manual' else 102
+                with patch('time.monotonic', return_value=issued):
+                    await h.command(dict(packet(), type=command))
+                    self.assertAlmostEqual(c.deadline, issued + (.45 if command == 'manual' else 60))
+                    nonce = h.challenge('tab')['nonce']
+                now = 100.2 if command == 'manual' else 104
+                with patch('time.monotonic', return_value=now):
+                    self.assertEqual(h.challenge('tab')['nonce'], nonce)
+                    self.assertTrue(await h.heartbeat('tab', dict(nonce=nonce)))
+                    if command == 'manual':
+                        c.receive(dict(op='heartbeat', boot_id='boot', session_id='tab', deadline=now + 60))
+                    self.assertAlmostEqual(c.deadline, now + (.45 if command == 'manual' else 60))
+                c.phase, c.request_stop = 'working', Mock()
+                with patch('time.monotonic', return_value=now + (.4 if command == 'manual' else 59)):
+                    c.watchdog()
+                    c.request_stop.assert_not_called()
+                with patch('time.monotonic', return_value=now + (.46 if command == 'manual' else 60.01)):
+                    c.watchdog()
+                    c.request_stop.assert_called_once_with('Control heartbeat expired')
+
     async def test_next_challenge_does_not_invalidate_a_delayed_valid_reply(self):
         h = Hardware('unused')
+        h.manual = True
         with patch('web_backend.hardware.time.monotonic', return_value=10):
             first = h.challenge('tab')
         with patch('web_backend.hardware.time.monotonic', return_value=10.15):

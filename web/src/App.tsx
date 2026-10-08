@@ -256,8 +256,8 @@ export function App() {
     }, 400);
     return () => clearTimeout(timer);
   }, [settingsDirty, savedSettings, settingsDraft, canEdit, settingsSaving, saveError, angleValid, reload]);
-  async function controlReady() {
-    if (hardwareMode.current) await waitForControlLease(() => ({ ack: leaseAck.current, epoch: actionEpoch.current, visible: !document.hidden }));
+  async function controlReady(timeoutMs = 5000) {
+    if (hardwareMode.current) await waitForControlLease(() => ({ ack: leaseAck.current, epoch: actionEpoch.current, visible: !document.hidden }), timeoutMs);
   }
   async function command(type: 'zone_add' | 'zone_delete') {
     if (!zones || !packet || !canEdit) return;
@@ -275,7 +275,7 @@ export function App() {
     if (!packet || !zones || !session.current) return;
     setError('');
     try {
-      await controlReady();
+      await controlReady(type === 'manual' ? 1000 : 5000);
       if (type === 'manual' && !held.current) return;
       await api('/api/commands', { method: 'POST', body: JSON.stringify({ ...values,
         type, id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision }) });

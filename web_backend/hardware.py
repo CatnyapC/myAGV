@@ -19,6 +19,7 @@ class Hardware:
         self.generation = 0
         self.sessions = {}
         self.owner = None
+        self.manual = False
 
     def refresh(self):
         try:
@@ -74,7 +75,7 @@ class Hardware:
 
     def challenge(self, session):
         previous = self.sessions.get(session, {})
-        if previous.get('nonce') and 0 <= time.monotonic() - previous['issued'] <= .3:
+        if previous.get('nonce') and 0 <= time.monotonic() - previous['issued'] <= (.3 if self.manual else 5):
             return dict(type='lease', session_id=session, nonce=previous['nonce'])
         nonce = str(uuid.uuid4())
         self.sessions[session] = dict(nonce=nonce, issued=time.monotonic(), ack=previous.get('ack', 0))
@@ -83,12 +84,12 @@ class Hardware:
     async def heartbeat(self, session, message):
         state = self.sessions.get(session)
         now = time.monotonic()
-        if not state or not state.get('nonce') or message.get('nonce') != state['nonce'] or not 0 <= now - state['issued'] <= .3:
+        if not state or not state.get('nonce') or message.get('nonce') != state['nonce'] or not 0 <= now - state['issued'] <= (.3 if self.manual else 5):
             return False
         state['nonce'], state['ack'] = None, now
         if session == self.owner and self.control:
             await self.rpc(dict(op='heartbeat', boot_id=self.control['boot_id'], session_id=session,
-                                deadline=now + .45, input=message.get('input')))
+                                deadline=now + (.45 if self.manual else 60), input=message.get('input')))
         return True
 
     async def command(self, data, wait=False):
@@ -96,18 +97,19 @@ class Hardware:
         state = self.sessions.get(data.get('session_id'), {})
         if not self.control or not self.fresh(self.control.get('stamp_s'), 1):
             raise RuntimeError('Hardware controller unavailable')
-        if not 0 <= time.monotonic() - state.get('ack', 0) <= .3:
+        manual = data.get('type') == 'manual'
+        if not 0 <= time.monotonic() - state.get('ack', 0) <= (.3 if manual else 5):
             raise ValueError('Control heartbeat missing or stale; keep this page visible and retry')
         if self.control['phase'] not in ('idle', 'fault') and self.owner != data.get('session_id'):
             raise ValueError('Another tab owns the active task')
         # Claim before sending so the first heartbeat cannot miss an accepted command.
-        old_owner = self.owner
-        self.owner = data['session_id']
-        packet = {**data, 'op': 'command', 'boot_id': self.control['boot_id'], 'deadline': time.monotonic() + .45}
+        old_owner, old_manual = self.owner, self.manual
+        self.owner, self.manual = data['session_id'], manual
+        packet = {**data, 'op': 'command', 'boot_id': self.control['boot_id'], 'deadline': time.monotonic() + (.45 if manual else 60)}
         try:
             result = await self.rpc(packet)
         except Exception:
-            self.owner = old_owner
+            self.owner, self.manual = old_owner, old_manual
             raise
         if wait and result.get('status') == 'accepted':
             end = time.monotonic() + (45 if data.get('type') == 'reset_map' else 15)

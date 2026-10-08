@@ -43,6 +43,7 @@ class Control:
         self.phase, self.status = 'idle', 'Ready; initialize localization before automatic travel'
         self.task_id = self.owner = None
         self.deadline = 0
+        self.manual_lease = False
         self.stop_epoch = 0
         self.input = None
         self.manual_args = {}
@@ -144,7 +145,7 @@ class Control:
             raise ValueError('Expired controller session; reconnect and retry explicitly')
         if kind == 'heartbeat':
             if packet.get('session_id') == self.owner:
-                self.deadline = packet['deadline']
+                self.deadline = min(packet['deadline'], time.monotonic() + .45) if self.manual_lease else packet['deadline']
                 self.input = packet.get('input')
             return dict(status='ok')
         if kind != 'command':
@@ -196,7 +197,9 @@ class Control:
             raise ValueError('No-go revision changed; reload before issuing commands')
         if not isinstance(packet.get('session_id'), str) or not packet['session_id']:
             raise ValueError('Live control session required')
-        self.owner, self.deadline = packet['session_id'], packet['deadline']
+        self.manual_lease = command == 'manual'
+        self.owner = packet['session_id']
+        self.deadline = min(packet['deadline'], time.monotonic() + .45) if self.manual_lease else packet['deadline']
         self.requests[command_id] = fingerprint
         try:
             self.queue.put_nowait(packet)
