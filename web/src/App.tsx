@@ -350,9 +350,8 @@ export function App() {
     finally { setBusy(false); }
   }
   function storedCamera(camera: 'front' | 'arm') {
-    const matches = (state?.demo || state?.phase === 'idle') && selectedPhoto && (selectedPhoto.kind === 'reference' ? camera === 'front' : selectedPhoto.camera_id === camera);
     const live = state?.cameras?.[camera];
-    return matches ? <StoredPhoto key={selectedPhoto.id} photo={selectedPhoto} onEdit={() => setPhotoMode('edit')} /> : live ?
+    return live ?
       <div className="stored-photo"><img src={live.url} alt={`Live ${camera} camera`} /></div> :
       <div className="camera-body"><Camera size={26} strokeWidth={1} /><span>Camera unavailable</span></div>;
   }
@@ -494,6 +493,7 @@ export function App() {
           <button key={p.id} className={`zone-row ${p.id === selectedPhotoId ? 'selected' : ''}`} onClick={() => selectPhoto(p.id)} title={p.kind === 'reference' ? 'Phone reference · no map point' : 'Captured base observation pose'}>
             <Camera size={14} /><span>{photos.items.find(i => i.id === p.item_id)?.name ?? 'Unlabelled'}</span><span className="row-end">{p.kind === 'reference' ? 'Reference' : p.current === false ? 'History' : p.camera_id}</span>
           </button>) : <span className="muted">No photos</span>}</div>
+        {selectedItem && selectedPhoto?.item_id === selectedItem.id && <div className="item-photo"><StoredPhoto key={selectedPhoto.id} photo={selectedPhoto} onEdit={() => setPhotoMode('edit')} /></div>}
         {selectedPhoto && <div className="action-line"><Button onClick={() => setPhotoMode('edit')}>Edit</Button>
           {selectedPhoto.kind === 'observation' && <Button disabled={!canEdit || !selectedPhoto.map_matches || !selectedPhoto.available} onClick={() => {
             const pose = selectedPhoto.base_pose; setGoalText([String(pose.x_m), String(pose.y_m), String(pose.yaw_rad * 180 / Math.PI)]);

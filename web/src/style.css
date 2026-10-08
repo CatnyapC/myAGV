@@ -24,6 +24,7 @@ select:focus-visible, textarea:focus-visible { outline: 2px solid var(--cyan-8);
 .stored-photo { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--gray-1); }
 .stored-photo img { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
 .photo-caption { color: var(--gray-11); background: var(--gray-2); border: 0; border-top: 1px solid var(--gray-6); padding: 6px; font-size: 11px; }
+.item-photo { display: flex; height: 180px; flex-shrink: 0; }
 .photo-list { max-height: 128px; overflow: auto; }
 .request-row { display: flex; gap: 6px; }
 .request-row input, .request-row select { flex: 1; width: 0; }
