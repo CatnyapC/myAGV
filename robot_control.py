@@ -65,7 +65,7 @@ class Control:
         self.queue = queue.Queue(maxsize=1)
         self.results, self.requests = OrderedDict(), OrderedDict()
         self.config_path = self.directory.parent / 'robot_config.json'
-        self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else dict(transport_angles=None, clearance_m=.25)
+        self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else dict(transport_angles=None, clearance_m=.20)
         number(self.config['clearance_m'], .15, 1, 'Measured clearance radius')
         number(self.config.get('small_obstacle_m', .15), 0, .5, 'Small obstacle size')
         if self.config['transport_angles'] is not None:

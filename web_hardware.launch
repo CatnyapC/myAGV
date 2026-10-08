@@ -63,7 +63,7 @@
         publish_frequency: 1.0
         always_send_full_costmap: true
         footprint: "[]"
-        robot_radius: 0.25
+        robot_radius: 0.20
         footprint_padding: 0.01
         rolling_window: false
         plugins:
@@ -92,7 +92,7 @@
         publish_frequency: 5.0
         always_send_full_costmap: true
         footprint: "[]"
-        robot_radius: 0.25
+        robot_radius: 0.20
         footprint_padding: 0.01
         rolling_window: true
         plugins:

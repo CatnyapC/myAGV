@@ -155,7 +155,7 @@ class Hardware:
         goal = control.get('goal')
         if goal:
             goal = dict(x_m=goal['x_m'], y_m=goal['y_m'], yaw_rad=math.radians(goal['yaw_deg']))
-        radius = control.get('clearance_m', .25)
+        radius = control.get('clearance_m', .20)
         return dict(map_id=grid['map_id'], frame=grid['frame'], source='ros', stamp_s=time.time(),
                     pose=pose, goal=goal, path=self.snapshot.get('path', []) if current else [],
                     moving=control.get('moving', False), phase=control.get('phase', 'unavailable'),
