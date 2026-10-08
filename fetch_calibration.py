@@ -40,30 +40,21 @@ def alignment_command(result, config):
     return moves
 
 
-def position_alignment(positions, config, history):
+def qualitative_alignment(result, config):
     config = calibration_config(config)
-    fields = ('arm_goal', 'arm_current', 'front_goal', 'front_current')
-    if not isinstance(positions, dict) or set(positions) != set(fields):
-        raise ValueError('Invalid target image positions')
-    for value in positions.values():
-        if value is None:
-            raise ValueError('Pickup target missing or ambiguous')
-        if type(value) not in (float, int) or not math.isfinite(value) or not 0 <= value <= 1:
-            raise ValueError('Invalid target image position')
+    if not isinstance(result, dict) or set(result) != {'arm', 'front'}:
+        raise ValueError('Invalid visual alignment labels')
+    steps = {'left_large': -2, 'left_medium': -1, 'left_small': -.5,
+             'aligned': 0, 'right_small': .5, 'right_medium': 1, 'right_large': 2}
     moves = {}
-    for camera, axis in (('arm', 'X'), ('front', 'turn_deg')):
-        target = positions['arm_goal'] if camera == 'arm' else .5
-        error = positions[camera + '_current'] - target
-        limit = config['max_step_mm'] if axis == 'X' else 2
-        step = limit * min(1, abs(error) / .05)
-        if history and history[-1].get('positions'):
-            previous = history[-1]
-            change = positions[camera + '_current'] - previous['positions'][camera + '_current']
-            executed = previous['commanded'][axis]
-            if abs(change) >= .01 and change * executed < 0:
-                step = abs(error * executed / change)
-        step = min(limit, max(.1, step))
-        moves['x_mm' if axis == 'X' else 'turn_deg'] = 0 if abs(error) <= .010001 else round(math.copysign(step, error), 3)
+    for camera, field in (('arm', 'x_mm'), ('front', 'turn_deg')):
+        label = result[camera]
+        if label == 'unknown':
+            raise ValueError('Pickup target missing or ambiguous: ' + camera)
+        if not isinstance(label, str) or label not in steps:
+            raise ValueError('Invalid visual alignment label')
+        limit = config['max_step_mm'] if camera == 'arm' else 2
+        moves[field] = max(-limit, min(limit, steps[label]))
     alignment_command(moves, config)
     return moves
 

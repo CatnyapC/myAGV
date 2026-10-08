@@ -11,7 +11,7 @@ import uuid
 from unittest.mock import AsyncMock, Mock, call, patch
 from aiohttp.test_utils import TestClient, TestServer
 
-from fetch_calibration import alignment_command, calibration_config, pickup_delta, position_alignment, vision_image
+from fetch_calibration import alignment_command, calibration_config, pickup_delta, qualitative_alignment, vision_image
 from test_robot_control import fake_control
 from web_backend.resolve import locate_pickup
 from web_backend.map_data import demo_map
@@ -41,18 +41,15 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         c.arm.set_coords.assert_not_called()
         c.arm.set_angles.assert_not_called()
 
-    def test_image_positions_convert_to_bounded_moves(self):
-        p = dict(arm_goal=.56, arm_current=.30, front_goal=.50, front_current=.50)
-        self.assertEqual(position_alignment(p, None, []), dict(x_mm=-2, turn_deg=0))
-        self.assertEqual(position_alignment(dict(p, arm_current=.8, front_current=.3), None, []), dict(x_mm=2, turn_deg=-2))
-        self.assertEqual(position_alignment(dict(p, arm_current=.57), None, []), dict(x_mm=0, turn_deg=0))
-        self.assertEqual(position_alignment(dict(p, arm_current=.56, front_goal=.7), None, []), dict(x_mm=0, turn_deg=0))
-        self.assertEqual(position_alignment(dict(p, arm_current=.56, front_goal=.7, front_current=.7), None, []), dict(x_mm=0, turn_deg=2))
-        previous = dict(positions=dict(p, arm_current=.60), commanded=dict(X=2, turn_deg=0))
-        self.assertEqual(position_alignment(dict(p, arm_current=.58), None, [previous]), dict(x_mm=2, turn_deg=0))
-        for value in (None, True, float('nan'), -0.1, 1.1):
+    def test_visual_labels_convert_to_bounded_moves(self):
+        for size, step in (('large', 2), ('medium', 1), ('small', .5)):
+            self.assertEqual(qualitative_alignment(dict(arm='left_' + size, front='right_' + size), None), dict(x_mm=-step, turn_deg=step))
+            self.assertEqual(qualitative_alignment(dict(arm='right_' + size, front='left_' + size), None), dict(x_mm=step, turn_deg=-step))
+        self.assertEqual(qualitative_alignment(dict(arm='aligned', front='aligned'), None), dict(x_mm=0, turn_deg=0))
+        self.assertEqual(qualitative_alignment(dict(arm='right_large', front='right_large'), dict(max_step_mm=.5)), dict(x_mm=.5, turn_deg=2))
+        for label in ('unknown', None, 0, 'right', {}, []):
             with self.assertRaises(ValueError):
-                position_alignment(dict(p, arm_current=value), None, [])
+                qualitative_alignment(dict(arm=label, front='aligned'), None)
 
     def test_base_turn_is_clockwise_without_translation_and_stops(self):
         c = fake_control()
@@ -107,7 +104,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_minimal_provider_request(self):
         images = dict(front='data:image/jpeg;base64,AQ==', arm='data:image/jpeg;base64,Ag==')
-        provider = AsyncMock(return_value=dict(arm_goal=.5, arm_current=.5, front_goal=.5, front_current=.5))
+        provider = AsyncMock(return_value=dict(arm='aligned', front='aligned'))
         history = [dict(images=images, commanded=dict(X=1, turn_deg=-1))] * 2
         trace = {}
         with patch('web_backend.resolve.request_json', provider):
@@ -199,7 +196,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             async def provider(body, key, timeout):
                 entered.set()
                 await release.wait()
-                return dict(arm_goal=.5, arm_current=.7, front_goal=.5, front_current=.3)
+                return dict(arm='right_large', front='left_large')
 
             with patch('web_backend.server.load_key', return_value=('configured', 'private-test-key')), patch('web_backend.resolve.request_json', side_effect=provider):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
@@ -248,7 +245,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(.025)
                     entry = log['rounds'][0]
                     self.assertEqual(entry['status'], 'returned')
-                    self.assertEqual(json.loads(entry['result_json']), dict(arm_goal=.5, arm_current=.7, front_goal=.5, front_current=.3))
+                    self.assertEqual(json.loads(entry['result_json']), dict(arm='right_large', front='left_large'))
                     self.assertEqual(entry['correction'], dict(X=.5, turn_deg=-2))
                     self.assertEqual(entry['messages'][0]['content'], values['prompt'])
                 restarted = create_app(ui, root / 'stations.json', hardware_dir=bridge)

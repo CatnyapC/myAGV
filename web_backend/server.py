@@ -776,8 +776,6 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             entry.update(correction=alignment_command(result, value.get('limits')))
                     entry.update(status='returned')
                     response = dict(id=handled, result=result)
-                    if 'positions' in entry:
-                        response['positions'] = entry['positions']
                 except (web.HTTPException, OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
                     error = exc.text if isinstance(exc, web.HTTPException) else str(exc)
                     entry.update(status='error', error=error)

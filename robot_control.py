@@ -977,8 +977,7 @@ class Control:
                         step = min(1, remaining)
                         self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=step)
                         remaining -= step
-                history = (history + [dict(images=images, commanded=moves,
-                    positions=response.get('positions'))])[-2:]
+                history = (history + [dict(images=images, commanded=moves)])[-2:]
         finally:
             self.base_enabled = False
             self.robot.zero()
