@@ -1,5 +1,6 @@
 import array
 import ast
+import base64
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ import tempfile
 import asyncio
 import json
 import time
+import threading
 import unittest
 import uuid
 from unittest.mock import AsyncMock, Mock, call, patch
@@ -15,6 +17,9 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from fetch_calibration import alignment_command, calibration_config, pickup_delta, qualitative_alignment, vision_image
 from test_robot_control import fake_control
+from robot_control import Stopped
+from robot_safety import fresh, number
+from P340.keyboard_control import LIMITS
 from web_backend.resolve import locate_pickup
 from web_backend.map_data import demo_map
 from web_backend.photos import PhotoIndex, demo_frame
@@ -83,6 +88,34 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         for kwargs in ({}, dict(grasp_goal=True), dict(vision=True, update_key='map-update')):
             with self.assertRaisesRegex(ValueError, 'localization'):
                 namespace['capture']('arm', **kwargs)
+
+    def test_arm_goal_z_is_bound_to_stationary_image_acquisition(self):
+        source = ast.parse(Path('ros_web_bridge.py').read_text())
+        main = next(n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
+        capture = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == 'capture')
+        for after_z in (40.2, 41, float('nan'), None):
+            with self.subTest(after_z=after_z):
+                arm = Mock()
+                arm.get_coords_info.side_effect = [[0,150,40], [0,150,after_z] if after_z is not None else None]
+                saved = Mock()
+                namespace = dict(control=SimpleNamespace(localized=True, arm=arm, read_arm=lambda: [90,30,40]),
+                    robot=SimpleNamespace(grid=dict(map_id='map'), nav=Mock(), stopped=lambda: True),
+                    wait_arm=Mock(return_value=[90,30,40]), arm_deadline=lambda _: nullcontext(),
+                    number=number, LIMITS=LIMITS, fresh=fresh, frame_lock=threading.Lock(),
+                    time=SimpleNamespace(time=lambda: 100, monotonic=lambda: 0),
+                    frames=dict(arm=('pixels', dict(captured_at_s=100, map_id='map'))),
+                    cv2=Mock(), vision_image=Mock(return_value='data:image/jpeg;base64,AQ=='),
+                    base64=base64, uuid=uuid, directory=Path('unused'), atomic_bytes=Mock(), atomic_json=saved)
+                namespace['cv2'].imencode.return_value = (True, Mock(tobytes=lambda: b'png'))
+                exec(compile(ast.Module(body=[capture], type_ignores=[]), 'ros_web_bridge.py', 'exec'), namespace)
+                if after_z == 40.2:
+                    namespace['capture']('arm', grasp_goal=True)
+                    self.assertEqual(saved.call_args.args[1]['arm_z_mm'], 40.2)
+                    self.assertEqual(saved.call_args.args[1]['arm_angles_deg'], [90,30,40])
+                else:
+                    with self.assertRaises((ValueError, RuntimeError)):
+                        namespace['capture']('arm', grasp_goal=True)
+                    saved.assert_not_called()
 
     def test_visual_labels_convert_to_bounded_moves(self):
         for size, step, arm_step in (('large', 2, 10), ('medium', 1, 5), ('small', .5, 1)):
@@ -223,6 +256,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
     def test_closed_loop_stages_never_mix_motors(self):
         c = fake_control()
         c.task_id, c.arm_step, c.turn_fetch = 'task', Mock(), Mock()
+        c.arm.get_coords_info.return_value = [0, 150, 30]
         c.capture.return_value = {'image': 'compressed'}
         with tempfile.TemporaryDirectory() as folder:
             c.directory = Path(folder)
@@ -236,7 +270,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 atomic_json(c.directory / 'fetch_vision_response.json', dict(id=value['id'], result=result,
                     aligned_perfectly=not any(result.values())))
             with patch('robot_control.atomic_json', side_effect=respond):
-                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
+                c.calibrate_fetch({'vision_item': {'name': 'cup', 'calibration_z_mm': 30}}, None)
             self.assertEqual([r['stage'] for r in requests], ['base', 'base', 'arm', 'arm', 'arm'])
             self.assertEqual(requests[2]['history'], [])
             self.assertEqual(c.capture.call_args_list, [call('front', vision=True)] * 2 + [call('arm', vision=True)] * 3)
@@ -247,10 +281,66 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(list(c.directory.iterdir()))
             results = iter([dict(x_mm=1, turn_deg=0)])
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):
-                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
+                c.calibrate_fetch({'vision_item': {'name': 'cup', 'calibration_z_mm': 30}}, None)
             results = iter([dict(x_mm=0, turn_deg=0), dict(x_mm=0, y_mm=0, turn_deg=1)])
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):
-                c.calibrate_fetch({'vision_item': {'name': 'cup'}}, None)
+                c.calibrate_fetch({'vision_item': {'name': 'cup', 'calibration_z_mm': 30}}, None)
+
+    def test_goal_z_is_reached_before_any_alignment_image(self):
+        for start_z in (10, 65, 39.7):
+            with self.subTest(start_z=start_z), tempfile.TemporaryDirectory() as folder:
+                c = fake_control()
+                c.directory = Path(folder)
+                coords = [0, 150, start_z]
+                c.arm.get_coords_info.side_effect = lambda: list(coords)
+                def step(axis, direction, **kwargs):
+                    self.assertEqual((axis, kwargs['pickup']), ('Z', True))
+                    coords[2] += direction * kwargs['distance']
+                c.arm_step = Mock(side_effect=step)
+                def capture(*args, **kwargs):
+                    self.assertLessEqual(abs(coords[2] - 40), .5)
+                    self.assertEqual(coords[:2], [0, 150])
+                    raise RuntimeError('height verified before vision')
+                c.capture.side_effect = capture
+                with self.assertRaisesRegex(RuntimeError, 'height verified before vision'):
+                    c.calibrate_fetch(dict(vision_item=dict(calibration_z_mm=40)), None)
+                self.assertEqual(c.arm_step.call_count, 3 if start_z in (10, 65) else 0)
+                self.assertFalse(list(c.directory.iterdir()))
+
+    def test_missing_bad_or_unreached_goal_z_stops_before_vision(self):
+        for target, feedback, error in ((None, [0,150,10], ValueError),
+                (True, [0,150,10], ValueError), (float('nan'), [0,150,10], ValueError),
+                (-140, [0,150,10], ValueError), (40, None, RuntimeError),
+                (40, [0,150,float('nan')], ValueError), (40, [0,150,10], TimeoutError)):
+            with self.subTest(target=target, feedback=feedback), tempfile.TemporaryDirectory() as folder:
+                c = fake_control()
+                c.directory, c.arm_step = Path(folder), Mock()
+                c.arm.get_coords_info.return_value = feedback
+                with self.assertRaises(error):
+                    c.calibrate_fetch(dict(vision_item=dict(calibration_z_mm=target)), None)
+                c.capture.assert_not_called()
+        with tempfile.TemporaryDirectory() as folder:
+            c = fake_control()
+            c.directory, c.arm_step = Path(folder), Mock()
+            c.stop_pending = 'stop'
+            with self.assertRaises(Stopped):
+                c.calibrate_fetch(dict(vision_item=dict(calibration_z_mm=40)), None)
+            c.arm_step.assert_not_called()
+            c.capture.assert_not_called()
+
+    def test_preview_does_not_restore_z(self):
+        c = fake_control()
+        c.arm_step = Mock()
+        c.capture.return_value = dict(image='compressed')
+        with tempfile.TemporaryDirectory() as folder:
+            c.directory = Path(folder)
+            def respond(path, value):
+                atomic_json(c.directory / 'fetch_vision_response.json', dict(id=value['id'],
+                    result=dict(x_mm=0, turn_deg=0), aligned_perfectly=True))
+            with patch('robot_control.atomic_json', side_effect=respond):
+                c.calibrate_fetch(dict(preview=True, vision_item={}), None)
+            c.arm.get_coords_info.assert_not_called()
+            c.arm_step.assert_not_called()
 
     async def test_base_stagnation_requires_five_executed_rounds(self):
         images = dict(front='data:image/jpeg;base64,AQ==')
@@ -301,7 +391,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             for camera in ('front', 'arm'):
                 photo = index.add(image, dict(kind='observation', source='ros', camera_id=camera,
                     map_id=grid['map_id'], map_revision=1, frame='map', captured_at_s=time.time(),
-                    base_pose=dict(x_m=0, y_m=0, yaw_rad=0)), index.value['revision'])
+                    base_pose=dict(x_m=0, y_m=0, yaw_rad=0), **({'arm_z_mm': 35} if camera == 'arm' else {})), index.value['revision'])
                 index.image_path(photo['id']).with_suffix('.jpg').write_bytes(image)
                 cameras[camera] = photo['id']
             index.save_grasp_goal(item_id, cameras, index.value['revision'], grid['map_id'])
@@ -339,6 +429,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     forwarded = hardware.command.call_args.args[0]
                     self.assertEqual(forwarded['fetch_settings'], values)
                     self.assertEqual(forwarded['vision_item']['reference_photo_id'], reference['id'])
+                    self.assertEqual(forwarded['vision_item']['calibration_z_mm'], 35)
                     self.assertNotIn('goal', forwarded['vision_item'])
                     self.assertNotIn('station', forwarded)
                     command['fetch_revision'] = 0

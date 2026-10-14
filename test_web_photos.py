@@ -31,7 +31,7 @@ class PhotoIndexTest(unittest.TestCase):
             for camera in ('front', 'arm'):
                 photo = index.add(image, dict(kind='observation', source='ros', camera_id=camera,
                     map_id='map', map_revision=0, frame='map', captured_at_s=1,
-                    base_pose=dict(x_m=0, y_m=0, yaw_rad=0)), index.value['revision'])
+                    base_pose=dict(x_m=0, y_m=0, yaw_rad=0), **({'arm_z_mm': 40} if camera == 'arm' else {})), index.value['revision'])
                 cameras[camera] = photo['id']
                 atomic_bytes(index.image_path(photo['id']).with_suffix('.jpg'), b'jpeg-test')
             with self.assertRaises(ValueError):
@@ -40,7 +40,22 @@ class PhotoIndexTest(unittest.TestCase):
             restarted = PhotoIndex(root, root / 'stations.json')
             item = restarted.snapshot('map')['items'][0]
             self.assertTrue(item['grasp_goal_ready'])
+            self.assertEqual(item['calibration_z_mm'], 40)
             self.assertEqual(item['grasp_goal'], cameras)
+            legacy = deepcopy(restarted.value)
+            arm = next(p for p in legacy['photos'] if p['id'] == cameras['arm'])
+            arm.pop('arm_z_mm')
+            legacy['items'][0]['grasp_z_mm'] = -60
+            restarted.commit(legacy)
+            self.assertFalse(restarted.snapshot('map')['items'][0]['grasp_goal_ready'])
+            self.assertNotIn('calibration_z_mm', restarted.snapshot('map')['items'][0])
+            with self.assertRaisesRegex(ValueError, 'GOAL Z unavailable'):
+                restarted.save_grasp_goal(item_id, cameras, restarted.value['revision'], 'map')
+            for invalid in (True, float('nan'), '40'):
+                bad = deepcopy(legacy)
+                next(p for p in bad['photos'] if p['id'] == cameras['arm'])['arm_z_mm'] = invalid
+                with self.assertRaisesRegex(ValueError, 'measured arm Z'):
+                    restarted.validate(bad)
             restarted.delete(cameras['front'], restarted.value['revision'])
             self.assertNotIn('grasp_goal', restarted.value['items'][0])
             self.assertFalse(restarted.image_path(cameras['front']).with_suffix('.jpg').exists())
@@ -136,7 +151,7 @@ class PhotoAPITest(unittest.IsolatedAsyncioTestCase):
                     atomic_json(path.with_suffix('.json'), dict(capture_id=capture_id, source='ros',
                         kind='observation', camera_id=camera, captured_at_s=time.time(),
                         map_id=grid['map_id'], map_revision=0, frame='map',
-                        base_pose=dict(x_m=0, y_m=0, yaw_rad=0)))
+                        base_pose=dict(x_m=0, y_m=0, yaw_rad=0), **({'arm_z_mm': 42.5} if camera == 'arm' else {})))
                 return dict(captures=captures)
 
             hardware.command = AsyncMock(side_effect=capture)
@@ -156,10 +171,16 @@ class PhotoAPITest(unittest.IsolatedAsyncioTestCase):
                 hardware.control['phase'] = 'teleop'
                 response = await client.post('/api/items/grasp-goal', json=dict(item_id=item_id,
                     map_id=grid['map_id'], expected_revision=height['revision'], zone_revision=app[EDITOR].zones['revision']))
+                self.assertEqual(response.status, 400)
+                self.assertIn('Exit TELEOP', await response.text())
+                hardware.control['phase'] = 'idle'
+                response = await client.post('/api/items/grasp-goal', json=dict(item_id=item_id,
+                    map_id=grid['map_id'], expected_revision=height['revision'], zone_revision=app[EDITOR].zones['revision']))
                 self.assertEqual(response.status, 200, await response.text())
                 result = await response.json()
                 item = result['items'][0]
                 self.assertTrue(item['grasp_goal_ready'])
+                self.assertEqual(item['calibration_z_mm'], 42.5)
                 for camera, photo_id in item['grasp_goal'].items():
                     self.assertEqual((ui / 'images' / (photo_id + '.jpg')).read_bytes(), camera.encode())
                     saved = next(p for p in result['photos'] if p['id'] == photo_id)

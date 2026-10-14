@@ -41,7 +41,7 @@ def saved_goal(root):
     for camera in ('front', 'arm'):
         photo = index.add(image, dict(kind='observation', source='ros', camera_id=camera,
             map_id=grid['map_id'], map_revision=0, frame='map', captured_at_s=time.time(),
-            base_pose=dict(x_m=0, y_m=0, yaw_rad=0)), index.value['revision'])
+            base_pose=dict(x_m=0, y_m=0, yaw_rad=0), **({'arm_z_mm': 40} if camera == 'arm' else {})), index.value['revision'])
         index.image_path(photo['id']).with_suffix('.jpg').write_bytes(image)
         cameras[camera] = photo['id']
     index.save_grasp_goal(item_id, cameras, index.value['revision'], grid['map_id'])

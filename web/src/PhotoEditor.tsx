@@ -110,7 +110,8 @@ export function PhotoEditor(props: {
   const stationNeedsConfirmation = Boolean(station) && (editingItem?.station_link?.name !== station || editingItem?.station_status !== 'ready');
   const recordReason = props.goalCaptureReason || (!props.enabled ? 'Photo editing is unavailable.' : busy ? 'Wait for the current request.'
     : !name.trim() ? 'Enter the item name.' : stationNeedsConfirmation && !stationConfirmed ? 'Confirm the station association above.' : '');
-  const goalReason = recordReason || (editingItem?.grasp_z_mm == null ? 'Save the current grasp Z first.' : '');
+  const goalReason = recordReason || (!props.heightCaptureEnabled ? 'Exit TELEOP; GOAL recording needs an idle, homed arm with Z feedback.'
+    : editingItem?.grasp_z_mm == null ? 'Save the current grasp Z first.' : '');
   return <section className="photo-page" aria-label={photo ? 'Edit item' : 'Import item photo'}>
       <header className="photo-page-header">
         <Button variant="ghost" className="icon" aria-label="Back to OPERATE" autoFocus disabled={busy} onClick={props.onClose}><ArrowLeft size={18} /></Button>
@@ -145,12 +146,13 @@ export function PhotoEditor(props: {
             <Button disabled={Boolean(recordReason) || !props.heightCaptureEnabled} title={recordReason || (!props.heightCaptureEnabled ? 'Height recording needs WebUI arm feedback.' : '')}
               onClick={() => void mutate(false, 'height')}>Save current grasp Z</Button>
             <span className="muted">{editingItem?.grasp_z_mm != null ? `Grasp Z saved: ${editingItem.grasp_z_mm.toFixed(1)} mm` : 'Grasp height not recorded yet.'}</span>
-            <span className="muted">Release the item and raise the arm above grasp height before alignment. Fetch roughly centers the front view, then matches the saved top-camera view with arm X/Y. Save at the raised calibration height.</span>
+            <span className="muted">Release the item and raise the arm above grasp height. Save GOAL at this calibration height. ALIGN and Fetch first restore its saved Z, then align the front view and arm X/Y.</span>
             <span className="subheading">ARM CALIBRATION GOAL</span>
             <Button disabled={Boolean(goalReason)} title={goalReason} aria-describedby={goalReason ? 'grasp-capture-reason' : undefined}
               onClick={() => void mutate(false, 'goal')}><Camera size={15} />Save item & capture both cameras</Button>
             {goalReason && <span id="grasp-capture-reason" role="status" className="muted">{goalReason}</span>}
-            <span className="muted">{editingItem?.grasp_goal_ready ? 'Alignment views saved.' : editingItem?.grasp_goal ? 'Saved views unavailable; capture both cameras again.' : 'No alignment goal saved yet.'}</span>
+            <span className="muted">{editingItem?.grasp_goal_ready ? `Alignment views saved · GOAL Z: ${editingItem.calibration_z_mm!.toFixed(1)} mm`
+              : editingItem?.grasp_goal ? editingItem.calibration_z_mm == null ? 'Saved GOAL lacks Z; recapture both cameras.' : 'Saved views unavailable; capture both cameras again.' : 'No alignment goal saved yet.'}</span>
             {editingItem?.grasp_goal && <div className="grasp-goal-views">{(['front', 'arm'] as const).map(camera => {
               const goalPhoto = props.index.photos.find(p => p.id === editingItem.grasp_goal?.[camera]);
               const measured = bluePreview ?? editingItem.blue_cap_goal;

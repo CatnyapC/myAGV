@@ -109,6 +109,9 @@ class PhotoIndex:
                 if not all(isinstance(link.get(k), str) and link[k] for k in ('name', 'map_id', 'digest')):
                     raise ValueError('Invalid station link')
         for photo in value['photos']:
+            if 'arm_z_mm' in photo and (photo.get('source') != 'ros' or photo.get('camera_id') != 'arm'
+                    or type(photo['arm_z_mm']) not in (int, float) or not math.isfinite(photo['arm_z_mm'])):
+                raise ValueError('Invalid measured arm Z')
             if 'current' in photo and type(photo['current']) is not bool:
                 raise ValueError('Invalid observation freshness')
             if 'update_key' in photo and (photo.get('source') != 'ros' or not isinstance(photo['update_key'], str) or not 1 <= len(photo['update_key']) <= 100):
@@ -176,7 +179,10 @@ class PhotoIndex:
                 if p.get('item_id') == item['id'] and p['kind'] == 'reference' and p['available']), None)
             item['fetch_available'] = False  # Task/grasp gates are not part of the photo milestone.
             goal = item.get('grasp_goal')
-            item['grasp_goal_ready'] = bool(goal) and all(self.image_path(photo_id).is_file() and self.image_path(photo_id).with_suffix('.jpg').is_file() for photo_id in goal.values())
+            goal_photo = next((p for p in value['photos'] if p['id'] == (goal or {}).get('arm')), {})
+            if 'arm_z_mm' in goal_photo:
+                item['calibration_z_mm'] = goal_photo['arm_z_mm']
+            item['grasp_goal_ready'] = 'calibration_z_mm' in item and bool(goal) and all(self.image_path(photo_id).is_file() and self.image_path(photo_id).with_suffix('.jpg').is_file() for photo_id in goal.values())
         value['locations'] = location_records(value, map_id)
         return value
 
@@ -325,6 +331,8 @@ class PhotoIndex:
                 raise ValueError('Measured current-map grasp goal required')
             if not self.image_path(photo_id).is_file() or not self.image_path(photo_id).with_suffix('.jpg').is_file():
                 raise ValueError('Grasp goal images unavailable')
+            if camera == 'arm' and 'arm_z_mm' not in photo:
+                raise ValueError('GOAL Z unavailable; exit TELEOP and recapture GOAL with WebUI arm feedback')
             photo.update(item_id=item_id, association_source='manual')
         item['grasp_goal'] = dict(cameras)
         item.pop('blue_cap_goal', None)

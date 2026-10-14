@@ -688,7 +688,7 @@ class Control:
                 raise RuntimeError('Arm coordinate feedback unavailable')
             return dict(grasp_z_mm=number(coords[2], *LIMITS['Z'], 'Arm Z feedback'))
         elif kind == 'capture_grasp_goal':
-            self.require_arm(False)
+            self.require_arm()
             self.robot.nav.wait_stopped()
             before = wait_arm(self.arm, timeout=3)
             captures = {camera: self.capture(camera, grasp_goal=True)['capture_id'] for camera in ('front', 'arm')}
@@ -959,6 +959,23 @@ class Control:
                 raise RuntimeError('Fresh sensors required during fetch alignment')
 
         try:
+            if not packet.get('preview'):
+                target_z = number(packet['vision_item'].get('calibration_z_mm'),
+                    LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Calibration GOAL Z; recapture GOAL if missing')
+                self.status = 'Moving Z to ARM CALIBRATION GOAL height'
+                self.robot.nav.wait_stopped()
+                for _ in range(30):
+                    current()
+                    with arm_deadline(.4):
+                        coords = self.arm.get_coords_info()
+                    if not coords or len(coords) < 3:
+                        raise RuntimeError('Arm coordinate feedback unavailable')
+                    delta = target_z - number(coords[2], *LIMITS['Z'], 'Arm Z feedback')
+                    if abs(delta) <= .5:
+                        break
+                    self.arm_step('Z', 1 if delta > 0 else -1, pickup=True, distance=min(10, abs(delta)))
+                else:
+                    raise TimeoutError('Arm did not reach calibration GOAL Z')
             for round_index in range(33):
                 current()
                 self.status = 'Round %d: capturing front and arm cameras' % (round_index + 1)
@@ -1030,6 +1047,8 @@ class Control:
         calibration = packet.get('fetch_settings', self.config.get('fetch_calibration'))
         if packet.get('vision_item'):
             calibration = calibration_config(calibration)
+            number(packet['vision_item'].get('calibration_z_mm'), LIMITS['Z'][0] + 5,
+                LIMITS['Z'][1] - 5, 'Calibration GOAL Z; recapture GOAL if missing')
         self.travel_guard(station['base'])
         self.require_arm()
         self.robot.nav.wait_stopped()

@@ -359,6 +359,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 raise ValueError('Save the item before recording its grasp goal')
             if not height_only and 'grasp_z_mm' not in item:
                 raise ValueError('Record the grasp height before saving alignment camera views')
+            if not height_only and editor.hardware.control.get('phase') == 'teleop':
+                raise ValueError('Exit TELEOP before recording GOAL Z and camera views')
             if not height_only and len(photos.value['photos']) > 998:
                 raise ValueError('Photo index needs space for both grasp goal images')
             command = {**data, 'type': 'capture_grasp_height' if height_only else 'capture_grasp_goal', 'expected_revision': data['zone_revision']}
@@ -563,12 +565,12 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if llm_key and not item['reference_photo_id']:
                         raise ValueError('Upload and associate an item reference photo first')
                     if llm_key and not item.get('grasp_goal_ready'):
-                        raise ValueError('Save the arm calibration GOAL before alignment')
+                        raise ValueError('Recapture ARM CALIBRATION GOAL with measured Z before alignment')
                     if kind == 'fetch':
                         link = item['station_link']
                         data = {**data, 'station': link['name'], 'station_digest': link['digest']}
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
-                            'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'],
+                            'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'], calibration_z_mm=item['calibration_z_mm'],
                                                 **({'blue_cap_goal': item['blue_cap_goal']} if item.get('blue_cap_goal') else {})) if llm_key else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):

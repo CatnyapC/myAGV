@@ -9,11 +9,12 @@ import threading
 import time
 import uuid
 
-from navigation import wait_arm
+from navigation import arm_deadline, wait_arm
 from fetch_calibration import vision_image
+from P340.keyboard_control import LIMITS
 from robot_control import Control
 from robot_ros import RobotROS
-from robot_safety import fresh
+from robot_safety import fresh, number
 from web_backend.storage import atomic_bytes, atomic_json
 
 
@@ -45,6 +46,13 @@ def main():
         before = wait_arm(control.arm, timeout=3) if camera_id == 'arm' and control.arm and not teleop_observation else None
         if camera_id == 'arm' and before is None and not teleop_observation:
             raise RuntimeError('Arm feedback required for acquisition')
+        goal_z = None
+        if camera_id == 'arm' and grasp_goal and not teleop_observation:
+            with arm_deadline(.4):
+                coords = control.arm.get_coords_info()
+            if not coords or len(coords) < 3:
+                raise RuntimeError('Arm coordinate feedback unavailable')
+            goal_z = number(coords[2], LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Calibration GOAL Z')
         started, end = time.time(), time.monotonic() + 2
         frame = None
         while time.monotonic() < end:
@@ -63,6 +71,15 @@ def main():
             if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
                 raise RuntimeError('Arm moved during acquisition')
             metadata = dict(metadata, arm_angles_deg=after)
+        if goal_z is not None:
+            with arm_deadline(.4):
+                coords = control.arm.get_coords_info()
+            if not coords or len(coords) < 3:
+                raise RuntimeError('Arm coordinate feedback unavailable')
+            after_z = number(coords[2], LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Arm Z feedback')
+            if abs(after_z - goal_z) > .5:
+                raise RuntimeError('Arm Z moved during GOAL acquisition')
+            metadata = dict(metadata, arm_z_mm=after_z)
         compressed = vision_image(frame, cv2, original_resolution=grasp_goal or update_key is None) if vision or grasp_goal else None
         if vision and update_key is None:
             return dict(image=compressed)
