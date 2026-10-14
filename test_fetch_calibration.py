@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 from navigation import Navigation
 from aiohttp.test_utils import TestClient, TestServer
 
-from fetch_calibration import alignment_command, calibration_config, pickup_delta, qualitative_alignment, vision_image
+from fetch_calibration import alignment_command, calibration_config, measured_arm_alignment, pickup_delta, qualitative_alignment, vision_image
 from test_robot_control import fake_control
 from robot_control import Stopped
 from robot_safety import fresh, number
@@ -367,7 +367,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_arm_goal_labels_and_y_direction(self):
         images = dict(arm='data:image/jpeg;base64,AQ==')
         trace = {}
-        for box, x, y in [([160, 750, 460, 1000], -10, 5), ([360, 865, 640, 1000], 0, -1), ([360, 840, 640, 1000], 0, 0)]:
+        for box, x, y in [([160, 750, 460, 1000], -10, -5), ([360, 865, 640, 1000], 0, .25), ([360, 840, 640, 1000], 0, 0)]:
             with patch('web_backend.resolve.request_json', AsyncMock(return_value=dict(goal=[360, 840, 640, 1000], current=box))):
                 moves = await locate_pickup(images, dict(name='cup', appearance='red'), 'key', images['arm'], [],
                     stage='arm', goal=images['arm'], trace=trace, prompt='Previously saved prompt')
@@ -379,12 +379,26 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn('camera is mounted on the gripper', instruction)
             self.assertIn('x=500, bottom=1000', instruction)
             self.assertTrue(any('GOAL:' in p.get('text', '') for p in trace['messages'][1]['content']))
+            self.assertEqual(trace['measurement']['current'], box)
+            self.assertEqual([v['bounds'] for v in trace['measured_images']], [[360,840,640,1000], box])
         for bad in (dict(x='aligned_perfectly', y='aligned_perfectly'),
                     dict(goal=[420,840,700,1000], current=None),
                     dict(goal=[420,840,700,1000], current=[True,840,700,1000]),
                     dict(goal=[420,840,700,1000], current=[480,840,640,1000])):
             with patch('web_backend.resolve.request_json', AsyncMock(return_value=bad)), self.assertRaises(ValueError):
                 await locate_pickup(images, dict(name='cup', appearance='red'), 'key', images['arm'], [], stage='arm', goal=images['arm'])
+
+    def test_generic_bounds_keep_tight_top_tolerance_and_measured_direction(self):
+        goal = [350,850,650,1000]
+        for top, y in ((845,0), (855,0), (844,-.25), (856,.25), (827,-.25), (780,-5)):
+            with self.subTest(top=top):
+                moves = measured_arm_alignment(dict(goal=goal, current=[350,top,650,1000]), None)
+                self.assertEqual(moves, dict(x_mm=0, y_mm=y, turn_deg=0))
+        self.assertEqual(measured_arm_alignment(dict(goal=[350,400,650,600], current=[350,376,650,576]), None)['y_mm'], -.25)
+        self.assertEqual(measured_arm_alignment(dict(goal=goal, current=[375,850,675,1000]), None)['x_mm'], .25)
+        for current in ([300,850,700,1000], [350,850,650,940], None, [350,True,650,1000]):
+            with self.subTest(current=current), self.assertRaises(ValueError):
+                measured_arm_alignment(dict(goal=goal, current=current), None)
 
     async def test_settings_persist_and_live_round_log_records_request_and_response(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -406,11 +420,12 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 cameras[camera] = photo['id']
             index.save_grasp_goal(item_id, cameras, index.value['revision'], grid['map_id'])
             entered, release = asyncio.Event(), asyncio.Event()
+            provider_result = dict(front='left_large')
 
             async def provider(body, key, timeout):
                 entered.set()
                 await release.wait()
-                return dict(front='left_large')
+                return provider_result
 
             with patch('web_backend.server.load_key', return_value=('configured', 'private-test-key')), patch('web_backend.resolve.request_json', side_effect=provider):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
@@ -440,6 +455,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(forwarded['fetch_settings'], values)
                     self.assertEqual(forwarded['vision_item']['reference_photo_id'], reference['id'])
                     self.assertEqual(forwarded['vision_item']['calibration_z_mm'], 35)
+                    self.assertNotIn('blue_cap_goal', forwarded['vision_item'])
                     self.assertNotIn('goal', forwarded['vision_item'])
                     self.assertNotIn('station', forwarded)
                     command['fetch_revision'] = 0
@@ -471,7 +487,25 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(entry['correction'], dict(X=0, turn_deg=-2))
                     self.assertTrue(entry['messages'][0]['content'].startswith(values['prompt']))
                     entered.clear()
+                    provider_result = dict(goal=[350,850,650,1000], current=[350,844,650,1000])
+                    arm_request = dict(value, id='arm-request', stage='arm', round=2,
+                        item=dict(value['item'], arm_goal_photo_id=cameras['arm']))
+                    atomic_json(bridge / 'fetch_vision_request.json', arm_request)
+                    await asyncio.wait_for(entered.wait(), 2)
+                    for _ in range(40):
+                        log = await (await client.get('/api/fetch-log')).json()
+                        if log['rounds'][-1]['status'] != 'requesting':
+                            break
+                        await asyncio.sleep(.025)
+                    entry = log['rounds'][-1]
+                    self.assertEqual(entry['status'], 'returned')
+                    self.assertEqual(entry['measurement'], provider_result)
+                    self.assertEqual(entry['correction'], dict(X=0, Y=-.25, turn_deg=0))
+                    self.assertEqual([v['label'] for v in entry['measured_images']], ['GOAL','CURRENT'])
+                    self.assertEqual(entry['measured_images'][0]['image'], index.reference_image(cameras['arm']))
+                    entered.clear()
                     release.clear()
+                    provider_result = dict(front='left_large')
                     atomic_json(bridge / 'fetch_vision_request.json', dict(value, id='request-2', round=2))
                     await asyncio.wait_for(entered.wait(), 2)
                     hardware.stop = AsyncMock(return_value=dict(status='completed'))

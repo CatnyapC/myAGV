@@ -223,6 +223,10 @@ Earlier history images are not CURRENT and must not supply its coordinates."""
         from fetch_calibration import measured_arm_alignment
         moves = measured_arm_alignment(result, config)
         aligned = not any(moves.values())
+        if trace is not None:
+            trace.update(measurement=result, measured_images=[
+                dict(label='GOAL', image=goal, bounds=result['goal']),
+                dict(label='CURRENT', image=images['arm'], bounds=result['current'])])
     if trace is not None:
         trace['aligned_perfectly'] = aligned
 

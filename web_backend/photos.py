@@ -85,6 +85,11 @@ class PhotoIndex:
         path = self.directory / 'photo_index.json'
         self.value = json.loads(path.read_text()) if path.exists() else dict(version=1, revision=0, photos=[], items=[])
         self.validate(self.value)
+        if any('blue_cap_goal' in item for item in self.value['items']):
+            value = deepcopy(self.value)
+            for item in value['items']:
+                item.pop('blue_cap_goal', None)
+            self.commit(value)
 
     def validate(self, value):
         if value.get('version') != 1 or type(value.get('revision')) is not int or value['revision'] < 0 or not isinstance(value.get('photos'), list) or not isinstance(value.get('items'), list):
@@ -146,15 +151,6 @@ class PhotoIndex:
                     photo = by_id.get(photo_id, {})
                     if photo.get('kind') != 'observation' or photo.get('source') != 'ros' or photo.get('camera_id') != camera or photo.get('item_id') != item['id']:
                         raise ValueError('Invalid grasp goal camera association')
-            blue = item.get('blue_cap_goal')
-            if blue is not None:
-                box = blue.get('bounds') if isinstance(blue, dict) else None
-                if (not isinstance(blue, dict) or set(blue) != {'photo_id', 'bounds'}
-                        or blue['photo_id'] != (goal or {}).get('arm')
-                        or not isinstance(box, list) or len(box) != 4
-                        or any(type(v) is not int or not 0 <= v <= 1000 for v in box)
-                        or box[0] >= box[2] or box[1] >= box[3] or box[3] < 970):
-                    raise ValueError('Invalid confirmed blue-cap GOAL')
 
     def stations(self):
         return load_stations(self.stations_path)
@@ -215,8 +211,6 @@ class PhotoIndex:
             if item.get('grasp_goal') and any(by_id.get(photo_id, {}).get('item_id') != item['id']
                                              for photo_id in item['grasp_goal'].values()):
                 item.pop('grasp_goal')
-            if item.get('blue_cap_goal', {}).get('photo_id') != item.get('grasp_goal', {}).get('arm'):
-                item.pop('blue_cap_goal', None)
         value['revision'] = self.value['revision'] + 1
         self.validate(value)
         atomic_json(self.directory / 'photo_index.json', value)
@@ -335,18 +329,6 @@ class PhotoIndex:
                 raise ValueError('GOAL Z unavailable; recapture GOAL with measured arm feedback')
             photo.update(item_id=item_id, association_source='manual')
         item['grasp_goal'] = dict(cameras)
-        item.pop('blue_cap_goal', None)
-        self.commit(value)
-
-    def save_blue_cap_goal(self, item_id, measurement, revision):
-        self.check(revision)
-        value = deepcopy(self.value)
-        item = next((i for i in value['items'] if i['id'] == item_id), None)
-        if item is None or not item.get('grasp_goal'):
-            raise ValueError('Saved arm GOAL required for blue-cap alignment')
-        if measurement.get('photo_id') != item['grasp_goal']['arm']:
-            raise ValueError('Blue-cap measurement belongs to another GOAL')
-        item['blue_cap_goal'] = deepcopy(measurement)
         self.commit(value)
 
     def delete(self, photo_id, revision):

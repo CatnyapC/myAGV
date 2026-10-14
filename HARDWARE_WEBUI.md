@@ -147,20 +147,14 @@ A five-minute review timeout cancels the task.
 
 ### Dual-camera Fetch calibration
 
-For the blue salt-can cap, open its item editor and choose **Measure blue-cap
-GOAL**. Check the green box on the saved ARM GOAL, then **Confirm box & use
-blue-cap alignment**. This saves the measured bounds once, tied to that exact
-photo. Recapturing or removing the goal invalidates the saved measurement.
-The base stage still uses the LLM. The arm stage uses local OpenCV blue-cap
-contours instead of model coordinates, with GOAL/CURRENT boxes in ALIGNMENT
-ROUNDS. Hardware measurement shows that logical Y+ moves the cap upward: a cap
-above GOAL therefore commands Y−. One stationary frame within 0.5% top boundary,
-3% horizontal position/bottom boundary and 25% visible width completes alignment;
-no consecutive-frame requirement. Y uses 0.25 mm steps when its top-edge error is
-within 3%, reducing overshoot at the tighter final tolerance.
-Missing or ambiguous blue-cap contours stop the task. This detector is specific
-to the saturated blue salt-can cap, not other items. Install/update the API's
-OpenCV dependency with `uv sync --locked --extra web` before restarting it.
+All items use the same LLM comparison of saved GOAL and current images. The arm
+stage measures the same visible target fragment independently in both images;
+there is no object-specific detector or separate measurement/confirmation step.
+ALIGNMENT ROUNDS shows the returned bounds over GOAL and CURRENT. Logical Y+
+moves the visible target upward, so a target above GOAL commands Y−. One stationary
+frame must match within 0.5% top boundary and 2% horizontal/bottom position, with
+visible width within 10% and area within 15%. Near GOAL, 0.25 mm corrections reduce
+overshoot. Missing or ambiguous targets stop the task.
 
 The arm base mounts facing chassis left; J1=90 faces forward. The arm camera
 mounts 90 degrees clockwise, with the target near the bottom of its image.

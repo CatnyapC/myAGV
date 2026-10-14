@@ -37,8 +37,15 @@ class PhotoIndexTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 index.save_grasp_goal(item_id, {'front': cameras['arm'], 'arm': cameras['front']}, index.value['revision'], 'map')
             index.save_grasp_goal(item_id, cameras, index.value['revision'], 'map')
+            legacy_config = deepcopy(index.value)
+            legacy_config['items'][0].update(grasp_z_mm=-60,
+                blue_cap_goal=dict(photo_id=cameras['arm'], bounds=[400,850,700,1000]))
+            atomic_json(root / 'photo_index.json', legacy_config)
             restarted = PhotoIndex(root, root / 'stations.json')
             item = restarted.snapshot('map')['items'][0]
+            self.assertNotIn('blue_cap_goal', item)
+            self.assertNotIn('blue_cap_goal', json.loads((root / 'photo_index.json').read_text())['items'][0])
+            self.assertEqual(item['grasp_z_mm'], -60)
             self.assertTrue(item['grasp_goal_ready'])
             self.assertEqual(item['calibration_z_mm'], 40)
             self.assertEqual(item['grasp_goal'], cameras)

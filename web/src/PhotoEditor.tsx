@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { ArrowLeft, Camera } from 'lucide-react';
 import { api } from './api';
 import { Button } from './ui';
-import { MeasuredPhoto } from './MeasuredPhoto';
 import type { Photo, PhotoIndex, Stations } from './mapGeometry';
 
 export function StoredPhoto({ photo, onEdit }: { photo: Photo; onEdit: () => void }) {
@@ -45,8 +44,6 @@ export function PhotoEditor(props: {
   const [stationConfirmed, setStationConfirmed] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [bluePreview, setBluePreview] = useState<{ photo_id: string; bounds: number[]; revision: number } | null>(null);
-  useEffect(() => setBluePreview(null), [itemId, props.index.revision]);
   const [describeRequested, setDescribeRequested] = useState<{ name?: string } | null>(props.autoDescribe ? {} : null);
   useEffect(() => { if (!props.enabled) setDescribeRequested(null); }, [props.enabled]);
   useEffect(() => {
@@ -90,18 +87,6 @@ export function PhotoEditor(props: {
           props.onChange(captured); setRevision(captured.revision);
         } else props.onClose();
       }
-    } catch (failure) { setError((failure as Error).message); }
-    finally { setBusy(false); props.onBusy(false); }
-  }
-  async function measureBlueCap(confirmed = false) {
-    if (!props.enabled || busy) return;
-    setBusy(true); props.onBusy(true); setError('');
-    try {
-      const result = await api<PhotoIndex | { photo_id: string; bounds: number[]; revision: number }>(`/api/items/${itemId}/blue-cap-goal`, {
-        method: 'POST', body: JSON.stringify({ expected_revision: revision, confirmed }),
-      });
-      if ('photos' in result) { props.onChange(result); setRevision(result.revision); setBluePreview(null); }
-      else setBluePreview(result);
     } catch (failure) { setError((failure as Error).message); }
     finally { setBusy(false); props.onBusy(false); }
   }
@@ -155,14 +140,8 @@ export function PhotoEditor(props: {
               : editingItem?.grasp_goal ? editingItem.calibration_z_mm == null ? 'Saved GOAL lacks Z; recapture both cameras.' : 'Saved views unavailable; capture both cameras again.' : 'No alignment goal saved yet.'}</span>
             {editingItem?.grasp_goal && <div className="grasp-goal-views">{(['front', 'arm'] as const).map(camera => {
               const goalPhoto = props.index.photos.find(p => p.id === editingItem.grasp_goal?.[camera]);
-              const measured = bluePreview ?? editingItem.blue_cap_goal;
-              return goalPhoto?.available && <figure key={camera}><MeasuredPhoto src={goalPhoto.image_url} alt={`${camera} correct grasp goal`}
-                bounds={camera === 'arm' && measured?.photo_id === goalPhoto.id ? measured.bounds : undefined} /><figcaption>{camera.toUpperCase()} GOAL</figcaption></figure>;
+              return goalPhoto?.available && <figure key={camera}><img src={goalPhoto.image_url} alt={`${camera} correct grasp goal`} /><figcaption>{camera.toUpperCase()} GOAL</figcaption></figure>;
             })}</div>}
-            <Button disabled={!props.enabled || busy || !editingItem?.grasp_goal_ready} onClick={() => void measureBlueCap()}>Measure blue-cap GOAL</Button>
-            {bluePreview && <><span className="muted">Check that the green box encloses only the blue cap fragment in ARM GOAL.</span>
-              <Button disabled={!props.enabled || busy} onClick={() => void measureBlueCap(true)}>Confirm box & use blue-cap alignment</Button></>}
-            <span className="muted">{editingItem?.blue_cap_goal ? 'Blue-cap alignment enabled. Fixed GOAL; local camera measurements; one matching frame completes alignment.' : 'For the blue salt-can cap only. Measure and confirm its box to enable local alignment.'}</span>
           </>}
         </>}
         {error && <span role="alert" className="muted">{error}</span>}

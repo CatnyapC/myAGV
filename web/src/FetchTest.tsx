@@ -95,13 +95,13 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">Stage 1: front midpoint within 45–55%; base only. Stage 2: base locked, arm X/Y match GOAL. Confirmed blue-cap items use local camera measurements and fixed GOAL bounds: one frame within 0.5% top edge, 3% horizontal/bottom position and 25% width completes alignment. Near GOAL, Y uses 0.25 mm steps. Other items use LLM bounds. Missing or ambiguous targets stop with an error.</span>
+    <span className="muted">Stage 1: front midpoint within 45–55%; base only. Stage 2: base locked, arm X/Y match the same visible item fragment in GOAL. All items use LLM bounds: top edge within 0.5%, horizontal/bottom position within 2%, width within 10% and visible area within 15%. Near GOAL, corrections use 0.25 mm steps. Missing or ambiguous targets stop with an error.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
-    <span className="muted">Preview: one coarse-alignment round, no movement. ALIGN first restores ARM GOAL Z within 0.5 mm, then runs both stages with Z fixed. Gripper stays fixed. Blue cap above GOAL: Y−; below: Y+. Up to 33 observations; no cumulative arm travel cap.</span>
+    <span className="muted">Preview: one coarse-alignment round, no movement. ALIGN first restores ARM GOAL Z within 0.5 mm, then runs both stages with Z fixed. Gripper stays fixed. Target above GOAL: Y−; below: Y+. Up to 33 observations; no cumulative arm travel cap.</span>
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
