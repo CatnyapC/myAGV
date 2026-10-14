@@ -1,4 +1,5 @@
 import array
+import ast
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +37,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
     def test_preview_allows_off_axis_pose_but_alignment_requires_front_pose(self):
         c = fake_control()
         c.calibrate_fetch = Mock()
+        c.localized = False
         packet = dict(type='fetch_test', preview=True, fetch_settings={})
         with patch('robot_control.wait_arm', return_value=[92.64, 3.65, 49.35, 92.64]):
             c.execute(packet)
@@ -52,6 +54,35 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             c.calibrate_fetch.assert_not_called()
         c.arm.set_coords.assert_not_called()
         c.arm.set_angles.assert_not_called()
+
+    def test_local_rotation_keeps_safety_checks_without_pose_confirmation(self):
+        c = fake_control()
+        c.localized = False
+        with self.assertRaisesRegex(RuntimeError, 'confirm localization'):
+            c.travel_guard({})
+        c.robot.nav.get_odom_pose.side_effect = [dict(x_m=0, y_m=0, yaw_deg=0),
+            dict(x_m=0, y_m=0, yaw_deg=0), dict(x_m=0, y_m=0, yaw_deg=-2)]
+        with patch('robot_control.time.sleep'):
+            c.turn_fetch(2, local_alignment=True)
+        self.assertEqual(c.robot.velocity[:2], (0, 0))
+        self.assertLess(c.robot.velocity[2], 0)
+        c.robot.exclusive = False
+        with self.assertRaisesRegex(RuntimeError, 'exclusive output'):
+            c.travel_guard({}, local_alignment=True)
+        self.assertFalse(c.localized)
+
+    def test_local_camera_still_requires_stopped_hardware(self):
+        source = ast.parse(Path('ros_web_bridge.py').read_text())
+        main = next(node for node in source.body if isinstance(node, ast.FunctionDef) and node.name == 'main')
+        capture = next(node for node in main.body if isinstance(node, ast.FunctionDef) and node.name == 'capture')
+        namespace = dict(control=SimpleNamespace(localized=False), robot=SimpleNamespace(grid={'map_id': 'map'},
+            nav=SimpleNamespace(wait_stopped=Mock(side_effect=RuntimeError('standstill check')))))
+        exec(compile(ast.Module(body=[capture], type_ignores=[]), 'ros_web_bridge.py', 'exec'), namespace)
+        with self.assertRaisesRegex(RuntimeError, 'standstill check'):
+            namespace['capture']('arm', vision=True)
+        for kwargs in ({}, dict(grasp_goal=True), dict(vision=True, update_key='map-update')):
+            with self.assertRaisesRegex(ValueError, 'localization'):
+                namespace['capture']('arm', **kwargs)
 
     def test_visual_labels_convert_to_bounded_moves(self):
         for size, step, arm_step in (('large', 2, 10), ('medium', 1, 5), ('small', .5, 1)):
@@ -209,7 +240,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([r['stage'] for r in requests], ['base', 'base', 'arm', 'arm', 'arm'])
             self.assertEqual(requests[2]['history'], [])
             self.assertEqual(c.capture.call_args_list, [call('front', vision=True)] * 2 + [call('arm', vision=True)] * 3)
-            c.turn_fetch.assert_called_once_with(1, calibration_config(None))
+            c.turn_fetch.assert_called_once_with(1, calibration_config(None), local_alignment=False)
             self.assertEqual(c.arm_step.call_args_list, [call('X', 1, pickup=True, distance=1)] * 10 + [call('Y', -1, pickup=True, distance=1)] * 10 + [call('X', 1, pickup=True, distance=1), call('Y', -1, pickup=True, distance=1)])
             self.assertFalse(list(c.directory.iterdir()))
             results = iter([dict(x_mm=1, turn_deg=0)])

@@ -35,7 +35,8 @@ def main():
         return dict(x_m=p.x, y_m=p.y, yaw_rad=math.atan2(2*(q.w*q.z+q.x*q.y), 1-2*(q.y*q.y+q.z*q.z)))
 
     def capture(camera_id, persist=True, update_key=None, vision=False, grasp_goal=False, teleop_observation=False):
-        if camera_id not in ('front', 'arm') or not robot.grid or not control.localized:
+        if (camera_id not in ('front', 'arm') or not robot.grid
+                or (not control.localized and not (vision and update_key is None))):
             raise ValueError('Camera and confirmed localization required')
         robot.nav.wait_stopped()
         if teleop_observation and control.phase != 'teleop':

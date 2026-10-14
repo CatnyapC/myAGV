@@ -202,8 +202,10 @@ normal Fetch; both test buttons save edits before starting. Settings persist in
 `web_runtime/fetch_settings.json`. Preview one round captures current views and
 requests a suggestion without moving. Align here runs the same bounded alignment
 from the current arm pose, with no navigation or gripper command. Both need a
-localized, homed arm at J1=90 and a selected item with saved GOAL views. Testing
-does not require a station association.
+homed arm at J1=90 and a selected item with saved GOAL views. These local tests
+need no map-pose confirmation or station association. Fresh sensors, stationary
+acquisition, current map/no-go revisions and rotation clearance checks still
+apply. Normal Fetch/navigation still requires confirmed localization.
 
 LLM ROUNDS displays each round's GOAL, chronological history and current input
 photos, actual sent prompt/item/limits, raw returned JSON, limited suggestion,

@@ -614,7 +614,7 @@ export function App() {
           reasons={[
             ...(!connected ? ['Reconnect to the robot'] : state?.phase !== 'idle' ? [`Robot busy (${state?.phase}); wait for completion`] : busy ? ['Wait for the current operation'] : []),
             ...(state?.demo !== false ? ['Live hardware required'] : []),
-            ...(!state?.hardware?.arm_homed || !state.hardware.localized ? ['Home arm and confirm localization'] : []),
+            ...(!state?.hardware?.arm_homed ? ['Home arm, or confirm already homed'] : []),
             ...(state?.llm?.status !== 'configured' ? ['LLM not configured'] : []),
             ...(!selectedItem?.reference_photo_id ? ['Select an item with an uploaded reference photo'] : []),
             ...(!selectedItem?.grasp_goal_ready ? ['Save the arm calibration GOAL'] : []),

@@ -313,7 +313,7 @@ class Control:
         self.read_arm()
         self.arm_error = ''
 
-    def travel_guard(self, pose):
+    def travel_guard(self, pose, local_alignment=False):
         if getattr(self.robot, 'map_save_error', ''):
             raise RuntimeError('Map storage failed: ' + self.robot.map_save_error)
         if not lease_valid(self.deadline, time.monotonic()) or self.stop_pending:
@@ -329,7 +329,7 @@ class Control:
                 self.robot.nav.client.cancel_all_goals()
             if update['pause_requested']:
                 raise UpdatePaused()
-        if not self.localized:
+        if not self.localized and not local_alignment:
             raise RuntimeError('Set and confirm localization first')
         if not self.robot.driver_watchdog or not self.robot.exclusive or not self.robot.sensors_ready():
             raise RuntimeError('Chassis watchdog, exclusive output and fresh sensors required')
@@ -703,8 +703,8 @@ class Control:
             self.turn_fetch(config['turn_step_deg'] * {'s': .25, 'm': .5, 'l': 1}[size], config)
         elif kind == 'fetch_test':
             self.require_arm()
-            if not self.localized or type(packet.get('preview')) is not bool:
-                raise ValueError('Confirmed localization and explicit test mode required')
+            if type(packet.get('preview')) is not bool:
+                raise ValueError('Explicit test mode required')
             self.robot.nav.wait_stopped()
             angles = wait_arm(self.arm, timeout=3)
             if not packet['preview']:
@@ -904,7 +904,7 @@ class Control:
             request_path.unlink(missing_ok=True)
             response_path.unlink(missing_ok=True)
 
-    def turn_fetch(self, degrees, config=None):
+    def turn_fetch(self, degrees, config=None, local_alignment=False):
         config = calibration_config(config)
         number(degrees, -2, 2, 'Fetch base turn')
         self.robot.nav.wait_stopped()
@@ -919,7 +919,7 @@ class Control:
                 pose = self.robot.nav.get_odom_pose()
                 if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
                     raise Stopped('Map or no-go zones changed during fetch rotation')
-                self.travel_guard(self.robot.nav.get_pose())
+                self.travel_guard(self.robot.nav.get_pose(), local_alignment=local_alignment)
                 error = math.atan2(math.sin(target - math.radians(pose['yaw_deg'])),
                                    math.cos(target - math.radians(pose['yaw_deg'])))
                 if abs(error) <= math.radians(.15) or error * degrees >= 0:
@@ -1005,7 +1005,7 @@ class Control:
                         raise ValueError('Fetch rotation budget exhausted')
                     current()
                     self.status = 'Aligning left/right with base rotation'
-                    self.turn_fetch(moves['turn_deg'], config)
+                    self.turn_fetch(moves['turn_deg'], config, local_alignment=packet.get('type') == 'fetch_test')
                     moves['X'] = 0  # Rotation changes the arm view; recapture before advancing.
                 for axis, delta in [('X', moves['X']), ('Y', moves.get('Y', 0))]:
                     remaining = abs(delta)
