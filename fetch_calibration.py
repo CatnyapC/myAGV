@@ -88,18 +88,20 @@ def measured_arm_alignment(result, config, blue_cap=False):
     # Measured on hardware: logical Y+ moves the blue cap upward in the image.
     y = current[1] - goal[1] if blue_cap else height - goal_height
     tolerance = 30 if blue_cap else 20
+    top_tolerance = 5 if blue_cap else 20
     width_ratio = (current[2] - current[0]) / (goal[2] - goal[0])
     area_ratio = width_ratio * height / goal_height
-    if abs(x) <= tolerance and abs(y) <= tolerance and (abs(width_ratio - 1) > (.25 if blue_cap else .10)
+    if abs(x) <= tolerance and abs(y) <= top_tolerance and (abs(width_ratio - 1) > (.25 if blue_cap else .10)
             or (not blue_cap and abs(area_ratio - 1) > .15)
-            or abs(current[1] - goal[1]) > tolerance or abs(current[3] - goal[3]) > tolerance):
+            or abs(current[1] - goal[1]) > top_tolerance or abs(current[3] - goal[3]) > tolerance):
         raise ValueError('Arm GOAL size or pose still differs; correction direction unclear')
-    def step(error):
-        if abs(error) <= tolerance:
+    def step(error, threshold):
+        if abs(error) <= threshold:
             return 0
-        size = 10 if abs(error) > 150 else 5 if abs(error) > 60 else 1
+        size = .25 if blue_cap and abs(error) <= 30 else 1
+        size = 10 if abs(error) > 150 else 5 if abs(error) > 60 else size
         return math.copysign(min(config['max_step_mm'], size), error)
-    return dict(x_mm=step(x), y_mm=step(y), turn_deg=0)
+    return dict(x_mm=step(x, tolerance), y_mm=step(y, top_tolerance), turn_deg=0)
 
 
 def pickup_delta(axis, delta):

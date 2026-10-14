@@ -67,9 +67,15 @@ class BlueCapTest(unittest.TestCase):
 
     def test_single_frame_tolerance_and_size_guard(self):
         goal = [400, 850, 700, 1000]
-        close = [420, 830, 740, 990]
+        close = [420, 845, 740, 990]
         self.assertFalse(any(measured_arm_alignment(dict(goal=goal, current=close), {}, blue_cap=True).values()))
         self.assertTrue(any(measured_arm_alignment(dict(goal=goal, current=close), {}).values()))
+        for top, correction in ((845, 0), (855, 0), (844, -.25), (856, .25), (827, -.25)):
+            with self.subTest(top=top):
+                moves = measured_arm_alignment(dict(goal=goal, current=[400, top, 700, 1000]), {}, blue_cap=True)
+                self.assertEqual(moves['y_mm'], correction)
+        previous_finish = dict(goal=[417, 840, 705, 1000], current=[445, 817, 734, 1000])
+        self.assertEqual(measured_arm_alignment(previous_finish, {}, blue_cap=True), dict(x_mm=0, y_mm=-.25, turn_deg=0))
         for current in ([400, 850, 700, 940], [340, 850, 760, 1000]):
             with self.assertRaises(ValueError):
                 measured_arm_alignment(dict(goal=goal, current=current), {}, blue_cap=True)

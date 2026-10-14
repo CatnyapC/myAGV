@@ -95,7 +95,7 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">Stage 1: front midpoint within 45–55%; base only. Stage 2: base locked, arm X/Y match GOAL. Confirmed blue-cap items use local camera measurements and fixed GOAL bounds: one frame within 3% position and 25% width completes alignment. Other items use LLM bounds. Missing or ambiguous targets stop with an error.</span>
+    <span className="muted">Stage 1: front midpoint within 45–55%; base only. Stage 2: base locked, arm X/Y match GOAL. Confirmed blue-cap items use local camera measurements and fixed GOAL bounds: one frame within 0.5% top edge, 3% horizontal/bottom position and 25% width completes alignment. Near GOAL, Y uses 0.25 mm steps. Other items use LLM bounds. Missing or ambiguous targets stop with an error.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>

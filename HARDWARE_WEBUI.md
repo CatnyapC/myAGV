@@ -154,8 +154,10 @@ photo. Recapturing or removing the goal invalidates the saved measurement.
 The base stage still uses the LLM. The arm stage uses local OpenCV blue-cap
 contours instead of model coordinates, with GOAL/CURRENT boxes in ALIGNMENT
 ROUNDS. Hardware measurement shows that logical Y+ moves the cap upward: a cap
-above GOAL therefore commands Y−. One stationary frame within 3% horizontal position, top/bottom boundaries
-and 25% visible width completes alignment; no consecutive-frame requirement.
+above GOAL therefore commands Y−. One stationary frame within 0.5% top boundary,
+3% horizontal position/bottom boundary and 25% visible width completes alignment;
+no consecutive-frame requirement. Y uses 0.25 mm steps when its top-edge error is
+within 3%, reducing overshoot at the tighter final tolerance.
 Missing or ambiguous blue-cap contours stop the task. This detector is specific
 to the saturated blue salt-can cap, not other items. Install/update the API's
 OpenCV dependency with `uv sync --locked --extra web` before restarting it.
