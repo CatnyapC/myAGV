@@ -1,5 +1,6 @@
 import { useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { ShieldCheck } from 'lucide-react';
 import { Button } from './ui';
 import type { ObservationPoint, Origin, Stations } from './mapGeometry';
 
@@ -10,6 +11,23 @@ export type HeldInput = { mode: string; key: string } | null;
 type Props = { stations: Stations; state?: HardwareState; connected: boolean; goal: Origin | null;
   command: (type: string, values?: Record<string, unknown>) => Promise<void>;
   hold: (input: HeldInput) => void; stop: () => void };
+
+export function StopRecovery({ state, connected, command }: Pick<Props, 'state' | 'connected' | 'command'>) {
+  const [pending, setPending] = useState(false);
+  if (state?.phase !== 'fault' && state?.phase !== 'recovering_stop') return null;
+  const checking = pending || state.phase === 'recovering_stop';
+  const description = `Verify base, wheels and arm are stopped. Click to clear fault. Fresh feedback required; homing resets. Previous task stays stopped.\n${state.status}${state.arm_error ? ` · ${state.arm_error}` : ''}`;
+  return <>
+    <span className="sr-only" role="alert">Stop unconfirmed · motion locked</span>
+    <Button variant="ghost" className="icon stop-recovery" aria-label={checking ? 'Validating stop' : 'Validate stop and clear fault'}
+      title={checking ? 'Validating stopped hardware…' : description} aria-description={description} aria-busy={checking}
+      disabled={!connected || checking} onClick={async () => {
+        setPending(true);
+        try { await command('recover_stop', { confirmed: true }); }
+        finally { setPending(false); }
+      }}><ShieldCheck size={16} /></Button>
+  </>;
+}
 
 export function HardwareControls({ stations, state, connected, goal, command, hold, stop }: Props) {
   const [mode, setMode] = useState('BASE');
@@ -37,16 +55,12 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     {state?.phase === 'teleop' && <div role="status"><strong>TELEOP controls hardware</strong><p>Item Z and GOAL recording remain available. Exit TELEOP to resume WebUI motion; stopped feedback is verified automatically.</p></div>}
     {confirmation && <div role="alertdialog" aria-label="Confirm hardware action">
       <p>{confirmation.message}</p>
-      <Button disabled={confirming || !connected || (!idle && !(state?.phase === 'fault' && confirmation.type === 'recover_stop'))} onClick={async () => {
+      <Button disabled={confirming || !connected || !idle} onClick={async () => {
         setConfirming(true);
         try { await command(confirmation.type, confirmation.values); }
         finally { setConfirming(false); setConfirmation(null); }
       }}>{confirming ? 'Checking…' : 'Confirm'}</Button>
       <Button disabled={confirming} onClick={() => setConfirmation(null)}>Cancel</Button>
-    </div>}
-    {state?.phase === 'fault' && <div role="alert"><strong>Stop unconfirmed · motion locked</strong>
-      <p>{state.status}{state.arm_error && ` · ${state.arm_error}`}</p>
-      <Button disabled={confirming || !connected} onClick={() => setConfirmation({ type: 'recover_stop', values: { confirmed: true }, message: 'Have you physically verified that the base, wheels and arm have stopped? Any latched motor overcurrent will be reset with zero motion. Fresh base and arm feedback is required to clear the fault. Homing confirmation will be reset. The previous task will not resume.' })}>Verify stopped and clear fault</Button>
     </div>}
     <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Pose confirmed ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
     {!state?.mapping_mode && <div className="action-line">

@@ -88,6 +88,10 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .panel-title { font-size: 11px; letter-spacing: .08em; font-weight: 750; display: flex; flex: 1; align-items: center; height: 100%; user-select: none; }
 .layout-editing .panel-title { cursor: grab; color: var(--cyan-11); }
 .panel-tools { display: flex; align-items: center; gap: 4px; }
+.button.stop-recovery { color: var(--orange-11); background: var(--orange-3); animation: stop-recovery-pulse 2s ease-in-out infinite; }
+.button.stop-recovery:disabled { animation: none; }
+@keyframes stop-recovery-pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--orange-4); border-color: var(--orange-6); } 50% { box-shadow: 0 0 0 4px var(--orange-3); border-color: var(--orange-9); } }
+@media (prefers-reduced-motion: reduce) { .button.stop-recovery { animation: none; border-color: var(--orange-8); } }
 .map-tools { display: flex; align-items: center; justify-content: space-between; padding: 3px 7px 3px 12px; height: 40px; flex-shrink: 0; border-bottom: 1px solid var(--gray-6); gap: 5px; }
 .toolbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .map-tools .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

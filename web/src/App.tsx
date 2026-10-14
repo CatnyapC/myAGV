@@ -8,7 +8,7 @@ import { type ItemLocation, type MapInfo, type Navigation, type ObservationPoint
 import { Button } from './ui';
 import { BatteryStatus } from './BatteryStatus';
 import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
-import { HardwareControls, MapUpdateControls, type HardwareState, type HeldInput } from './HardwareControls';
+import { HardwareControls, MapUpdateControls, StopRecovery, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { FetchTest } from './FetchTest';
 import { LLMTurns } from './LLMTurns';
@@ -690,7 +690,8 @@ export function App() {
           : state?.phase === 'fault' ? 'In OPERATE, verify stopped hardware and clear the fault, then confirm Already homed.'
           : state?.phase !== 'idle' ? 'Finish or stop the current action before recording.'
           : !state?.hardware?.arm_available ? 'P340 feedback unavailable; reconnect the arm.' : ''}
-        onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} onLog={log} />}</div>)}
+        onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} onLog={log} />}</div>,
+        state?.demo === false && <StopRecovery state={state.hardware} connected={connected} command={hardwareCommand} />)}
       {panel('llm', <LLMTurns connected={connected} onLog={log} />)}
     </main>
     <div className="panel-dividers">
