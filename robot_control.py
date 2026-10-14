@@ -403,30 +403,38 @@ class Control:
         self.require_arm()
         number(value, 0, 100, 'Gripper value')
         with arm_deadline(.4):
-            self.arm.set_gripper_state(value, 500)
+            # Use the documented P340 frame; newer SDKs append a second M-code.
+            with self.arm.lock:
+                self.arm._serial_port.write(('M25 A%s F500\r' % value).encode())
+                self.arm._serial_port.flush()
+                self.arm._respone()
         time.sleep(1.5)
 
-    def arm_step(self, axis, direction, pickup=False, distance=1):
+    def arm_step(self, axis, direction, pickup=False, distance=1, guard=None):
         self.require_arm()
         if axis not in LIMITS or direction not in (-1, 1):
             raise ValueError('Invalid arm step')
-        number(distance, .001, (10 if axis == 'Z' else 20) if pickup else 1, 'Arm step distance')
+        number(distance, .001, (LIMITS['Z'][1] - LIMITS['Z'][0] - 10 if axis == 'Z' else 20) if pickup else 1, 'Arm step distance')
         with arm_deadline(.4):
             coords = self.arm.get_coords_info()
         if not coords or len(coords) < 3 or not all(type(v) in (float, int) and math.isfinite(v) for v in coords[:3]):
             raise RuntimeError('Arm coordinate feedback unavailable')
-        coords = list(coords[:3])
+        coords = list(coords[:4])
+        if len(coords) == 4:
+            number(coords[3], -180, 180, 'Arm fourth-axis feedback')
         if pickup and (coords[1] <= 5 or abs(math.degrees(math.atan2(coords[1], coords[0])) - 90) > 15):
             raise ValueError('Pickup arm must face forward near J1=90')
         delta = pickup_delta(axis, direction * distance) if pickup else tuple(
             direction * distance if a == axis else 0 for a in 'XYZ')
-        coords = [value + step for value, step in zip(coords, delta)]
+        coords[:3] = [value + step for value, step in zip(coords[:3], delta)]
         if any(not LIMITS[a][0] + 5 <= coords[i] <= LIMITS[a][1] - 5 for i, a in enumerate('XYZ')) or (pickup and coords[1] <= 5):
             raise ValueError('Arm workspace limit')
         if pickup and abs(math.degrees(math.atan2(coords[1], coords[0])) - 90) > 15:
             raise ValueError('Pickup target must face forward near J1=90')
         if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
             raise Stopped('Arm step cancelled or lease expired')
+        if guard:
+            guard()
         with arm_deadline(.4):
             self.arm.set_mode(0)
             self.arm.set_coords(coords, 30)
@@ -435,15 +443,36 @@ class Control:
         while time.monotonic() < end:
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
                 raise Stopped('Arm step cancelled or lease expired')
+            if guard:
+                guard()
             with arm_deadline(.4):
                 actual = self.arm.get_coords_info()
-            if actual and len(actual) >= 3 and all(type(a) in (int, float) and math.isfinite(a)
+            if actual and len(actual) >= len(coords) and all(type(a) in (int, float) and math.isfinite(a)
                     and abs(a-b) <= (1 if pickup and axis == 'Z' and i == 2 else .5)
-                    for i, (a, b) in enumerate(zip(actual[:3], coords))):
+                    for i, (a, b) in enumerate(zip(actual[:len(coords)], coords))):
                 self.read_arm()
                 return
             time.sleep(.05)
         raise TimeoutError('Arm step did not reach its measured target: target=%s actual=%s' % (coords, actual))
+
+    def move_pickup_z(self, target_z, current):
+        target_z = number(target_z, LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Pickup target Z')
+        current()
+        with arm_deadline(.4):
+            coords = self.arm.get_coords_info()
+        if not coords or len(coords) < 3:
+            raise RuntimeError('Arm coordinate feedback unavailable')
+        delta = target_z - number(coords[2], *LIMITS['Z'], 'Arm Z feedback')
+        if abs(delta) > 1:
+            self.arm_step('Z', 1 if delta > 0 else -1, pickup=True, distance=abs(delta), guard=current)
+            current()
+            with arm_deadline(.4):
+                coords = self.arm.get_coords_info()
+            if not coords or len(coords) < 3:
+                raise RuntimeError('Arm coordinate feedback unavailable')
+            if abs(target_z - number(coords[2], *LIMITS['Z'], 'Arm Z feedback')) > 1:
+                raise TimeoutError('Arm did not reach pickup target Z')
+        current()
 
     def finish(self, packet, result):
         command_id = packet['id']
@@ -1022,20 +1051,7 @@ class Control:
                     LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Calibration GOAL Z; recapture GOAL if missing')
                 self.status = 'Moving Z to ARM CALIBRATION GOAL height'
                 self.robot.nav.wait_stopped()
-                for _ in range(30):
-                    current()
-                    with arm_deadline(.4):
-                        coords = self.arm.get_coords_info()
-                    if not coords or len(coords) < 3:
-                        raise RuntimeError('Arm coordinate feedback unavailable')
-                    delta = target_z - number(coords[2], *LIMITS['Z'], 'Arm Z feedback')
-                    print(json.dumps(dict(event='alignment_z', time_s=time.time(), task_id=self.task_id,
-                        target_z_mm=target_z, actual_z_mm=coords[2], reached=abs(delta) <= 1)), flush=True)
-                    if abs(delta) <= 1:
-                        break
-                    self.arm_step('Z', 1 if delta > 0 else -1, pickup=True, distance=min(10, abs(delta)))
-                else:
-                    raise TimeoutError('Arm did not reach calibration GOAL Z')
+                self.move_pickup_z(target_z, current)
             for round_index in range(33):
                 current()
                 self.status = 'Round %d: capturing front and arm cameras' % (round_index + 1)
@@ -1165,19 +1181,6 @@ class Control:
             if not self.robot.sensors_ready():
                 raise RuntimeError('Fresh sensors required during grasp / place test')
 
-        def move_z(target):
-            for _ in range(30):
-                current()
-                with arm_deadline(.4):
-                    actual = self.arm.get_coords_info()
-                if not actual or len(actual) < 3:
-                    raise RuntimeError('Arm coordinate feedback unavailable')
-                delta = target - number(actual[2], *LIMITS['Z'], 'Arm Z feedback')
-                if abs(delta) <= 1:
-                    return
-                self.arm_step('Z', 1 if delta > 0 else -1, pickup=True, distance=min(10, abs(delta)))
-            raise TimeoutError('Arm did not reach grasp / place test Z')
-
         self.phase = 'grasp_testing'
         try:
             current()
@@ -1185,7 +1188,7 @@ class Control:
                 self.status = 'Grasp test: opening gripper'
                 self.grip(100)
             self.status = 'Place test: lowering item' if hold else 'Grasp test: lowering to grasp height'
-            move_z(grasp_z)
+            self.move_pickup_z(grasp_z, current)
             current()
             if hold:
                 self.status = 'Place test: releasing item'
@@ -1200,7 +1203,7 @@ class Control:
                 self.status = 'Grasp test: clamping item'
                 self.grip(0)
             self.status = 'Place test: restoring starting height' if hold else 'Grasp test: lifting and holding item'
-            move_z(start_z)
+            self.move_pickup_z(start_z, current)
             current()
         finally:
             self.base_enabled = False

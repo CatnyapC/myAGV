@@ -28,16 +28,47 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
+    def test_grasp_wire_commands_keep_clamp_and_send_one_full_target_per_move(self):
+        from pymycobot.ultraArmP340 import ultraArmP340
+        from pymycobot.error import calibration_parameters
+        c = fake_control()
+        coords, frames = [0,150,100,27], []
+        arm = ultraArmP340.__new__(ultraArmP340)
+        arm.lock, arm.debug, arm.calibration_parameters = threading.Lock(), False, calibration_parameters
+        arm._serial_port, arm._respone = Mock(), Mock()
+        arm.get_coords_info = Mock(side_effect=lambda: list(coords))
+        c.arm, c.read_arm = arm, Mock()
+
+        def write(frame):
+            frames.append(frame)
+            if frame.startswith(b'G0 '):
+                values = {part[0]: float(part[1:]) for part in frame.decode().split()[1:]}
+                coords[:] = [values[axis] for axis in 'XYZE']
+
+        arm._serial_port.write.side_effect = write
+        packet = dict(type='grasp_test', item_id='cup', action='grasp', grasp_z_mm=-62.28)
+        with patch('robot_control.wait_arm', return_value=[90,10,20]), \
+             patch('robot_control.arm_deadline', return_value=nullcontext()), \
+             patch('robot_control.time.sleep'), patch('robot_control.atomic_json'):
+            c.execute(packet)
+            self.assertEqual(frames, [b'M25 A100 F500\r', b'G90\r',
+                b'G0 X0 Y150 Z-62.28 E27 F30\r', b'M25 A0 F500\r', b'G90\r',
+                b'G0 X0.0 Y150.0 Z100.0 E27.0 F30\r'])
+            frames.clear()
+            c.execute(dict(packet, action='place'))
+            self.assertEqual(frames, [b'G90\r', b'G0 X0.0 Y150.0 Z-62.28 E27.0 F30\r',
+                b'M25 A100 F500\r', b'G90\r', b'G0 X0.0 Y150.0 Z100.0 E27.0 F30\r'])
+
     def test_grasp_holds_until_separate_place_even_after_config_reload(self):
         c = fake_control()
-        coords, actions = [0, 150, 35], []
+        coords, actions = [0, 150, 100, 27], []
         c.arm.get_coords_info.side_effect = lambda: list(coords)
         c.read_arm = Mock()
         c.localized = False
 
         def move(target, speed):
             self.assertEqual(target[:2], [0, 150])
-            self.assertLessEqual(abs(target[2] - coords[2]), 10)
+            self.assertEqual(target[3], 27)
             coords[:] = target
             actions.append(('z', target[2]))
 
@@ -48,23 +79,32 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             c.config_path = Path(folder) / 'robot_config.json'
             packet = dict(type='grasp_test', item_id='cup', action='grasp', grasp_z_mm=12.5)
             self.assertEqual(c.execute(packet), {})
-            self.assertEqual(actions, [('grip', 100), ('z', 25), ('z', 15), ('z', 12.5),
-                ('grip', 0), ('z', 22.5), ('z', 32.5), ('z', 35)])
+            self.assertEqual(actions, [('grip', 100), ('z', 12.5), ('grip', 0), ('z', 100)])
             self.assertEqual(c.snapshot()['grasp_test_item_id'], 'cup')
             self.assertTrue(c.snapshot()['grasp_test_toggle_available'])
-            self.assertEqual(coords, [0, 150, 35])
+            self.assertEqual(coords, [0, 150, 100, 27])
             c.config = json.loads(c.config_path.read_text())
             actions.clear()
             self.assertEqual(c.execute(dict(packet, action='place', grasp_z_mm=999)), {})
-            self.assertEqual(actions, [('z', 25), ('z', 15), ('z', 12.5), ('grip', 100),
-                ('z', 22.5), ('z', 32.5), ('z', 35)])
+            self.assertEqual(actions, [('z', 12.5), ('grip', 100), ('z', 100)])
             self.assertIsNone(c.snapshot()['grasp_test_item_id'])
             self.assertNotIn('grasp_test_hold', json.loads(c.config_path.read_text()))
-        self.assertEqual(coords, [0, 150, 35])
+        self.assertEqual(coords, [0, 150, 100, 27])
         self.assertFalse(c.base_enabled)
         c.capture.assert_not_called()
         c.robot.nav.go_to.assert_not_called()
         c.arm.set_angles.assert_not_called()
+
+    def test_full_z_travel_checks_guard_without_issuing_intermediate_targets(self):
+        c = fake_control()
+        c.arm.get_coords_info.side_effect = [[0,150,100,27], [0,150,100,27], [0,150,50,27]]
+        guard = Mock(side_effect=[None, None, None, Stopped('Map changed during travel')])
+        with patch('robot_control.arm_deadline', return_value=nullcontext()), \
+             patch('robot_control.time.sleep'), self.assertRaises(Stopped):
+            c.move_pickup_z(-62.28, guard)
+        c.arm.set_coords.assert_called_once_with([0,150,-62.28,27], 30)
+        c.arm.set_gripper_state.assert_not_called()
+        c.arm.set_gripper_release.assert_not_called()
 
     def test_grasp_place_rejects_invalid_heights_feedback_and_pose_before_gripping(self):
         for target, feedback, angles, error in ((None, [0,150,35], [90,10,20], ValueError),
@@ -467,7 +507,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 c.capture.side_effect = capture
                 with self.assertRaisesRegex(RuntimeError, 'height verified before vision'):
                     c.calibrate_fetch(dict(vision_item=dict(calibration_z_mm=40)), None)
-                self.assertEqual(c.arm_step.call_count, 3 if start_z in (10, 65) else 0)
+                self.assertEqual(c.arm_step.call_count, 1 if start_z in (10, 65) else 0)
                 self.assertFalse(list(c.directory.iterdir()))
 
     def test_missing_bad_or_unreached_goal_z_stops_before_vision(self):
