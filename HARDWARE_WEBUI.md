@@ -129,21 +129,27 @@ localization, live sensors, planner footprint clearance and both costmaps applyi
 the current no-go revision. Go does not require an online or homed arm or a
 recorded transport pose, and does not move the arm. Unknown cells are treated as
 free in the derived navigation map; the displayed source map keeps them unknown.
-Occupied footprint clearance and goals outside map bounds are rejected. Go,
-Fetch and map surveys share this policy. Live obstacles and no-go zones remain blocked.
+Occupied footprint clearance and goals outside map bounds are rejected. Go and
+map surveys share this policy. Fetch approach selection and camera-guided
+adjustments exclude unknown space.
+Live obstacles and no-go zones remain blocked.
 No-go rectangles are rasterized into a derived map. Both global and rolling
 local StaticLayers consume it; published full costmaps are checked for virtual
 obstacles. The original map is preserved. Recovery rotations are disabled.
 
-**Fetch** requires an explicitly selected item linked to an unchanged taught
-station on the current map. It captures the startup base/arm poses, folds,
-approaches the station, opens the gripper and reaches the taught arm pose.
-With the configured LLM key, it aligns using fresh front and arm camera images,
-then pauses for live-camera alignment review; bounded X/Y/Z adjustments are
-available. After confirmation it closes, folds, and pauses again for the user
-to confirm possession. Only then does it return and restore the startup pose.
-There is no force-based grasp detection. Without an LLM key, alignment stays manual.
-A five-minute review timeout cancels the task.
+**Fetch** requires a selected item with a current-map location estimate (confidence
+at least 0.7), an uploaded reference, a measured ARM CALIBRATION GOAL pose, and a
+saved grasp height below that GOAL. A taught station is not required. Both cameras,
+configured LLM, confirmed localization and measured transport clearance are required.
+It records the base pose when Fetch starts, folds, navigates to a reachable approach
+facing the item, and runs front-camera refinement. The final approach uses fresh
+stopped images and safe stand-off checks; navigation speed stays unchanged.
+It then opens, restores the saved GOAL arm pose, runs ALIGN, and uses the same full
+descent/clamp/lift targets as GRASP. With the gripper closed it folds, returns to
+the recorded base pose, restores the measured aligned arm pose, lowers to the saved
+grasp height, releases, lifts, and folds. No intermediate review clicks are needed.
+There is no force-based grasp detection. Failures stop subsequent actions; a
+persisted held-item record remains until placement or explicit gripper release.
 
 ### Dual-camera Fetch calibration
 
@@ -256,9 +262,9 @@ still computes the actual travel paths. Every goal is revalidated before travel.
 
 Each revisit replaces its latest unlabelled photo. Confirmed old photos stay as
 historical evidence; new images never inherit a moving object's old identity.
-Historical associations cannot authorize Fetch until confirmed in a current
-observation. This refreshes scene evidence, not measured object coordinates or
-automatic identity tracking. Capture/import failure stops updating and preserves
+Fetch uses a current confident map estimate and checks the named item again in
+the front camera before alignment. This refreshes scene evidence, not measured
+object coordinates or automatic identity tracking. Capture/import failure stops updating and preserves
 the source frame for recovery; a 20-frame handoff backlog pauses updates.
 
 Live captures bind the received camera frame to TF at that frame's host receipt
@@ -301,7 +307,7 @@ acknowledgement for feedback.
 
 The manufacturer's [P340 protocol](https://docs.elephantrobotics.com/docs/ultraArm-en/3-HowToUseultraArm/2-SoftwareControl/6-SerialPort/6-SerialPort.html)
 documents M15 as jog stop, not a guaranteed emergency stop for homing or queued
-absolute moves. Transport, Fetch pose changes and startup-pose restoration send
+absolute moves. Transport and Fetch arm pose changes send
 one complete joint target at speed 30 for continuous firmware interpolation,
 then require stable measured arrival within 30 seconds. STOP interrupts the
 controller's wait and sends M15; the full absolute move or gripper command may
@@ -347,7 +353,8 @@ Click a pin to preview the nearest reachable approach, facing the item. Then use
 the existing **Go** button. Approach selection excludes unknown space, no-go zones,
 occupied ROS costmap cells and disconnected regions, and leaves space for the
 chassis and estimate uncertainty. Low-confidence estimates cannot provide a goal.
-**Resolve** can also select this approach. Fetch and grasping are unchanged.
+**Resolve** can also select this approach. **Fetch** automatically navigates to
+the approach, refines with the front camera, aligns, grasps, returns and places.
 
 After **Go** reaches the observation point, select the item pin and use **Refine
 approach** in the map panel. The item must be visible in the front camera. This
@@ -365,7 +372,8 @@ the item pin and preview update automatically. Arrival needs a geometric check o
 distance and heading in addition to the LLM's answer. Lost/ambiguous items, unsafe
 suggestions, lack of progress, timeout, stale sensors or exhausted rounds stop the
 task. STOP, disconnect, map/no-go changes and pose drift invalidate pending moves;
-late answers after cancellation are discarded. No arm or gripper command is sent.
+late answers after cancellation are discarded. Standalone **Refine approach**
+sends no arm or gripper commands; Fetch continues to ALIGN only after arrival.
 
 **Map actions > Estimate item positions** retries existing front observations.
 Missing credentials, malformed results and STOP/map changes retain the photos

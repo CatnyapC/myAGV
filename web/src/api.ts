@@ -39,6 +39,7 @@ export type HardwareState = {
   map_save_error?: string;
   small_obstacle_m?: number;
   item_approach_available?: boolean;
+  map_fetch_available?: boolean;
 };
 
 export function hardwareBlocks(state?: HardwareState, requireArm = true): string[] {

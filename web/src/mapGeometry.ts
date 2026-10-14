@@ -12,9 +12,9 @@ export type Settings = { revision: number; values: { auto_align: boolean; manual
 type PhotoBase = { id: string; saved_at_s: number; source: string; image_url: string; available: boolean; map_matches: boolean; item_id?: string; association_source?: 'manual'; current?: boolean; update_key?: string;
   location_analysis?: { status: 'queued' | 'running' | 'complete' | 'error' | 'cancelled'; error?: string } };
 export type Photo = PhotoBase & ({ kind: 'reference' } | {
-  kind: 'observation'; captured_at_s: number; camera_id: 'front' | 'arm'; map_id: string; map_revision: number; frame: string; base_pose: Origin;
+  kind: 'observation'; captured_at_s: number; camera_id: 'front' | 'arm'; map_id: string; map_revision: number; frame: string; base_pose: Origin; arm_angles_deg?: number[];
 });
-export type Item = { id: string; name: string; appearance: string; station_link?: { name: string; map_id: string; digest: string }; station_status: string; fetch_available: false; observation_current: boolean; last_seen_s: number;
+export type Item = { id: string; name: string; appearance: string; station_link?: { name: string; map_id: string; digest: string }; station_status: string; fetch_available: boolean; observation_current: boolean; last_seen_s: number;
   reference_photo_id?: string; grasp_z_mm?: number; calibration_z_mm?: number; grasp_goal?: { front: string; arm: string }; grasp_goal_ready: boolean };
 export type ItemLocation = { item_id: string; photo_id: string; name: string; image_url: string; map_id: string;
   x_m: number; y_m: number; uncertainty_m: number; confidence: number; captured_at_s: number; base_pose: Origin };

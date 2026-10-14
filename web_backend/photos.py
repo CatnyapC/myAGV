@@ -165,6 +165,7 @@ class PhotoIndex:
             photo['image_url'] = f"/api/photos/{photo['id']}/image"
             photo['available'] = self.image_path(photo['id']).is_file()
             photo['map_matches'] = photo['kind'] == 'reference' or photo['map_id'] == map_id
+        value['locations'] = location_records(value, map_id)
         for item in value['items']:
             link = item.get('station_link')
             observations = [p for p in value['photos'] if p.get('item_id') == item['id'] and p['kind'] == 'observation' and p['map_id'] == map_id and p['available']]
@@ -173,13 +174,15 @@ class PhotoIndex:
             item['station_status'] = 'none' if not link else 'unavailable' if stations is None else 'map_mismatch' if link['map_id'] != map_id else 'ready' if link['name'] in stations and digest_station(stations[link['name']]) == link['digest'] else 'stale'
             item['reference_photo_id'] = next((p['id'] for p in reversed(value['photos'])
                 if p.get('item_id') == item['id'] and p['kind'] == 'reference' and p['available']), None)
-            item['fetch_available'] = False  # Task/grasp gates are not part of the photo milestone.
             goal = item.get('grasp_goal')
             goal_photo = next((p for p in value['photos'] if p['id'] == (goal or {}).get('arm')), {})
             if 'arm_z_mm' in goal_photo:
                 item['calibration_z_mm'] = goal_photo['arm_z_mm']
             item['grasp_goal_ready'] = 'calibration_z_mm' in item and bool(goal) and all(self.image_path(photo_id).is_file() and self.image_path(photo_id).with_suffix('.jpg').is_file() for photo_id in goal.values())
-        value['locations'] = location_records(value, map_id)
+            item['fetch_available'] = bool(item['reference_photo_id'] and item['grasp_goal_ready']
+                and goal_photo.get('arm_angles_deg') and 'grasp_z_mm' in item
+                and item['calibration_z_mm'] > item['grasp_z_mm'] + 1
+                and any(e['item_id'] == item['id'] and e['confidence'] >= .7 for e in value['locations']))
         return value
 
     def reference_image(self, photo_id):

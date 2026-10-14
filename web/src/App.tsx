@@ -113,7 +113,14 @@ export function App() {
     ...(busy ? ['Current request running'] : [])];
   const hardwareReasons = !connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware);
   const goReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)), ...(!goalValid ? ['Choose a goal on the map or enter X/Y/heading'] : []), ...(busy ? ['Current request running'] : [])];
-  const fetchReasons = [...hardwareReasons, ...(!selectedItem ? ['Select an item linked to a taught pickup station'] : !selectedItem.observation_current ? ['Confirm this item in a current observation'] : selectedItem.station_status !== 'ready' ? ['Teach a station and confirm its association in the item photo editor'] : state?.llm?.status === 'configured' && !selectedItem.reference_photo_id ? ['Upload an item reference photo'] : []), ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : []), ...(busy ? ['Current request running'] : [])];
+  const pickupPhoto = photos?.photos.find(p => p.id === selectedItem?.grasp_goal?.arm);
+  const fetchReasons = [...hardwareReasons, ...approachReasons.filter(reason => !hardwareReasons.includes(reason)),
+    ...(!selectedItem?.reference_photo_id ? ['Upload an item reference photo'] : []),
+    ...(!selectedItem?.grasp_goal_ready || pickupPhoto?.kind !== 'observation' || !pickupPhoto.arm_angles_deg?.length ? ['Save an arm calibration GOAL with measured pose'] : []),
+    ...(selectedItem?.grasp_z_mm === undefined ? ['Save the item grasp height'] : []),
+    ...(selectedItem?.calibration_z_mm !== undefined && selectedItem.grasp_z_mm !== undefined && selectedItem.calibration_z_mm <= selectedItem.grasp_z_mm + 1 ? ['Calibration GOAL must be above grasp height'] : []),
+    ...(!state?.hardware?.map_fetch_available ? ['Restart robot controller to enable map-guided Fetch'] : []),
+    ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : [])];
 
   const reload = useCallback(async () => {
     const current = ++generation.current;

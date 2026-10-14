@@ -439,33 +439,6 @@ class ControlTest(unittest.TestCase):
         c.localized = False
         with self.assertRaises(RuntimeError): c.travel_guard(dict(x_m=0,y_m=0))
 
-    def test_fetch_checks_before_movement_and_requires_both_reviews(self):
-        from web_backend.photos import digest_station
-        c = fake_control()
-        c.stations_path = Path('unused')
-        c.travel_guard = Mock()
-        c.fold = Mock()
-        c.grip = Mock()
-        c.move_arm = Mock()
-        c.review = Mock()
-        c.go = Mock()
-        record = dict(base=dict(x_m=0,y_m=0,yaw_deg=0), arm_angles_deg=[90,20,30])
-        data = dict(station='cup', station_digest=digest_station(record))
-        with patch('robot_control.load_stations', return_value={'cup':record}), patch('robot_control.wait_arm', return_value=[0,10,20,0]):
-            with self.assertRaises(ValueError): c.fetch(data)
-            c.fold.assert_not_called()
-        with patch('robot_control.load_stations', return_value={'cup':record}), patch('robot_control.wait_arm', return_value=[0,10,20]):
-            c.fetch(data)
-        self.assertEqual([x.args[0] for x in c.review.call_args_list], ['review_grasp','verify_grasp'])
-        self.assertEqual([x.args[0] for x in c.grip.call_args_list], [100,0,100])
-        c.fold.reset_mock()
-        c.robot.nav.go_to_pickup.reset_mock()
-        c.capture.side_effect = RuntimeError('Arm camera unavailable')
-        with patch('robot_control.load_stations', return_value={'cup':record}), patch('robot_control.wait_arm', return_value=[0,10,20]):
-            with self.assertRaises(RuntimeError): c.fetch(data)
-        c.fold.assert_not_called()
-        c.robot.nav.go_to_pickup.assert_not_called()
-
     def test_review_rejects_wrong_stage_or_task(self):
         c = fake_control()
         c.phase, c.task_id, c.owner = 'verify_grasp', 'task', 'tab'

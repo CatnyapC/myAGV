@@ -13,6 +13,9 @@ from urllib.parse import urlsplit
 
 from aiohttp import web
 from fetch_calibration import alignment_command, calibration_config, MetricArmCalibration
+from navigation import pickup_angles
+from P340.keyboard_control import LIMITS
+from robot_safety import number
 from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
@@ -523,7 +526,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     data = {**data, 'type': 'zones', 'zones': current}
                 if kind == 'teach' and data.get('overwrite') is True:
                     data = {**data, 'station_digest': digest_station(data['expected_station'])}
-                if kind == 'approach_item':
+                if kind in ('approach_item', 'fetch'):
                     if not model_key() or data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Configured LLM and current photo index required for approach')
                     snapshot = photos.snapshot(editor.grid['map_id'])
@@ -561,8 +564,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')
                     item = next((i for i in photos.snapshot(editor.grid['map_id'])['items'] if i['id'] == data.get('item_id')), None)
-                    if not item or (kind == 'fetch' and (item['station_status'] != 'ready' or not item['observation_current'])):
-                        raise ValueError('Confirmed current-map station association required')
+                    if not item:
+                        raise ValueError('Select a current item before alignment or fetch')
                     if kind == 'fetch_test':
                         if not model_key():
                             raise ValueError('Configure the LLM before testing alignment')
@@ -573,8 +576,16 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if model_key() and not item.get('grasp_goal_ready'):
                         raise ValueError('Recapture ARM CALIBRATION GOAL with measured Z before alignment')
                     if kind == 'fetch':
-                        link = item['station_link']
-                        data = {**data, 'station': link['name'], 'station_digest': link['digest']}
+                        if not editor.hardware.control.get('map_fetch_available'):
+                            raise ValueError('Restart robot controller to enable map-guided fetch')
+                        if not editor.hardware.cameras.get('arm'):
+                            raise ValueError('Fresh arm camera required for fetch')
+                        goal_photo = next(p for p in photos.value['photos'] if p['id'] == item['grasp_goal']['arm'])
+                        angles = pickup_angles(goal_photo.get('arm_angles_deg'))
+                        grasp_z = number(item.get('grasp_z_mm'), LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Saved grasp Z')
+                        if item['calibration_z_mm'] <= grasp_z + 1:
+                            raise ValueError('Calibration GOAL must be above the saved grasp height')
+                        data = {**data, 'pickup_angles': angles, 'grasp_z_mm': grasp_z, 'preview': False}
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
                             'alignment_protocol': 'metric-v1' if metric_protocol else 'visual-bounds-v1',
                             'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'], calibration_z_mm=item['calibration_z_mm']) if model_key() else None}

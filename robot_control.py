@@ -21,7 +21,7 @@ from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
 from web_backend.map_data import validate_rectangle
 from web_backend.photos import digest_station
-from web_backend.item_locations import approach_step, location_config
+from web_backend.item_locations import approach_goal, approach_step, location_config
 from web_backend.simulation import validate_pose
 from web_backend.storage import atomic_json
 
@@ -954,11 +954,11 @@ class Control:
                 pose = capture['base_pose']
                 request_id = str(uuid.uuid4())
                 atomic_json(request_path, dict(id=request_id, mode='approach', boot_id=self.boot_id, task_id=self.task_id,
-                    stop_epoch=self.stop_epoch, map_id=map_id, zone_revision=revision, expires_at_s=time.time() + 20,
+                    stop_epoch=self.stop_epoch, map_id=map_id, zone_revision=revision, expires_at_s=time.time() + FETCH_VISION_TIMEOUT_S + 5,
                     item=item, estimate=estimate, reference_photo_id=packet['reference_photo_id'], base_pose=pose, capture_id=capture['capture_id'],
                     images=dict(front=capture['image']), history=history, round=round_index + 1,
                     clearance_m=self.config['clearance_m'], catalog_signature=packet['catalog_signature']))
-                end = time.monotonic() + 20
+                end = time.monotonic() + FETCH_VISION_TIMEOUT_S + 5
                 while True:
                     current()
                     try:
@@ -1217,46 +1217,60 @@ class Control:
             self.robot.zero()
 
     def fetch(self, packet):
-        records = load_stations(self.stations_path)
-        station = records.get(packet.get('station'))
-        if station is None or digest_station(station) != packet.get('station_digest'):
-            raise ValueError('Station missing or changed; reconfirm item association')
-        target = pickup_angles(station['arm_angles_deg'])
-        calibration = packet.get('fetch_settings', self.config.get('fetch_calibration'))
-        if packet.get('vision_item'):
-            calibration = calibration_config(calibration)
-            number(packet['vision_item'].get('calibration_z_mm'), LIMITS['Z'][0] + 5,
-                LIMITS['Z'][1] - 5, 'Calibration GOAL Z; recapture GOAL if missing')
-        self.travel_guard(station['base'])
         self.require_arm()
+        target = pickup_angles(packet['pickup_angles'])
+        calibration = calibration_config(packet['fetch_settings'])
+        grasp_z = number(packet.get('grasp_z_mm'), LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Saved grasp Z')
+        goal_z = number(packet['vision_item'].get('calibration_z_mm'), LIMITS['Z'][0] + 5,
+                       LIMITS['Z'][1] - 5, 'Calibration GOAL Z; recapture GOAL if missing')
+        if goal_z <= grasp_z + 1:
+            raise ValueError('Calibration GOAL must be above the saved grasp height')
+        config = location_config(packet['location_config'])
+        map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
+
+        def current():
+            if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
+                raise ValueError('Map or no-go zones changed during fetch')
+            self.travel_guard(self.robot.nav.get_pose())
+
+        current()
         self.robot.nav.wait_stopped()
-        start_arm, start_base = wait_arm(self.arm, timeout=5), self.robot.nav.get_pose()
+        start_arm, start_base = wait_arm(self.arm, timeout=5), dict(self.robot.nav.get_pose())
         transport = self.config['transport_angles']
         if transport is None:
             raise ValueError('Record transport pose first')
         if not len(start_arm) == len(target) == len(transport):
             raise ValueError('Arm joint counts differ')
-        self.travel_guard(start_base)
+        validate_angles(transport)
         self.capture('arm', persist=False)
-        self.fold()
-        self.phase, self.status, self.base_enabled = 'approach', 'Approaching taught pickup pose', True
+        goal = approach_goal(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
+            dict(start_base, yaw_rad=math.radians(start_base['yaw_deg'])), packet['estimate'],
+            self.config['clearance_m'], config)
+        goal = dict(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad']))
+        grasp = dict(item_id=packet['item_id'], grasp_z_mm=grasp_z)
         try:
-            self.robot.nav.go_to_pickup(station['base'])
+            current()
+            self.fold()
+            self.go(goal, precise=True)
+            self.approach_item(packet)
+            current()
+            self.grip(100)
+            self.move_arm(target)
+            self.calibrate_fetch(dict(packet, preview=False), calibration)
+            current()
+            self.test_grasp(dict(grasp, action='grasp'))
+            holding_angles = pickup_angles(wait_arm(self.arm, timeout=5))
+            current()
+            self.fold()
+            self.go(start_base, precise=True)
+            current()
+            self.move_arm(holding_angles)
+            self.test_grasp(dict(grasp, action='place'))
+            current()
+            self.fold()
         finally:
             self.base_enabled = False
             self.robot.zero()
-        self.grip(100)
-        self.move_arm(target)
-        if packet.get('vision_item'):
-            self.calibrate_fetch(packet, calibration)
-        self.review('review_grasp')
-        self.grip(0)
-        self.fold()
-        self.review('verify_grasp')
-        self.go(start_base)
-        self.phase, self.status = 'placing', 'Restoring startup arm pose'
-        self.move_arm(start_arm)
-        self.grip(100)
 
     def manual_tick(self):
         if not isinstance(self.input, dict):
@@ -1284,6 +1298,7 @@ class Control:
             update['remaining_s'] = max(0, math.ceil(update['deadline'] - time.monotonic()))
         return dict(boot_id=self.boot_id, stop_epoch=self.stop_epoch, stamp_s=time.time(), phase=self.phase, status=self.status, map_update=update,
                     item_approach_available=True,
+                    map_fetch_available=True,
                     grasp_test_toggle_available=True,
                     grasp_test_item_id=(self.config.get('grasp_test_hold') or {}).get('item_id'),
                     task_id=self.task_id, arm_available=self.arm is not None, arm_homed=self.arm_homed, metric_alignment_available=True,
