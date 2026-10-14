@@ -43,6 +43,8 @@ select:focus-visible, textarea:focus-visible { outline: 2px solid var(--cyan-8);
 .grasp-goal-views img { width: 100%; height: 100px; object-fit: contain; background: var(--gray-1); }
 .fetch-test { display: flex; flex-direction: column; gap: 10px; }
 .fetch-test h3 { margin: 0; }
+.llm-turns { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 12px; padding: 12px; overflow: auto; overflow-wrap: anywhere; }
+.llm-turns > .fetch-round { flex-shrink: 0; }
 .fetch-prompt, .fetch-round pre { font-family: monospace; font-size: 11px; line-height: 1.5; }
 .fetch-prompt { resize: vertical; min-height: 140px; }
 .fetch-round { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--gray-6); border-radius: 5px; }

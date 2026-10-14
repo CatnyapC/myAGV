@@ -11,6 +11,7 @@ import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
 import { HardwareControls, MapUpdateControls, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { FetchTest } from './FetchTest';
+import { LLMTurns } from './LLMTurns';
 import { LogPanel } from './LogPanel';
 import { appendLog, type LogEntry, type LogReporter } from './activityLog';
 import { loadPhotoSelection, savePhotoSelection } from './photoSelection';
@@ -19,7 +20,7 @@ import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout
 type State = { hardware?: HardwareState; robot_id: string; demo: boolean; phase: string; navigation: Navigation; cameras?: Partial<Record<'front' | 'arm', { url: string; stamp_s: number }>>; llm: { model: string; status: string; reasoning_effort: string } };
 type Resolution = { status: 'matched' | 'ambiguous' | 'not_found'; item_ids: string[]; index_revision: number; settings_revision: number; map_id: string; photo_id?: string; goal?: Origin; blocked_reason?: string; target_source?: 'estimated' };
 const LAYOUT_KEY = 'myagv:local-demo:layout:v2';
-const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE' };
+const names: Record<string, string> = { map: 'MAP', front: 'FRONT CAMERA', arm: 'ARM CAMERA', operate: 'OPERATE', llm: 'LLM TURNS' };
 const REQUEST_EXAMPLES = [
   '塩の瓶を持ってきてください。',
   '塩の瓶をこちらに運んでもらえますか。',
@@ -690,6 +691,7 @@ export function App() {
           : state?.phase !== 'idle' ? 'Finish or stop the current action before recording.'
           : !state?.hardware?.arm_available ? 'P340 feedback unavailable; reconnect the arm.' : ''}
         onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} onLog={log} />}</div>)}
+      {panel('llm', <LLMTurns connected={connected} onLog={log} />)}
     </main>
     <div className="panel-dividers">
       {!maximized && dividers(layout).map(seam => {

@@ -5,19 +5,25 @@ import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout
 test('viewport fill, coupled divider resizing, minimums and reset', () => {
   const original = validatedLayout(DEFAULT_LAYOUT);
   assert.equal(original.find(t => t.id === 'operate')!.x, 0);
-  assert.equal(original.find(t => t.id === 'map')!.x, 12);
+  assert.equal(original.find(t => t.id === 'map')!.x, 16);
+  const operate = original.find(t => t.id === 'operate')!, llm = original.find(t => t.id === 'llm')!;
+  assert.equal(llm.x, operate.x + operate.w);
+  assert.equal(llm.y, operate.y);
+  assert.equal(llm.h, operate.h);
+  assert.deepEqual(validatedLayout(original.filter(t => t.id !== 'llm')), original);
+  assert.deepEqual(validatedLayout([...original.slice(0, -1), llm]), original);
   const height = viewportCellHeight(original, 840);
   assert.equal(height * 12, 840);
   const seams = dividers(original);
-  assert.equal(seams.length, 3);
-  const mapEdge = seams.find(s => s.axis === 'x' && s.position === 12)!;
+  assert.equal(seams.length, 4);
+  const mapEdge = seams.find(s => s.axis === 'x' && s.position === 16)!;
   assert.deepEqual(mapEdge.before, ['arm', 'front']);
   assert.deepEqual(mapEdge.after, ['map']);
   const moved = moveDivider(original, mapEdge, 2, 80, height);
-  assert.equal(moved.find(t => t.id === 'map')!.x, 14);
-  assert.equal(moved.find(t => t.id === 'map')!.w, 10);
+  assert.equal(moved.find(t => t.id === 'map')!.x, 18);
+  assert.equal(moved.find(t => t.id === 'map')!.w, 6);
   assert.equal(moved.find(t => t.id === 'operate')!.x, 0);
-  for (const id of ['front', 'arm']) { const tile = moved.find(t => t.id === id)!; assert.equal(tile.x, 6); assert.equal(tile.w, 8); }
+  for (const id of ['front', 'arm']) { const tile = moved.find(t => t.id === id)!; assert.equal(tile.x, 10); assert.equal(tile.w, 8); }
   const cameraEdge = seams.find(s => s.axis === 'y')!;
   const taller = moveDivider(original, cameraEdge, 1, 80, height);
   assert.equal(taller.find(t => t.id === 'front')!.h, 7);
