@@ -234,13 +234,17 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_arm_goal_labels_and_y_direction(self):
         images = dict(arm='data:image/jpeg;base64,AQ==')
         trace = {}
-        for box, x, y in [([220, 750, 520, 1000], -10, 5), ([420, 865, 700, 1000], 0, -1), ([420, 840, 700, 1000], 0, 0)]:
-            with patch('web_backend.resolve.request_json', AsyncMock(return_value=dict(goal=[420, 840, 700, 1000], current=box))):
+        for box, x, y in [([160, 750, 460, 1000], -10, 5), ([360, 865, 640, 1000], 0, -1), ([360, 840, 640, 1000], 0, 0)]:
+            with patch('web_backend.resolve.request_json', AsyncMock(return_value=dict(goal=[360, 840, 640, 1000], current=box))):
                 moves = await locate_pickup(images, dict(name='cup', appearance='red'), 'key', images['arm'], [],
-                    stage='arm', goal=images['arm'], trace=trace)
+                    stage='arm', goal=images['arm'], trace=trace, prompt='Previously saved prompt')
             self.assertEqual(moves, dict(x_mm=x, y_mm=y, turn_deg=0))
             self.assertEqual(trace['aligned_perfectly'], x == y == 0)
             self.assertEqual(trace['stage'], 'arm')
+            instruction = trace['messages'][0]['content']
+            self.assertTrue(instruction.startswith('Previously saved prompt'))
+            self.assertIn('camera is mounted on the gripper', instruction)
+            self.assertIn('x=500, bottom=1000', instruction)
             self.assertTrue(any('GOAL:' in p.get('text', '') for p in trace['messages'][1]['content']))
         for bad in (dict(x='aligned_perfectly', y='aligned_perfectly'),
                     dict(goal=[420,840,700,1000], current=None),

@@ -115,8 +115,11 @@ Return only the requested JSON. ''' + instruction),
 PICKUP_PROMPT = """Two strictly separate stages: base coarse alignment, then arm fine alignment.
 The stage instruction supplied below defines the output schema and target.
 Setup: arm base faces vehicle LEFT, mounted 90 degrees counterclockwise. J1=90
-faces vehicle FORWARD. Arm-top camera mounts 90 degrees clockwise. The item is
-normally only partially visible at the BOTTOM. The gripper is NEVER visible.
+faces vehicle FORWARD. The arm camera is mounted on the gripper, rotated 90 degrees
+clockwise, and moves with it. Every saved GOAL has the target at the horizontal
+center of the BOTTOM edge. This is the fixed correct-grasp position, not an
+arbitrary reference position. The item is normally only partially visible there.
+The gripper is NEVER visible.
 A bottom-clipped fragment is valid evidence, not a reason for unknown.
 Arm camera horizontal error controls arm X/base Y: item right of GOAL => X+,
 left of GOAL => X-. Arm Y/base X controls the other planar direction.
@@ -152,13 +155,22 @@ images, aligned_stalled is forbidden."""
     else:
         fields = ('goal', 'current')
         instruction = """ACTIVE STAGE: ARM MEASUREMENT ONLY. Base is locked.
+The camera is mounted on the gripper and moves with it. In every saved GOAL,
+the target is at the exact horizontal center of the bottom edge (x=500, bottom=1000
+in normalized coordinates). CURRENT must match that fixed bottom-center position
+AND the visible size/cropping in GOAL. Merely touching the bottom is insufficient.
+If CURRENT is visibly left/right of center, its measured horizontal midpoint must
+be left/right of the centered GOAL; never report matching boxes for that case.
+For example, GOAL [450,950,550,1000] and CURRENT [200,850,400,1000] differ in both
+horizontal position and exposed height. Report that difference, never alignment.
 Return ONLY {"goal":[left,top,right,bottom],"current":[left,top,right,bottom]}.
 Each array is the bounding box of the SAME TARGET ITEM'S VISIBLE FRAGMENT in that
 labeled image, using integer coordinates normalized to 0..1000 across the FULL
 image. Include only visible object pixels, including the part clipped at the
 bottom; do NOT infer the unseen full object. Bottom-clipped objects have bottom=1000.
 Ignore the floor, shadows, people, and the uploaded identity photo's coordinates.
-Measure GOAL and CURRENT independently. Do not copy coordinates between them.
+Measure GOAL and CURRENT independently from actual visible pixels. Do not copy
+coordinates between them or force CURRENT to the expected GOAL coordinates.
 A fragment left of GOAL must have a smaller horizontal midpoint. A taller visible
 fragment must have a smaller top coordinate when both touch the bottom edge.
 Never report alignment or motor commands. The controller computes those from
