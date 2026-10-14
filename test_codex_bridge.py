@@ -81,6 +81,8 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(json.loads(result['choices'][0]['message']['content']), dict(ok=True))
                         self.assertTrue(sent[3]['params']['ephemeral'])
                         self.assertEqual(sent[3]['params']['sandbox'], 'read-only')
+                        self.assertEqual(sent[3]['params']['serviceTier'], 'fast')
+                        self.assertEqual(sent[4]['params']['serviceTier'], 'fast')
                         self.assertEqual(sent[4]['params']['outputSchema'], body()['response_format']['json_schema']['schema'])
                     elif mode == 'cancelled':
                         task = asyncio.create_task(bridge.infer(body()))

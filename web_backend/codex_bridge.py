@@ -77,7 +77,8 @@ def codex_command():
     if not binary:
         raise RuntimeError('Codex CLI not installed')
     command = [binary, 'app-server', '--listen', 'stdio://']
-    config = dict(model_provider='openai', web_search='disabled', project_doc_max_bytes=0)
+    config = dict(model_provider='openai', service_tier='fast', web_search='disabled', project_doc_max_bytes=0)
+    config['features.fast_mode'] = True
     for feature in ('shell_tool', 'unified_exec', 'apply_patch_freeform', 'apps', 'multi_agent',
                     'hooks', 'remote_plugin', 'shell_snapshot', 'memories'):
         config['features.' + feature] = False
@@ -135,12 +136,12 @@ async def infer(body):
                 if (account.get('account') or {}).get('type') != 'chatgpt':
                     raise RuntimeError('Sign in to Codex CLI with ChatGPT first')
                 thread = await rpc(3, 'thread/start', dict(model=body['model'].removeprefix('codex-local/'), cwd=directory,
-                    ephemeral=True, approvalPolicy='never', sandbox='read-only',
+                    ephemeral=True, approvalPolicy='never', sandbox='read-only', serviceTier='fast',
                     baseInstructions=instructions,
                     developerInstructions='Use only the supplied text and images. Never call tools, execute commands, access files or control hardware. Return only the requested JSON.',
                     serviceName='myagv_vision'))
                 thread_id = thread['thread']['id']
-                await rpc(4, 'turn/start', dict(threadId=thread_id, input=content, effort=effort, outputSchema=schema))
+                await rpc(4, 'turn/start', dict(threadId=thread_id, input=content, effort=effort, outputSchema=schema, serviceTier='fast'))
                 answer = None
                 while True:
                     message = await receive()

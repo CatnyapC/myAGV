@@ -198,6 +198,9 @@ after completion, cancellation or a 28-second deadline. The adapter accepts one
 request at a time. Offline Macs, broken tunnels, unavailable models, quota errors,
 timeouts and incomplete JSON fail explicitly; there is no provider fallback.
 Configured means the bridge token was loaded, not that inference is healthy.
+The myAGV adapter explicitly requests Codex Fast mode for every thread and turn.
+This leaves the user's global Codex configuration unchanged. Fast mode consumes
+more subscription allowance; see [Codex speed](https://learn.chatgpt.com/docs/agent-configuration/speed).
 
 Official references: [Codex app-server](https://learn.chatgpt.com/docs/app-server)
 and [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source).
