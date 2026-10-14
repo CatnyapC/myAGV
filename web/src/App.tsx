@@ -678,7 +678,7 @@ export function App() {
         <header className="dialog-header"><Dialog.Title>SETTINGS</Dialog.Title><Dialog.Close asChild><Button variant="ghost" className="icon" aria-label="Close settings"><X size={18} /></Button></Dialog.Close></header>
         <Dialog.Description className="sr-only">Map display and workspace settings</Dialog.Description>
         <div className="settings-body">
-          <span className="subheading">LLM</span><span className="muted">OpenRouter · {state?.llm?.status ?? 'Loading…'}</span>
+          <span className="subheading">LLM</span><span className="muted">{settingsDraft.llm_model.startsWith('codex-local/') ? 'Local Codex · ChatGPT plan' : 'OpenRouter'} · {state?.llm?.status ?? 'Loading…'}</span>
           <label className="setting-row">Model<select value={settingsDraft.llm_model} disabled={!canEdit || !savedSettings || busy} onChange={event => {
             const model = savedSettings?.llm_models.find(m => m.id === event.target.value);
             if (model) updateSetting({ ...settingsDraft, llm_model: model.id, reasoning_effort: model.efforts.includes(settingsDraft.reasoning_effort) ? settingsDraft.reasoning_effort : model.efforts[0] });

@@ -427,12 +427,19 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 await release.wait()
                 return provider_result
 
-            with patch('web_backend.server.load_key', return_value=('configured', 'private-test-key')), patch('web_backend.resolve.request_json', side_effect=provider):
+            with patch('web_backend.server.load_key', return_value=('not_configured', '')), \
+                 patch('web_backend.server.load_token', return_value=('configured', 'private-test-key')), \
+                 patch('web_backend.resolve.request_json', side_effect=provider):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 hardware = app[EDITOR].hardware
                 hardware.refresh = Mock()
                 hardware.control = dict(phase='idle', stamp_s=time.time())
                 async with TestClient(TestServer(app)) as client:
+                    from web_backend.codex_bridge import MODEL as CODEX_MODEL
+                    preferences = await (await client.get('/api/settings')).json()
+                    response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'],
+                        values={**preferences['values'], 'llm_model': CODEX_MODEL, 'reasoning_effort': 'low'}))
+                    self.assertEqual(response.status, 200)
                     settings = await (await client.get('/api/fetch-settings')).json()
                     values = {**settings['values'], 'max_step_mm': .5, 'prompt': 'Edited prompt'}
                     self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values={**values, 'max_step_mm': 11}))).status, 400)
@@ -499,6 +506,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(.025)
                     entry = log['rounds'][-1]
                     self.assertEqual(entry['status'], 'returned')
+                    self.assertEqual(entry['model'], CODEX_MODEL)
                     self.assertEqual(entry['measurement'], provider_result)
                     self.assertEqual(entry['correction'], dict(X=0, Y=-.25, turn_deg=0))
                     self.assertEqual([v['label'] for v in entry['measured_images']], ['GOAL','CURRENT'])

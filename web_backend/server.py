@@ -19,6 +19,7 @@ from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
 from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
+from .codex_bridge import MODEL as CODEX_MODEL, load_token
 from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, refine_approach
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -148,6 +149,16 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     photos = PhotoIndex(directory, stations_path)
     photo_lock = asyncio.Lock()
     editor.llm['status'], llm_key = load_key()
+    openrouter_status = editor.llm['status']
+    codex_status, codex_key = load_token()
+
+    def model_key(model=None):
+        return codex_key if (model or editor.settings['values']['llm_model']) == CODEX_MODEL else llm_key
+
+    def update_llm_status():
+        editor.llm['status'] = codex_status if editor.settings['values']['llm_model'] == CODEX_MODEL else openrouter_status
+
+    update_llm_status()
     resolve_lock = asyncio.Lock()  # ponytail: one request; per-user locks if multi-user control is added.
     fetch_settings = load_json(editor.directory / 'fetch_settings.json', dict(revision=0,
         values=dict(**calibration_config(None), prompt=PICKUP_PROMPT)))
@@ -231,8 +242,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         photo_stopped()
         if data.get('map_id') != editor.grid['map_id']:
             raise web.HTTPConflict(text='Map changed; retry estimation')
-        if not llm_key:
-            raise web.HTTPServiceUnavailable(text='OpenRouter key unavailable')
+        if not model_key():
+            raise web.HTTPServiceUnavailable(text='Selected LLM not configured or unavailable')
         async with photo_lock:
             photos.check(data.get('expected_revision'))
             if not photos.value['items']:
@@ -251,8 +262,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         photo_stopped()
         if data.get('map_id') != editor.grid['map_id'] or data['expected_revision'] != photos.value['revision']:
             raise web.HTTPConflict(text='Map or photo index changed; retry explicitly')
-        if not llm_key:
-            raise web.HTTPServiceUnavailable(text='OpenRouter key not configured or unavailable')
+        if not model_key():
+            raise web.HTTPServiceUnavailable(text='Selected LLM not configured or unavailable')
         if resolve_lock.locked():
             raise web.HTTPTooManyRequests(text='An item resolution is already running')
         async with resolve_lock:
@@ -263,7 +274,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     raise web.HTTPConflict(text='Resolution cancelled or records changed; retry explicitly')
             index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
             check_current()
-            result = await resolve_items(data['text'].strip(), index['items'], llm_key, config['llm_model'], config['reasoning_effort'])
+            result = await resolve_items(data['text'].strip(), index['items'], model_key(config['llm_model']), config['llm_model'], config['reasoning_effort'])
             check_current()
             if result['status'] == 'matched':
                 index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
@@ -390,19 +401,20 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         path = photos.image_path(photo_id)
         if not path.is_file():
             raise web.HTTPNotFound(text='Stored image unavailable')
-        if not llm_key:
-            raise web.HTTPServiceUnavailable(text='OpenRouter key not configured or unavailable')
+        if not model_key():
+            raise web.HTTPServiceUnavailable(text='Selected LLM not configured or unavailable')
         if resolve_lock.locked():
             raise web.HTTPTooManyRequests(text='An LLM request is already running')
         async with resolve_lock:
             generation, settings_revision = editor.generation, editor.settings['revision']
             image = await asyncio.to_thread(path.read_bytes)
-            result = await describe_photo(image, llm_key, editor.settings['values']['reasoning_effort'], data.get('name'))
+            config = dict(editor.settings['values'])
+            result = await describe_photo(image, model_key(config['llm_model']), config['reasoning_effort'], data.get('name'), model=config['llm_model'])
             photo_stopped()
             photos.check(data['expected_revision'])
             if generation != editor.generation or settings_revision != editor.settings['revision']:
                 raise web.HTTPConflict(text='Description cancelled or settings changed; retry explicitly')
-            return web.json_response({**result, 'model': MODEL})
+            return web.json_response({**result, 'model': config['llm_model']})
 
     async def photo_image(request):
         photo_id = request.match_info['id']
@@ -474,6 +486,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 metadata, png = await asyncio.to_thread(render_map, editor.grid, values, metadata['display']['view_revision'] + 1, editor.detected)
             atomic_json(editor.directory / 'settings.json', saved)
             editor.settings, editor.metadata, editor.png = saved, metadata, png
+            update_llm_status()
         await editor.emit('settings')
         return web.json_response({**saved, 'llm_models': MODEL_OPTIONS})
 
@@ -498,7 +511,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 if kind == 'teach' and data.get('overwrite') is True:
                     data = {**data, 'station_digest': digest_station(data['expected_station'])}
                 if kind == 'approach_item':
-                    if not llm_key or data.get('index_revision') != photos.value['revision']:
+                    if not model_key() or data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Configured LLM and current photo index required for approach')
                     snapshot = photos.snapshot(editor.grid['map_id'])
                     item = next((i for i in snapshot['items'] if i['id'] == data.get('item_id')), None)
@@ -524,19 +537,19 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if not item or (kind == 'fetch' and (item['station_status'] != 'ready' or not item['observation_current'])):
                         raise ValueError('Confirmed current-map station association required')
                     if kind == 'fetch_test':
-                        if not llm_key:
+                        if not model_key():
                             raise ValueError('Configure the LLM before testing alignment')
                         if data.get('fetch_revision') != fetch_settings['revision'] or type(data.get('preview')) is not bool:
                             raise ValueError('Fetch settings changed or test mode missing; retry')
-                    if llm_key and not item['reference_photo_id']:
+                    if model_key() and not item['reference_photo_id']:
                         raise ValueError('Upload and associate an item reference photo first')
-                    if llm_key and not item.get('grasp_goal_ready'):
+                    if model_key() and not item.get('grasp_goal_ready'):
                         raise ValueError('Recapture ARM CALIBRATION GOAL with measured Z before alignment')
                     if kind == 'fetch':
                         link = item['station_link']
                         data = {**data, 'station': link['name'], 'station_digest': link['digest']}
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
-                            'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'], calibration_z_mm=item['calibration_z_mm']) if llm_key else None}
+                            'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'], calibration_z_mm=item['calibration_z_mm']) if model_key() else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):
                         raise ValueError('Fresh front camera required for map updating')
@@ -677,7 +690,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         async def estimate_observations():
             while True:
                 await asyncio.sleep(.5)
-                if not llm_key or resolve_lock.locked() or not photos.value['items']:
+                if not model_key() or resolve_lock.locked() or not photos.value['items']:
                     continue
                 if editor.hardware and editor.hardware.control.get('phase') not in ('idle', 'update_paused', 'updating_map', 'navigating'):
                     continue
@@ -698,7 +711,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 await editor.emit('photos')
                 try:
                     image = await asyncio.to_thread(photos.image_path(photo['id']).read_bytes)
-                    estimates = await estimate_items(image, map_png, map_info, photo, items, llm_key, location_calibration)
+                    model = editor.settings['values']['llm_model']
+                    estimates = await estimate_items(image, map_png, map_info, photo, items, model_key(model), location_calibration, model=model)
                     analysis = dict(status='complete', catalog_signature=signature, estimates=estimates)
                 except (web.HTTPException, OSError, ValueError, RuntimeError) as exc:
                     analysis = dict(status='error', catalog_signature=signature, estimates=[], error=str(exc)[:300])
@@ -740,7 +754,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     continue
                 handled = value['id']
                 if fetch_log.get('task_id') != value['task_id']:
-                    fetch_log.update(task_id=value['task_id'], rounds=[])
+                    fetch_log.update(task_id=value['task_id'], rounds=[], llm_model=editor.settings['values']['llm_model'],
+                                     reasoning_effort=editor.settings['values']['reasoning_effort'])
                 entry = dict(id=handled, round=value.get('round', len(fetch_log['rounds']) + 1),
                              mode=value.get('mode', 'grasp'), preview=value.get('preview', False), status='requesting', started_at_s=time.time())
                 fetch_log['rounds'] = (fetch_log['rounds'] + [entry])[-33:]
@@ -748,8 +763,10 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 started = time.monotonic()
                 photo = None
                 try:
-                    if not llm_key:
-                        raise ValueError('OpenRouter key unavailable for fetch calibration')
+                    model = fetch_log['llm_model']
+                    key = model_key(model)
+                    if not key:
+                        raise ValueError('Selected LLM unavailable for fetch calibration')
                     if resolve_lock.locked():
                         raise ValueError('Another LLM request is running; retry fetch explicitly')
                     async with resolve_lock:
@@ -767,8 +784,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             mime = 'jpeg' if image_path.with_suffix('.jpg').is_file() else 'png'
                             image_path = image_path.with_suffix('.jpg') if mime == 'jpeg' else image_path
                             reference_image = 'data:image/' + mime + ';base64,' + base64.b64encode(await asyncio.to_thread(image_path.read_bytes)).decode('ascii')
-                            result = await refine_approach(value, llm_key, location_calibration,
-                                dict(image=reference_image, base_pose=reference['base_pose']), trace=entry)
+                            result = await refine_approach(value, key, location_calibration,
+                                dict(image=reference_image, base_pose=reference['base_pose']), trace=entry, model=model)
                             await asyncio.to_thread(editor.hardware.refresh)
                             if not current(value):
                                 raise ValueError('Item approach stopped or changed during vision request')
@@ -790,8 +807,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             goal_image = None
                             if value.get('stage', 'base') == 'arm':
                                 goal_image = await asyncio.to_thread(photos.reference_image, value['item']['arm_goal_photo_id'])
-                            result = await locate_pickup(value['images'], value['item'], llm_key, reference_image, value['history'],
-                                                         prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image)
+                            result = await locate_pickup(value['images'], value['item'], key, reference_image, value['history'],
+                                                         prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image,
+                                                         model=model, effort=fetch_log['reasoning_effort'])
                             entry.update(correction=alignment_command(result, value.get('limits')))
                     entry.update(status='returned')
                     response = dict(id=handled, result=result)

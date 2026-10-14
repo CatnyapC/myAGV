@@ -11,7 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from web_backend.map_data import demo_map, dominant_angle, local_to_world, render_map, world_to_local
 from web_backend.server import DEFAULT_SETTINGS, boundary, create_app
-from web_backend.resolve import MODELS
+from web_backend.resolve import MODEL_OPTIONS
 
 
 class MapGeometryTest(unittest.TestCase):
@@ -97,8 +97,9 @@ class EditorAPITest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(preferences['values']['reasoning_effort'], 'off')
                 self.assertEqual(preferences['values']['manual_angle_deg'], 12)
                 before_map = await (await client.get('/api/map')).json()
-                for model in MODELS:
-                    for effort in ('off', 'low', 'high', 'max'):
+                for option in MODEL_OPTIONS:
+                    model = option['id']
+                    for effort in option['efforts']:
                         values = {**preferences['values'], 'llm_model': model, 'reasoning_effort': effort}
                         response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values=values))
                         self.assertEqual(response.status, 200, await response.text())
@@ -110,7 +111,7 @@ class EditorAPITest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await client.get(before_map['png_url'])).status, 200)
                 self.assertEqual((await client.get(f"/api/global-costmap.png?view_revision={before_map['display']['view_revision']}&zone_revision=0")).status, 200)
                 saved = path.read_text()
-                for invalid in ({'reasoning_effort': 'medium'}, {'reasoning_effort': []}, {'llm_model': 'invented/model'}):
+                for invalid in ({'reasoning_effort': 'invented'}, {'reasoning_effort': []}, {'llm_model': 'invented/model'}):
                     response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values={**values, **invalid}))
                     self.assertEqual(response.status, 400)
                     self.assertEqual(path.read_text(), saved)

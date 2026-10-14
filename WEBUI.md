@@ -143,7 +143,67 @@ writer lock and run in a storage thread so STOP/navigation remain responsive.
 Runtime data and dependencies are ignored by Git. Invalid saved data fails startup
 instead of silently replacing it. The UI does not store credentials.
 
-## OpenRouter configuration
+## LLM configuration
+
+Settings > **Model** also offers **GPT-6.1 Sol · Local Codex**. Use Codex CLI
+0.162.1 or newer; version 0.140.0 rejected this model in our deployment. This uses the
+Mac's Codex CLI ChatGPT login through a loopback HTTP adapter and an SSH reverse
+tunnel. It does not send Codex credentials to the robot or require an OpenRouter
+key. Model access depends on the signed-in account: the CLI must successfully
+complete inference before a model is considered verified. A model catalog entry
+alone does not establish access.
+
+On the Mac, install the web dependencies, install Codex CLI, and run `codex login`
+with ChatGPT. Create a private bridge token once:
+
+```bash
+uv sync --extra web
+mkdir -p ~/.config/myagv
+chmod 700 ~/.config/myagv
+python3 -c 'import os,secrets; p=os.path.expanduser("~/.config/myagv/codex-token"); fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600); os.write(fd,secrets.token_hex(32).encode()); os.close(fd)'
+```
+
+Copy **only this bridge token** over SSH to the robot's
+`~/.config/myagv/codex-token`, with directory mode 700 and file mode 600. Keep
+Codex's login credentials on the Mac. Configure a dedicated SSH key at
+`~/.ssh/myagv-codex-tunnel` for unattended forwarding to `er@172.28.13.26`.
+If public-key authentication is disabled, enable it for that account before
+starting the tunnel. Our test machine has a `Match User er` override and a
+backup at `/etc/ssh/sshd_config.before-myagv-codex`. Its authorized tunnel key
+disables shell sessions and restricts remote listening to `127.0.0.1:9008`.
+The Mac PM2 config runs these two processes:
+
+```bash
+pm2 start ecosystem.codex.config.cjs
+pm2 save
+```
+
+The adapter listens only on `127.0.0.1:9008`. The tunnel exposes the same loopback
+port on the robot. Robot API startup needs `MYAGV_CODEX_TOKEN_FILE` pointing to
+its token file; `ecosystem.config.cjs` supplies the default path. Restart an
+existing API process with that variable set, preserving its other environment:
+
+```bash
+MYAGV_CODEX_TOKEN_FILE="$HOME/.config/myagv/codex-token" pm2 restart myagv-api --update-env
+pm2 save
+```
+
+Select Local Codex in Settings after deployment. Resolve, photo description,
+location estimation, approach and ALIGN use the selected provider. ALIGN freezes
+the model and effort for each task and retains the existing measured-Z gate,
+image bounds checks, movement limits and STOP checks. Local Codex receives inline
+images and an output schema over app-server stdio, with ephemeral threads, shell,
+MCP, plugins, hooks and child agents disabled. Each child process is terminated
+after completion, cancellation or a 28-second deadline. The adapter accepts one
+request at a time. Offline Macs, broken tunnels, unavailable models, quota errors,
+timeouts and incomplete JSON fail explicitly; there is no provider fallback.
+Configured means the bridge token was loaded, not that inference is healthy.
+
+Official references: [Codex app-server](https://learn.chatgpt.com/docs/app-server)
+and [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source).
+The latter is the recommended future route for a separately authorized app.
+
+### OpenRouter
 
 Settings > **Model** selects DeepSeek V4.1 Flash or V4 Pro 0813. **Thinking** selects
 Off / Low / High / Max. Flash + Off is the default. Both choices auto-save after

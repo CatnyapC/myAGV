@@ -11,7 +11,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from web_backend.map_data import demo_map
 from web_backend.photos import PhotoIndex, demo_frame
-from web_backend.resolve import MODEL, MODELS, load_key, validate_result
+from web_backend.resolve import MODEL, MODELS, CODEX_MODEL, load_key, validate_result
 from web_backend.server import create_app
 
 
@@ -114,7 +114,7 @@ class ResolverAPITest(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(len(calls), call_count)
                         mode = 'matched'
                         preferences = await (await client.get('/api/settings')).json()
-                        for expected_model in MODELS:
+                        for expected_model in (m for m in MODELS if m != CODEX_MODEL):
                             for expected_effort in ('off', 'low', 'high', 'max'):
                                 values = {**preferences['values'], 'llm_model': expected_model, 'reasoning_effort': expected_effort}
                                 response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values=values))

@@ -112,7 +112,7 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
                         base_pose=dict(x_m=1.5, y_m=3, yaw_rad=0)), 2)
             mode, entered, release = 'ok', asyncio.Event(), asyncio.Event()
 
-            async def infer(image, map_image, map_info, observation, items, key, config):
+            async def infer(image, map_image, map_info, observation, items, key, config, model=None):
                 self.assertTrue(image.startswith(b'\x89PNG'))
                 self.assertTrue(map_image.startswith(b'\x89PNG'))
                 self.assertEqual(observation['base_pose']['x_m'], 1.5)
