@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { Button } from './ui';
+import { MeasuredPhoto } from './MeasuredPhoto';
 
 type TurnSize = 's' | 'm' | 'l';
 type TurnFields = Record<`turn_${TurnSize}_${'speed_rad_s' | 'duration_s'}`, number>;
@@ -10,6 +11,8 @@ type Round = {
   id: string; round: number; mode?: 'grasp' | 'approach'; stage?: 'base' | 'arm'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
   model?: string; messages?: [{ content: string }, { content: Part[] }];
   result_json?: string; correction?: { X: number; Y?: number; turn_deg: number }; error?: string;
+  measurement?: { goal: number[]; current: number[] };
+  measured_images?: { label: string; image: string; bounds?: number[] }[];
   base_command?: { forward_m: number; turn_deg: number }; corrected_location?: { x_m: number; y_m: number; uncertainty_m: number };
 };
 
@@ -92,7 +95,7 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos · thinking off · 64 output tokens. Test buttons save edits first.</span>
-    <span className="muted">Stage 1: front midpoint within 45–55% of image width; base only. After 5 rotations without clear progress, accept coarse position. Stage 2: base locked, arm X/Y match the saved top-camera GOAL, including visible size and cropping. Arm returns visible bounds (0–1000); code computes 10/5/1 mm steps and completion. Unclear bounds or pose stop with an error.</span>
+    <span className="muted">Stage 1: front midpoint within 45–55%; base only. Stage 2: base locked, arm X/Y match GOAL. Confirmed blue-cap items use local camera measurements and fixed GOAL bounds: one frame within 3% position and 25% width completes alignment. Other items use LLM bounds. Missing or ambiguous targets stop with an error.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
@@ -102,7 +105,7 @@ export function FetchTest(props: {
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
-    <span className="subheading">LLM ROUNDS</span>
+    <span className="subheading">ALIGNMENT ROUNDS</span>
     {!rounds.length && <span className="muted">No requests yet. Latest task only; STOP clears logs.</span>}
     {rounds.map(round => {
       const parts = round.messages?.[1].content ?? [];
@@ -110,12 +113,15 @@ export function FetchTest(props: {
         <header><strong>Round {round.round}</strong><span>{round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.stage || round.mode} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
         <span className="muted">{new Date(round.started_at_s * 1000).toLocaleTimeString()} · {round.model}</span>
         {round.result_json && <pre>LLM: {round.result_json}</pre>}
+        {round.measurement && <pre>Measured: {JSON.stringify(round.measurement)}</pre>}
         {round.correction && <span>Suggestion: arm X {round.correction.X} mm · Y {round.correction.Y ?? 0} mm · base {round.correction.turn_deg}° (positive = clockwise)</span>}
         {round.base_command && <span>Base suggestion: forward {(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
         {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}
         <span className="muted">Request log; movement completion appears in TASK. History labels show previously executed commands.</span>
         {round.error && <span role="alert" className="muted">{round.error}</span>}
-        <div className="fetch-log-images">{parts.map((part, i) => part.image_url && <figure key={i}>
+        <div className="fetch-log-images">{round.measured_images?.map(view => <figure key={view.label}>
+          <MeasuredPhoto src={view.image} alt={view.label} bounds={view.bounds} /><figcaption>{view.label}{view.bounds && ` · ${view.bounds.join(', ')}`}</figcaption>
+        </figure>)}{parts.map((part, i) => part.image_url && <figure key={i}>
           <img src={part.image_url.url} alt={parts[i - 1]?.text ?? 'LLM camera input'} />
           <figcaption>{parts[i - 1]?.text}</figcaption>
         </figure>)}</div>

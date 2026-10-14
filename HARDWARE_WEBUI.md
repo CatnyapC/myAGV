@@ -147,6 +147,18 @@ A five-minute review timeout cancels the task.
 
 ### Dual-camera Fetch calibration
 
+For the blue salt-can cap, open its item editor and choose **Measure blue-cap
+GOAL**. Check the green box on the saved ARM GOAL, then **Confirm box & use
+blue-cap alignment**. This saves the measured bounds once, tied to that exact
+photo. Recapturing or removing the goal invalidates the saved measurement.
+The base stage still uses the LLM. The arm stage uses local OpenCV blue-cap
+contours instead of model coordinates, with GOAL/CURRENT boxes in ALIGNMENT
+ROUNDS. One stationary frame within 3% horizontal position, top/bottom boundaries
+and 25% visible width completes alignment; no consecutive-frame requirement.
+Missing or ambiguous blue-cap contours stop the task. This detector is specific
+to the saturated blue salt-can cap, not other items. Install/update the API's
+OpenCV dependency with `uv sync --locked --extra web` before restarting it.
+
 The arm base mounts facing chassis left; J1=90 faces forward. The arm camera
 mounts 90 degrees clockwise, with the target near the bottom of its image.
 Its image X controls logical arm X (chassis forward/back). Front camera image X

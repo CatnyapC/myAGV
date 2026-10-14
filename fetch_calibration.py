@@ -75,7 +75,7 @@ def qualitative_alignment(result, config):
     return moves
 
 
-def measured_arm_alignment(result, config):
+def measured_arm_alignment(result, config, blue_cap=False):
     config = calibration_config(config)
     for box in result.values():
         if (not isinstance(box, list) or len(box) != 4
@@ -85,14 +85,16 @@ def measured_arm_alignment(result, config):
     goal, current = result['goal'], result['current']
     x = (current[0] + current[2] - goal[0] - goal[2]) / 2
     goal_height, height = goal[3] - goal[1], current[3] - current[1]
-    y = height - goal_height  # More exposed => Y+.
+    y = goal[1] - current[1] if blue_cap else height - goal_height  # More exposed => Y+.
+    tolerance = 30 if blue_cap else 20
     width_ratio = (current[2] - current[0]) / (goal[2] - goal[0])
     area_ratio = width_ratio * height / goal_height
-    if abs(x) <= 20 and abs(y) <= 20 and (abs(width_ratio - 1) > .10 or abs(area_ratio - 1) > .15
-            or abs(current[1] - goal[1]) > 20 or abs(current[3] - goal[3]) > 20):
+    if abs(x) <= tolerance and abs(y) <= tolerance and (abs(width_ratio - 1) > (.25 if blue_cap else .10)
+            or (not blue_cap and abs(area_ratio - 1) > .15)
+            or abs(current[1] - goal[1]) > tolerance or abs(current[3] - goal[3]) > tolerance):
         raise ValueError('Arm GOAL size or pose still differs; correction direction unclear')
     def step(error):
-        if abs(error) <= 20:
+        if abs(error) <= tolerance:
             return 0
         size = 10 if abs(error) > 150 else 5 if abs(error) > 60 else 1
         return math.copysign(min(config['max_step_mm'], size), error)

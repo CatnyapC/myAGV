@@ -12,7 +12,8 @@ import uuid
 from urllib.parse import urlsplit
 
 from aiohttp import web
-from fetch_calibration import alignment_command, calibration_config
+from fetch_calibration import alignment_command, calibration_config, measured_arm_alignment
+from .blue_cap import blue_cap_bounds
 from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
@@ -164,6 +165,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     fetch_settings['values'] = validate_fetch_settings(fetch_settings['values'])
     # ponytail: latest task only, memory-only logs; persist when long-term comparison is needed.
     fetch_log = dict(revision=0, rounds=[])
+    blue_cap_previews = {}
     stopped_fetch_task = None
 
     async def fetch_config(request):
@@ -369,6 +371,36 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         await editor.emit('photos')
         return web.json_response(await asyncio.to_thread(photos.snapshot, editor.grid['map_id']))
 
+    async def blue_cap_goal(request):
+        data = await request.json()
+        async with photo_lock:
+            photo_stopped()
+            photos.check(data['expected_revision'])
+            item_id = request.match_info['id']
+            item = next((i for i in photos.snapshot(editor.grid['map_id'])['items'] if i['id'] == item_id), None)
+            if not item or not item['grasp_goal_ready']:
+                raise ValueError('Save both GOAL camera views before measuring the blue cap')
+            photo_id = item['grasp_goal']['arm']
+            if type(data.get('confirmed', False)) is not bool:
+                raise ValueError('Invalid blue-cap confirmation')
+            if data.get('confirmed'):
+                preview = blue_cap_previews.get(item_id, {})
+                if preview.get('revision') != photos.value['revision'] or preview.get('photo_id') != photo_id:
+                    raise ValueError('GOAL or item changed; measure and inspect the blue-cap box again')
+                await asyncio.to_thread(photos.save_blue_cap_goal, item_id,
+                    dict(photo_id=photo_id, bounds=preview['bounds']), photos.value['revision'])
+                blue_cap_previews.pop(item_id, None)
+            else:
+                image = await asyncio.to_thread(photos.reference_image, photo_id)
+                bounds = await asyncio.to_thread(blue_cap_bounds, base64.b64decode(image.split(',', 1)[1]))
+                if bounds[3] < 970:
+                    raise ValueError('Blue-cap GOAL must show the fragment at the bottom edge')
+                preview = dict(photo_id=photo_id, bounds=bounds, revision=photos.value['revision'])
+                blue_cap_previews[item_id] = preview
+                return web.json_response(preview)
+        await editor.emit('photos')
+        return web.json_response(await asyncio.to_thread(photos.snapshot, editor.grid['map_id']))
+
     async def photo_edit(request):
         data = await request.json()
         async with photo_lock:
@@ -536,7 +568,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         link = item['station_link']
                         data = {**data, 'station': link['name'], 'station_digest': link['digest']}
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
-                            'vision_item': dict(name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm']) if llm_key else None}
+                            'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'],
+                                                **({'blue_cap_goal': item['blue_cap_goal']} if item.get('blue_cap_goal') else {})) if llm_key else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):
                         raise ValueError('Fresh front camera required for map updating')
@@ -790,8 +823,23 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             goal_image = None
                             if value.get('stage', 'base') == 'arm':
                                 goal_image = await asyncio.to_thread(photos.reference_image, value['item']['arm_goal_photo_id'])
-                            result = await locate_pickup(value['images'], value['item'], llm_key, reference_image, value['history'],
-                                                         prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image)
+                            blue = value['item'].get('blue_cap_goal') if goal_image else None
+                            if blue:
+                                item = next((i for i in photos.value['items'] if i['id'] == value['item']['id']), {})
+                                if item.get('blue_cap_goal') != blue or blue['photo_id'] != value['item']['arm_goal_photo_id']:
+                                    raise ValueError('Confirmed blue-cap GOAL changed during alignment')
+                                entry.update(model='OpenCV blue cap', stage='arm', measured_images=[
+                                    dict(label='Fixed GOAL', image=goal_image, bounds=blue['bounds']),
+                                    dict(label='CURRENT', image=value['images']['arm'])])
+                                bounds = await asyncio.to_thread(blue_cap_bounds, base64.b64decode(value['images']['arm'].split(',', 1)[1], validate=True))
+                                entry['measured_images'][1]['bounds'] = bounds
+                                measurement = dict(goal=blue['bounds'], current=bounds)
+                                entry['measurement'] = measurement
+                                result = measured_arm_alignment(measurement, value.get('limits'), blue_cap=True)
+                                entry['aligned_perfectly'] = not any(result.values())
+                            else:
+                                result = await locate_pickup(value['images'], value['item'], llm_key, reference_image, value['history'],
+                                                             prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image)
                             entry.update(correction=alignment_command(result, value.get('limits')))
                     entry.update(status='returned')
                     response = dict(id=handled, result=result)
@@ -910,6 +958,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app.router.add_post('/api/photos/capture', capture_photo)
     app.router.add_post('/api/items/grasp-goal', capture_grasp_goal)
     app.router.add_post('/api/items/grasp-height', capture_grasp_goal)
+    app.router.add_post('/api/items/{id}/blue-cap-goal', blue_cap_goal)
     app.router.add_patch('/api/photos/{id}', photo_edit)
     app.router.add_delete('/api/photos/{id}', photo_edit)
     app.router.add_get('/api/photos/{id}/image', photo_image)
