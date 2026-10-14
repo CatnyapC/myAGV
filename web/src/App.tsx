@@ -44,7 +44,7 @@ export function App() {
   const [packet, setPacket] = useState<{ info: MapInfo; image: string } | null>(null);
   const [zones, setZones] = useState<Zones | null>(null);
   const [savedSettings, setSavedSettings] = useState<Settings | null>(null);
-  const [settingsDraft, setSettingsDraft] = useState<Settings['values']>({ auto_align: true, manual_angle_deg: 0, llm_model: 'deepseek/deepseek-v4.1-flash', reasoning_effort: 'off' });
+  const [settingsDraft, setSettingsDraft] = useState<Settings['values']>({ auto_align: true, manual_angle_deg: 0, llm_model: 'deepseek/deepseek-v4.1-flash', reasoning_effort: 'off', fast_mode: true });
   const [angleText, setAngleText] = useState('0');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
@@ -694,7 +694,12 @@ export function App() {
           <label className="setting-row">Thinking<select value={settingsDraft.reasoning_effort} disabled={!canEdit || !savedSettings || busy}
             onChange={event => updateSetting({ ...settingsDraft, reasoning_effort: event.target.value })}>
             {savedSettings?.llm_models.find(model => model.id === settingsDraft.llm_model)?.efforts.map(effort => <option value={effort} key={effort}>{effort === 'off' ? 'Off' : effort[0].toUpperCase() + effort.slice(1)}</option>)}
-          </select></label><div className="section-divider" />
+          </select></label>
+          <label className="setting-row">Fast mode<input type="checkbox" checked={settingsDraft.fast_mode}
+            disabled={!canEdit || !savedSettings || busy || !settingsDraft.llm_model.startsWith('codex-local/')}
+            onChange={event => updateSetting({ ...settingsDraft, fast_mode: event.target.checked })} /></label>
+          <span className="muted">Local Codex only · Faster responses, higher usage · Applies to the next task</span>
+          <div className="section-divider" />
           <span className="subheading">MAP DISPLAY</span>
           <label className="setting-row">Auto-align walls<input type="checkbox" checked={settingsDraft.auto_align} disabled={!canEdit}
             onChange={e => updateSetting({ ...settingsDraft, auto_align: e.target.checked })} /></label>

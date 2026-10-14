@@ -96,22 +96,24 @@ class EditorAPITest(unittest.IsolatedAsyncioTestCase):
                 preferences = await (await client.get('/api/settings')).json()
                 self.assertEqual(preferences['values']['reasoning_effort'], 'off')
                 self.assertEqual(preferences['values']['manual_angle_deg'], 12)
+                self.assertTrue(preferences['values']['fast_mode'])
                 before_map = await (await client.get('/api/map')).json()
                 for option in MODEL_OPTIONS:
                     model = option['id']
                     for effort in option['efforts']:
-                        values = {**preferences['values'], 'llm_model': model, 'reasoning_effort': effort}
+                        values = {**preferences['values'], 'llm_model': model, 'reasoning_effort': effort, 'fast_mode': effort == 'low'}
                         response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values=values))
                         self.assertEqual(response.status, 200, await response.text())
                         preferences = await response.json()
                         self.assertEqual(json.loads(path.read_text())['values'], values)
                         state = await (await client.get('/api/state')).json()
                         self.assertEqual((state['llm']['model'], state['llm']['reasoning_effort']), (model, effort))
+                        self.assertEqual(state['llm']['fast_mode'], values['fast_mode'])
                 self.assertEqual(await (await client.get('/api/map')).json(), before_map)
                 self.assertEqual((await client.get(before_map['png_url'])).status, 200)
                 self.assertEqual((await client.get(f"/api/global-costmap.png?view_revision={before_map['display']['view_revision']}&zone_revision=0")).status, 200)
                 saved = path.read_text()
-                for invalid in ({'reasoning_effort': 'invented'}, {'reasoning_effort': []}, {'llm_model': 'invented/model'}):
+                for invalid in ({'reasoning_effort': 'invented'}, {'reasoning_effort': []}, {'llm_model': 'invented/model'}, {'fast_mode': 'false'}, {'fast_mode': 1}):
                     response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'], values={**values, **invalid}))
                     self.assertEqual(response.status, 400)
                     self.assertEqual(path.read_text(), saved)
@@ -120,6 +122,15 @@ class EditorAPITest(unittest.IsolatedAsyncioTestCase):
                 restored = await (await client.get('/api/settings')).json()
                 self.assertEqual(restored['values'], values)
                 self.assertEqual(restored['revision'], preferences['revision'])
+
+    async def test_existing_llm_settings_gain_fast_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = {k: v for k, v in DEFAULT_SETTINGS.items() if k != 'fast_mode'}
+            Path(directory, 'settings.json').write_text(json.dumps(dict(revision=4, values=values)))
+            async with TestClient(TestServer(create_app(directory))) as client:
+                preferences = await (await client.get('/api/settings')).json()
+                self.assertEqual(preferences['values'], dict(values, fast_mode=True))
+                self.assertEqual(preferences['revision'], 4)
 
 
 if __name__ == '__main__':

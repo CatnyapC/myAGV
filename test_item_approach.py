@@ -194,7 +194,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             entered, release = asyncio.Event(), asyncio.Event()
             cancelling = False
 
-            async def provider(body, key, timeout):
+            async def provider(body, key, timeout, fast_mode=True):
                 bodies.append(body)
                 if cancelling:
                     entered.set()

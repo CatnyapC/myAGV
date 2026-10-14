@@ -614,8 +614,10 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             index.save_grasp_goal(item_id, cameras, index.value['revision'], grid['map_id'])
             entered, release = asyncio.Event(), asyncio.Event()
             provider_result = dict(front='left_large')
+            fast_requests = []
 
-            async def provider(body, key, timeout, trace=None):
+            async def provider(body, key, timeout, trace=None, fast_mode=True):
+                fast_requests.append(fast_mode)
                 entered.set()
                 await release.wait()
                 return provider_result
@@ -673,6 +675,10 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(log['rounds'][0]['status'], 'requesting')
                         self.assertEqual(len([p for p in log['rounds'][0]['messages'][1]['content'] if p['type'] == 'image_url']), 2)
                         self.assertNotIn('private-test-key', json.dumps(log))
+                        preferences = await (await client.get('/api/settings')).json()
+                        response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'],
+                            values={**preferences['values'], 'fast_mode': False}))
+                        self.assertEqual(response.status, 200)
                         self.assertEqual(await (await client.get(f"/api/fetch-log?after={log['revision']}")).json(), dict(revision=log['revision']))
                     finally:
                         release.set()
@@ -731,6 +737,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         dict(x_mm=35,y_mm=-10,aligned=False))
                     self.assertTrue(warm['calibration_reused'])
                     self.assertEqual(warm['correction'],dict(X=35,Y=-10,turn_deg=0))
+                    self.assertEqual(fast_requests[:5], [True] * 5)
+                    self.assertFalse(fast_requests[5])
                     hardware.control['task_id'] = 'task'
                     entered.clear()
                     release.clear()

@@ -32,6 +32,8 @@ def load_token():
 
 
 def inputs(body):
+    if body.get('service_tier', 'fast') not in ('fast', 'default'):
+        raise ValueError('Unsupported Codex service tier')
     if body.get('model') != MODEL or body.get('stream') is not False:
         raise ValueError('Unsupported Codex model or streaming mode')
     messages = body['messages']
@@ -74,13 +76,13 @@ def inputs(body):
     return instructions, result, schema, effort
 
 
-def codex_command():
+def codex_command(service_tier='fast'):
     binary = shutil.which('codex')
     if not binary:
         raise RuntimeError('Codex CLI not installed')
     command = [binary, 'app-server', '--listen', 'stdio://']
-    config = dict(model_provider='openai', service_tier='fast', web_search='disabled', project_doc_max_bytes=0)
-    config['features.fast_mode'] = True
+    config = dict(model_provider='openai', service_tier=service_tier, web_search='disabled', project_doc_max_bytes=0)
+    config['features.fast_mode'] = service_tier == 'fast'
     for feature in ('shell_tool', 'unified_exec', 'apply_patch_freeform', 'apps', 'multi_agent',
                     'hooks', 'remote_plugin', 'shell_snapshot', 'memories'):
         config['features.' + feature] = False
@@ -105,6 +107,7 @@ class CodexConversation:
         self.sequence = None
         self.last_used = 0
         self.service_tier = None
+        self.requested_service_tier = None
         self.phase = 'startup'
         self.turn_id = None
         self.last_event = None
@@ -150,13 +153,14 @@ class CodexConversation:
 
     async def run(self, body):
         instructions, content, schema, effort = inputs(body)
+        service_tier = body.get('service_tier', 'fast')
         async with asyncio.timeout(TIMEOUT_S):
             if self.process is None:
                 environment = dict(os.environ)
                 for name in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'):
                     environment.pop(name, None)
                 self.directory = tempfile.TemporaryDirectory(prefix='myagv-codex-')
-                self.process = await asyncio.create_subprocess_exec(*codex_command(), cwd=self.directory.name, env=environment,
+                self.process = await asyncio.create_subprocess_exec(*codex_command(service_tier), cwd=self.directory.name, env=environment,
                     stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL, limit=32 * 1024 * 1024)
                 await self.rpc('initialize', dict(clientInfo=dict(name='myagv_vision', title='myAGV Vision', version='1.0')))
@@ -165,17 +169,20 @@ class CodexConversation:
                 if (account.get('account') or {}).get('type') != 'chatgpt':
                     raise RuntimeError('Sign in to Codex CLI with ChatGPT first')
                 thread = await self.rpc('thread/start', dict(model=body['model'].removeprefix('codex-local/'), cwd=self.directory.name,
-                    ephemeral=True, approvalPolicy='never', sandbox='read-only', serviceTier='fast',
+                    ephemeral=True, approvalPolicy='never', sandbox='read-only', serviceTier=service_tier,
                     baseInstructions=instructions,
                     developerInstructions='Use only the supplied text and images. Never call tools, execute commands, access files or control hardware. Return only the requested JSON.',
                     serviceName='myagv_vision'))
                 self.thread_id = thread['thread']['id']
                 self.service_tier = thread.get('serviceTier')
+                self.requested_service_tier = service_tier
                 self.instructions = instructions
             elif instructions != self.instructions:
                 raise ValueError('Session instructions changed; restart ALIGN')
+            elif service_tier != self.requested_service_tier:
+                raise ValueError('Session Fast mode changed; restart ALIGN')
             turn = await self.rpc('turn/start', dict(threadId=self.thread_id, input=content, effort=effort,
-                outputSchema=schema, serviceTier='fast'))
+                outputSchema=schema, serviceTier=service_tier))
             turn_id = turn['turn']['id']
             self.turn_id = turn_id
             self.phase = 'inference'

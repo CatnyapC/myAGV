@@ -26,7 +26,7 @@ from .codex_bridge import MODEL as CODEX_MODEL, load_token
 from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, refine_approach
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off')
+DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off', fast_mode=True)
 DISPLAY_FIELDS = ('auto_align', 'manual_angle_deg')
 
 
@@ -41,6 +41,8 @@ def validate_settings(value):
     if type(value['auto_align']) is not bool or isinstance(angle, bool) or not isinstance(angle, (int, float)) or not math.isfinite(angle) or not -180 <= angle <= 180:
         raise ValueError('Invalid display settings')
     validate_llm(value['llm_model'], value['reasoning_effort'])
+    if type(value['fast_mode']) is not bool:
+        raise ValueError('Invalid Fast mode setting')
     return value
 
 
@@ -54,7 +56,7 @@ class Editor:
                 raise ValueError('Waiting for ROS bridge map snapshot')
         self.grid = self.hardware.grid if self.hardware else demo_map()
         self.settings = load_json(self.directory / 'settings.json', dict(revision=0, values=DEFAULT_SETTINGS.copy()))
-        if isinstance(self.settings['values'], dict) and set(self.settings['values']) == set(DISPLAY_FIELDS):
+        if isinstance(self.settings['values'], dict) and set(self.settings['values']) in (set(DISPLAY_FIELDS), set(DEFAULT_SETTINGS) - {'fast_mode'}):
             self.settings['values'] = {**DEFAULT_SETTINGS, **self.settings['values']}
         validate_settings(self.settings['values'])
         self.zones = dict(map_id=self.grid['map_id'], revision=0, zones=[])
@@ -84,12 +86,12 @@ class Editor:
                         cameras=self.hardware.cameras, localization_available=navigation['pose'] is not None,
                         zone_enforcement='ros-global-local' if navigation['costmap']['ready'] else 'pending', navigation=navigation,
                         llm={**self.llm, 'model': self.settings['values']['llm_model'],
-                             'reasoning_effort': self.settings['values']['reasoning_effort']})
+                             'reasoning_effort': self.settings['values']['reasoning_effort'], 'fast_mode': self.settings['values']['fast_mode']})
         return dict(robot_id='local-demo', demo=True, phase=self.sim.phase, motion_available=False,
                     simulation_available=True, cameras_available=False, localization_available=False,
                     zone_enforcement='simulated-global',
                     navigation=self.sim.telemetry(), llm={**self.llm, 'model': self.settings['values']['llm_model'],
-                                                        'reasoning_effort': self.settings['values']['reasoning_effort']})
+                                                        'reasoning_effort': self.settings['values']['reasoning_effort'], 'fast_mode': self.settings['values']['fast_mode']})
 
     @property
     def generation(self):
@@ -290,7 +292,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     raise web.HTTPConflict(text='Resolution cancelled or records changed; retry explicitly')
             index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
             check_current()
-            result = await resolve_items(data['text'].strip(), index['items'], model_key(config['llm_model']), config['llm_model'], config['reasoning_effort'])
+            result = await resolve_items(data['text'].strip(), index['items'], model_key(config['llm_model']), config['llm_model'], config['reasoning_effort'], fast_mode=config['fast_mode'])
             check_current()
             if result['status'] == 'matched':
                 index = await asyncio.to_thread(photos.snapshot, editor.grid['map_id'])
@@ -425,7 +427,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             generation, settings_revision = editor.generation, editor.settings['revision']
             image = await asyncio.to_thread(path.read_bytes)
             config = dict(editor.settings['values'])
-            result = await describe_photo(image, model_key(config['llm_model']), config['reasoning_effort'], data.get('name'), model=config['llm_model'])
+            result = await describe_photo(image, model_key(config['llm_model']), config['reasoning_effort'], data.get('name'), model=config['llm_model'], fast_mode=config['fast_mode'])
             photo_stopped()
             photos.check(data['expected_revision'])
             if generation != editor.generation or settings_revision != editor.settings['revision']:
@@ -752,7 +754,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 try:
                     image = await asyncio.to_thread(photos.image_path(photo['id']).read_bytes)
                     model = editor.settings['values']['llm_model']
-                    estimates = await estimate_items(image, map_png, map_info, photo, items, model_key(model), location_calibration, model=model)
+                    estimates = await estimate_items(image, map_png, map_info, photo, items, model_key(model), location_calibration, model=model, fast_mode=editor.settings['values']['fast_mode'])
                     analysis = dict(status='complete', catalog_signature=signature, estimates=estimates)
                 except (web.HTTPException, OSError, ValueError, RuntimeError) as exc:
                     analysis = dict(status='error', catalog_signature=signature, estimates=[], error=str(exc)[:300])
@@ -801,7 +803,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     await release_fetch_sessions()
                     metric = MetricArmCalibration()
                     fetch_log.update(task_id=value['task_id'], rounds=[], llm_model=editor.settings['values']['llm_model'],
-                                     reasoning_effort=editor.settings['values']['reasoning_effort'])
+                                     reasoning_effort=editor.settings['values']['reasoning_effort'], fast_mode=editor.settings['values']['fast_mode'])
                 entry = dict(id=handled, round=value.get('round', len(fetch_log['rounds']) + 1),
                              mode=value.get('mode', 'grasp'), preview=value.get('preview', False), status='requesting', started_at_s=time.time())
                 fetch_log['rounds'] = (fetch_log['rounds'] + [entry])[-33:]
@@ -831,7 +833,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             image_path = image_path.with_suffix('.jpg') if mime == 'jpeg' else image_path
                             reference_image = 'data:image/' + mime + ';base64,' + base64.b64encode(await asyncio.to_thread(image_path.read_bytes)).decode('ascii')
                             result = await refine_approach(value, key, location_calibration,
-                                dict(image=reference_image, base_pose=reference['base_pose']), trace=entry, model=model)
+                                dict(image=reference_image, base_pose=reference['base_pose']), trace=entry, model=model, fast_mode=fetch_log['fast_mode'])
                             await asyncio.to_thread(editor.hardware.refresh)
                             if not current(value):
                                 raise ValueError('Item approach stopped or changed during vision request')
@@ -870,7 +872,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                     metric = MetricArmCalibration()
                             inference = asyncio.create_task(locate_pickup(value['images'], value['item'], key, reference_image, value['history'],
                                 prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image,
-                                model=model, effort=fetch_log['reasoning_effort'], session=session,
+                                model=model, effort=fetch_log['reasoning_effort'], session=session, fast_mode=fetch_log['fast_mode'],
                                 metric=metric if model == CODEX_MODEL and value.get('stage') == 'arm' else None, position=value.get('arm_position_mm')))
                             try:
                                 while not inference.done():

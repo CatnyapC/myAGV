@@ -7,7 +7,7 @@ export type MapInfo = {
 };
 export type Zone = { id: string; corners: Point[] };
 export type Zones = { map_id: string; revision: number; zones: Zone[] };
-export type Settings = { revision: number; values: { auto_align: boolean; manual_angle_deg: number; llm_model: string; reasoning_effort: string };
+export type Settings = { revision: number; values: { auto_align: boolean; manual_angle_deg: number; llm_model: string; reasoning_effort: string; fast_mode: boolean };
   llm_models: { id: string; name: string; efforts: string[] }[] };
 type PhotoBase = { id: string; saved_at_s: number; source: string; image_url: string; available: boolean; map_matches: boolean; item_id?: string; association_source?: 'manual'; current?: boolean; update_key?: string;
   location_analysis?: { status: 'queued' | 'running' | 'complete' | 'error' | 'cancelled'; error?: string } };

@@ -85,7 +85,7 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
         from aiohttp import web
         photo = dict(base_pose=dict(x_m=1.5, y_m=3, yaw_rad=0))
         items = [dict(id='cup', name='Cup', appearance='Red')]
-        async def provider(body, key, timeout):
+        async def provider(body, key, timeout, fast_mode=True):
             self.assertEqual(len([e for e in body['messages'][1]['content'] if e['type'] == 'image_url']), 2)
             context = json.loads(body['messages'][1]['content'][0]['text'])
             self.assertEqual(context['captured_base_pose'], photo['base_pose'])
@@ -94,7 +94,7 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
         with patch('web_backend.resolve.request_json', provider):
             result = await estimate_items(demo_frame('front'), demo_frame('front'), open_map(), photo, items, 'fake', DEFAULT_CONFIG)
             self.assertEqual(result[0]['x_m'], 2.5)
-        async def malicious(body, key, timeout):
+        async def malicious(body, key, timeout, fast_mode=True):
             return dict(estimates=[dict(item_id='cup', bearing_deg=0, distance_m=1, uncertainty_m=.4, confidence=.9, command='go')])
         with patch('web_backend.resolve.request_json', malicious):
             with self.assertRaises(web.HTTPBadGateway):
@@ -112,7 +112,7 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
                         base_pose=dict(x_m=1.5, y_m=3, yaw_rad=0)), 2)
             mode, entered, release = 'ok', asyncio.Event(), asyncio.Event()
 
-            async def infer(image, map_image, map_info, observation, items, key, config, model=None):
+            async def infer(image, map_image, map_info, observation, items, key, config, model=None, fast_mode=True):
                 self.assertTrue(image.startswith(b'\x89PNG'))
                 self.assertTrue(map_image.startswith(b'\x89PNG'))
                 self.assertEqual(observation['base_pose']['x_m'], 1.5)

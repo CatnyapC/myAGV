@@ -67,8 +67,10 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sum(m['method']=='thread/start' for m in sent),1)
             self.assertEqual(sum(m['method']=='turn/start' for m in sent),2)
             self.assertEqual(sent[-1]['params']['input'],followup['messages'][1]['content'])
+            followup['service_tier'] = 'default'
+            with self.assertRaisesRegex(ValueError, 'Fast mode changed'):
+                await bridge.infer(followup, conversation)
             spawn.assert_awaited_once()
-            process.kill.assert_not_called()
             await conversation.close()
         process.kill.assert_called_once()
 
@@ -134,6 +136,8 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
             mutate(value)
             with self.assertRaises(ValueError):
                 bridge.inputs(value)
+        with self.assertRaisesRegex(ValueError, 'service tier'):
+            bridge.inputs(dict(body(), service_tier='invented'))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'token'
             with patch.dict(os.environ, dict(MYAGV_CODEX_TOKEN_FILE=str(path))):
@@ -144,7 +148,7 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(bridge.load_token(), ('unavailable', ''))
 
     async def test_rpc_completion_failure_timeout_and_cancellation_kill_process(self):
-        for mode in ('completed', 'slow', 'failed', 'tool', 'timeout', 'cancelled'):
+        for mode in ('completed', 'standard', 'slow', 'failed', 'tool', 'timeout', 'cancelled'):
             with self.subTest(mode=mode):
                 queue = asyncio.Queue()
                 sent = []
@@ -166,23 +170,27 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                         item = dict(type='commandExecution') if mode == 'tool' else dict(type='agentMessage', phase='final_answer', text='{"ok":true}')
                         def finish():
                             queue.put_nowait(json.dumps(dict(method='item/completed', params=dict(threadId='thread', item=item))).encode())
-                            queue.put_nowait(json.dumps(dict(method='turn/completed', params=dict(threadId='thread', turn=dict(id='turn', status='completed' if mode=='slow' else mode)))).encode())
+                            queue.put_nowait(json.dumps(dict(method='turn/completed', params=dict(threadId='thread', turn=dict(id='turn', status='completed' if mode in ('slow', 'standard') else mode)))).encode())
                         if mode == 'slow':
                             asyncio.get_running_loop().call_later(.04,finish)
                         else:
                             finish()
 
                 process.stdin.write = write
-                with patch.object(bridge, 'codex_command', return_value=['codex']), \
+                with patch.object(bridge, 'codex_command', return_value=['codex']) as command, \
                      patch.object(bridge.asyncio, 'create_subprocess_exec', AsyncMock(return_value=process)), \
                      patch.object(bridge, 'TIMEOUT_S', bridge.TIMEOUT_S/1000 if mode=='slow' else .03):
-                    if mode in ('completed','slow'):
-                        result = await bridge.infer(body())
+                    if mode in ('completed','standard','slow'):
+                        value = body()
+                        tier = 'default' if mode == 'standard' else 'fast'
+                        value['service_tier'] = tier
+                        result = await bridge.infer(value)
+                        command.assert_called_once_with(tier)
                         self.assertEqual(json.loads(result['choices'][0]['message']['content']), dict(ok=True))
                         self.assertTrue(sent[3]['params']['ephemeral'])
                         self.assertEqual(sent[3]['params']['sandbox'], 'read-only')
-                        self.assertEqual(sent[3]['params']['serviceTier'], 'fast')
-                        self.assertEqual(sent[4]['params']['serviceTier'], 'fast')
+                        self.assertEqual(sent[3]['params']['serviceTier'], tier)
+                        self.assertEqual(sent[4]['params']['serviceTier'], tier)
                         self.assertEqual(sent[4]['params']['outputSchema'], body()['response_format']['json_schema']['schema'])
                     elif mode == 'cancelled':
                         task = asyncio.create_task(bridge.infer(body()))
@@ -196,6 +204,31 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                             await bridge.infer(body())
                 process.kill.assert_called_once()
                 process.wait.assert_awaited_once()
+
+    def test_standard_command_overrides_inherited_fast_settings(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, CODEX_HOME=directory), \
+             patch.object(bridge.shutil, 'which', return_value='codex'):
+            for tier in ('fast', 'default'):
+                command = bridge.codex_command(tier)
+                self.assertIn('service_tier=' + json.dumps(tier), command)
+                self.assertIn('features.fast_mode=' + json.dumps(tier == 'fast'), command)
+
+    async def test_fast_setting_routes_only_to_local_codex(self):
+        received = []
+        async def complete(request):
+            received.append(await request.json())
+            return web.json_response(dict(choices=[dict(finish_reason='stop', message=dict(content='{"ok":true}'))]))
+        app = web.Application()
+        app.router.add_post('/v1/chat/completions', complete)
+        async with TestClient(TestServer(app)) as client:
+            url = str(client.make_url('/v1/chat/completions'))
+            with patch.dict(os.environ, MYAGV_CODEX_URL=url), patch('web_backend.resolve.API_URL', url):
+                for enabled in (True, False):
+                    await request_json(body(), 'token', 1, fast_mode=enabled)
+                    self.assertEqual(received[-1]['service_tier'], 'fast' if enabled else 'default')
+                    value = dict(body(), model='deepseek/deepseek-v4.1-flash')
+                    await request_json(value, 'token', 1, fast_mode=enabled)
+                    self.assertNotIn('service_tier', received[-1])
 
     async def test_inference_deadline_has_outer_margin_and_clear_error(self):
         from fetch_calibration import FETCH_VISION_TIMEOUT_S
@@ -257,7 +290,8 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
             request.assert_not_awaited()
             moves = await locate_pickup(dict(arm='data:image/jpeg;base64,AQ=='), dict(name='item', appearance='plain'),
                 'private-token', 'data:image/jpeg;base64,AQ==', [], stage='arm', goal='data:image/jpeg;base64,AQ==',
-                model=bridge.MODEL, effort='medium', trace=trace,session=dict(id='boot:test:arm',sequence=1,start=True))
+                model=bridge.MODEL, effort='medium', trace=trace,session=dict(id='boot:test:arm',sequence=1,start=True), fast_mode=False)
+        self.assertFalse(request.call_args.kwargs['fast_mode'])
         self.assertEqual(request.call_args.args[0]['model'], bridge.MODEL)
         self.assertEqual(request.call_args.args[0]['reasoning'], dict(effort='medium'))
         self.assertEqual(trace['model'], bridge.MODEL)

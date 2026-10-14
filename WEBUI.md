@@ -209,7 +209,11 @@ ALIGN allows 65 seconds for the HTTP request and 70 seconds in the hardware owne
 so the bridge's bounded inference deadline can finish before either outer timeout.
 STOP and lease checks remain active while inference is pending. Deadline logs
 record the RPC/inference phase and last protocol event, without image or prompt content.
-The myAGV adapter explicitly requests Codex Fast mode for every thread and turn.
+Settings > **Fast mode**, below **Thinking**, controls the Codex tier and defaults
+to on, including for existing saved settings. It auto-saves and applies to the next
+task; a running ALIGN keeps its original tier across stages and rounds. The switch
+is disabled for OpenRouter models. Turning it off explicitly requests Standard
+for the adapter process, thread and turns, overriding inherited Fast defaults.
 This leaves the user's global Codex configuration unchanged. Fast mode consumes
 more subscription allowance; see [Codex speed](https://learn.chatgpt.com/docs/agent-configuration/speed).
 
