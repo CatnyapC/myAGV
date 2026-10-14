@@ -682,6 +682,7 @@ class Control:
                 raise ValueError('Physically verify stopped hardware before clearing the fault')
             self.phase, self.base_enabled = 'recovering_stop', False
             self.arm_homed = False
+            self.home_cancelled = True  # Keep the fault latched until all stopped feedback is verified.
             self.robot.recover_base_stop()
             self.connect_arm()
             self.angles = wait_arm(self.arm, timeout=3)

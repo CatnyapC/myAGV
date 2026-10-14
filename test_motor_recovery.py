@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from install_driver_watchdog import patch_recovery
+from robot_control import Stopped
 from robot_ros import RobotROS
 from test_robot_control import fake_control
 
@@ -111,6 +112,17 @@ class MotorRecoveryTest(unittest.TestCase):
         control.deadline = 0
         control.watchdog()
         control.request_stop.assert_called_with('Control heartbeat expired')
+
+    def test_failed_or_cancelled_recovery_stays_locked_even_if_later_stop_feedback_arrives(self):
+        for failure in (TimeoutError('Reset not acknowledged'), Stopped('STOP')):
+            control = fake_control()
+            control.robot.recover_base_stop.side_effect = failure
+            with self.assertRaises(type(failure)):
+                control.execute(dict(type='recover_stop', confirmed=True))
+            with patch('robot_control.arm_deadline'), patch('robot_control.wait_arm', return_value=[90, 30, 40]):
+                control.stop_hardware(str(failure))
+            self.assertEqual(control.phase, 'fault')
+            self.assertFalse(control.arm_homed)
 
     def test_patch_refuses_unknown_input_and_is_idempotent(self):
         source = patch_recovery(LEGACY)
