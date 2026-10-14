@@ -34,6 +34,8 @@ export type HardwareState = {
   map_update?: { active: boolean; state: string; map_id: string; goals: { x_m: number; y_m: number; yaw_rad: number }[];
     completed: number; round: number; captures: number; remaining_s: number; capped: boolean };
   mapping_mode?: boolean;
+  saved_map_revision?: number;
+  map_save_error?: string;
   small_obstacle_m?: number;
   item_approach_available?: boolean;
 };

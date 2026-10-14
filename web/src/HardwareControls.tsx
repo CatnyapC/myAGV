@@ -111,6 +111,8 @@ export function MapUpdateControls({ state, connected, goal, command }: Pick<Prop
     finally { setUpdating(false); }
   };
   return <div className="map-updates">
+    <span role="status" className="muted">{state?.map_save_error ? `Map save failed: ${state.map_save_error}`
+      : state?.saved_map_revision ? `Map saved · revision ${state.saved_map_revision}` : 'Map not saved yet'}</span>
     <div className="action-line">
       <Button variant="default" disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start updates</Button>
       <Button disabled={!connected || updating || paused || (!update?.active && !idle)} onClick={() => void updateCommand('update_pause')}>Pause updates</Button>

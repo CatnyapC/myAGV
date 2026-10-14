@@ -64,6 +64,7 @@ class Control:
         self.goal = None
         self.base_enabled = False
         self.map_update = None
+        self.update_pause_request = None
         self.queue = queue.Queue(maxsize=1)
         self.results, self.requests = OrderedDict(), OrderedDict()
         self.config_path = self.directory.parent / 'robot_config.json'
@@ -200,17 +201,26 @@ class Control:
             if command == 'update_start':
                 if self.phase != 'update_paused':
                     raise ValueError('Wait for measured update pause before starting updates')
+                if getattr(self.robot, 'map_save_error', ''):
+                    raise ValueError('Repair map storage before restarting updates')
                 if update['storage_error']:
                     raise ValueError('Repair photo storage, then STOP and start a new update')
                 if time.monotonic() >= update['deadline']:
                     update['deadline'] = time.monotonic() + update['limit_s']
                 update['pause_requested'] = False
             else:
+                if getattr(self, 'update_pause_request', None):
+                    raise RuntimeError('Map pause already requested')
+                if self.phase != 'update_paused':
+                    self.requests[command_id] = fingerprint
+                    self.update_pause_request = packet
                 update['pause_requested'], update['pause_reason'] = True, 'Map updating paused by operator'
                 self.base_enabled = False
                 self.robot.zero()
                 self.robot.nav.client.cancel_all_goals()
             self.requests[command_id] = fingerprint
+            if command == 'update_pause' and getattr(self, 'update_pause_request', None):
+                return dict(status='accepted', id=command_id)
             self.finish(packet, dict(status='completed'))
             return self.results[command_id]
         if self.phase in ('review_grasp', 'verify_grasp') and packet.get('session_id') == self.owner:
@@ -304,6 +314,8 @@ class Control:
         self.arm_error = ''
 
     def travel_guard(self, pose):
+        if getattr(self.robot, 'map_save_error', ''):
+            raise RuntimeError('Map storage failed: ' + self.robot.map_save_error)
         if not lease_valid(self.deadline, time.monotonic()) or self.stop_pending:
             raise Stopped('Control lease expired')
         update = self.map_update
@@ -404,6 +416,9 @@ class Control:
             self.requests.pop(old, None)
 
     def stop_hardware(self, reason):
+        if getattr(self, 'update_pause_request', None):
+            self.finish(self.update_pause_request, dict(status='cancelled', error=reason))
+            self.update_pause_request = None
         if self.teleop_pid is not None:
             with suppress(ProcessLookupError):
                 os.kill(self.teleop_pid, signal.SIGTERM)
@@ -471,6 +486,7 @@ class Control:
         backup = self.directory.parent / 'map_backups' / session_id
         saved_map = Path(os.environ.get('MYAGV_MAP_FILE', str(Path.home() / 'maps' / 'room.yaml')))
         paths = [self.zones_path, self.stations_path, marker, saved_map, saved_map.with_suffix('.pgm')]
+        paths += [self.directory.parent / name for name in ('saved_map.json', 'saved_map.yaml', 'saved_map.pgm')]
         paths += [self.directory / name for name in ('map.json', 'navigation_map.json', 'global_costmap.json', 'zones.json', 'state.json', 'captures')]
         moved = []
         marker_written = False
@@ -767,9 +783,16 @@ class Control:
         self.robot.zero()
         self.robot.nav.cancel()
         self.robot.nav.wait_stopped()
-        self.robot.commit_map_update()
+        try:
+            self.robot.commit_map_update()
+        except (OSError, ValueError) as exc:
+            self.robot.map_save_error = str(exc)
+            raise
         self.phase, self.status = 'update_paused', update['pause_reason']
         update['state'] = 'paused'
+        if getattr(self, 'update_pause_request', None):
+            self.finish(self.update_pause_request, dict(status='completed', map_revision=self.robot.grid['revision']))
+            self.update_pause_request = None
         while update['pause_requested']:
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()) or self.robot.ros.is_shutdown():
                 raise Stopped('Map update cancelled while paused')
@@ -1075,6 +1098,8 @@ class Control:
                     clearance_m=self.config['clearance_m'], localized=self.localized,
                     small_obstacle_m=self.config.get('small_obstacle_m', .15),
                     mapping_mode=(self.directory.parent / 'mapping.json').exists(),
+                    saved_map_revision=getattr(self.robot, 'saved_map_revision', 0),
+                    map_save_error=getattr(self.robot, 'map_save_error', ''),
                     driver_watchdog=self.robot.driver_watchdog, exclusive=self.robot.exclusive,
                     sensors_ready=self.robot.sensors_ready(), motion_available=ready,
                     navigation_ready=ready and self.localized and self.robot.zones_ready() and self.robot.clearance_ready(self.config['clearance_m']),

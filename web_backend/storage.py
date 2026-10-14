@@ -15,6 +15,11 @@ def atomic_bytes(path, content):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(name, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         if os.path.exists(name):
             os.unlink(name)

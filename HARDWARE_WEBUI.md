@@ -63,10 +63,35 @@ It also works while idle, without starting a survey. Time-limit pauses publish
 the snapshot too. Robot position remains live. Map identity stays fixed within
 one SLAM session; existing no-go zones keep their world coordinates. SLAM
 confirms its pose from fresh sensors automatically. **Set pose from goal** is
-disabled. The accepted snapshot survives API and bridge restarts. Mapping mode survives service
-restarts through `web_runtime/mapping.json`. Restarting the SLAM launch begins
-a fresh map session; stale no-go zones and taught stations are archived and
-must be taught again. Restarting only the API or bridge keeps the SLAM session.
+disabled. The accepted snapshot survives API and bridge restarts. An ongoing
+SLAM session is identified by `web_runtime/mapping.json`. Each accepted map is synchronously
+saved to the single authoritative `web_runtime/saved_map.json` checkpoint before
+publication. **Pause updates** completes only after the checkpoint and bridge
+snapshots are written. The UI shows the saved revision or a storage error;
+storage failures stop automatic movement. Atomic checkpoint replacement keeps
+the previous file intact when writing the new file fails before replacement.
+
+PM2 starts localization through `map_persistence.py`. On localization/service or
+machine restart, it exports the saved raw occupancy to `saved_map.pgm` and
+`saved_map.yaml`, then starts AMCL on that map. It preserves map identity,
+revision, world coordinates, no-go zones, taught stations and photo associations.
+Set and confirm the robot pose before navigating again. The original
+`MYAGV_MAP_FILE` (default `~/maps/room.yaml`) is used only before a checkpoint
+exists. Existing valid bridge snapshots are adopted automatically. A corrupt
+checkpoint fails startup instead of silently loading a different map.
+
+There is one active map and no map selector. **Reset map** archives the checkpoint
+and generated ROS files along with the existing reset data, then starts a fresh
+SLAM session. Failed reset restores the archived map. Restarting only the API or
+bridge keeps an ongoing SLAM session; restarting localization uses the accepted
+map for navigation rather than resuming Gmapping internals. Unaccepted SLAM
+scans are not durable. Back up `web_runtime/` and `stations.json` together for
+recovery from disk loss.
+
+After pulling this change, update PM2's localization command while the robot is
+stopped: `pm2 startOrRestart ecosystem.robot.config.cjs --only myagv-localization --update-env`.
+Restart the bridge and API too. A plain restart using PM2's old process definition
+does not install the new startup command.
 
 1. Reload the page. Check front/arm camera roles and live ROS pose.
 2. Enter the actual robot pose in Goal, use **Set pose from goal**, then verify

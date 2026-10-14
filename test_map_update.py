@@ -32,20 +32,17 @@ class MapUpdateTest(unittest.TestCase):
         c.robot.commit_map_update.assert_called_once()
         c.robot.nav.go_to.assert_not_called()
 
-    def test_updates_require_manual_points_and_validate_each_pose(self):
+    def test_updates_require_manual_points_and_validate_pose_format(self):
         c = fake_control()
         c.travel_guard = Mock()
         poses = [dict(x_m=1, y_m=2, yaw_rad=.5), dict(x_m=2, y_m=3, yaw_rad=1)]
         self.assertEqual(c.plan_update({'goals': poses}), dict(goals=poses, capped=False))
-        self.assertEqual([call.args[0] for call in c.travel_guard.call_args_list], poses)
+        c.travel_guard.assert_not_called()  # Reachability is checked when each goal executes.
         for goals in (None, [], {}, poses * 11, [dict(x_m=float('nan'), y_m=0, yaw_rad=0)]):
             with self.assertRaises(ValueError):
                 c.plan_update({'goals': goals})
         with self.assertRaises(ValueError):
             c.plan_update({})
-        c.travel_guard.side_effect = [None, ValueError('Blocked goal')]
-        with self.assertRaisesRegex(ValueError, 'Blocked goal'):
-            c.plan_update({'goals': poses})
 
     def test_window_expiry_pauses_and_owner_explicitly_starts_new_window(self):
         c = fake_control()
@@ -77,6 +74,7 @@ class MapUpdateTest(unittest.TestCase):
 
     def test_pause_retries_current_view_and_updates_repeat_until_cancelled(self):
         c = fake_control()
+        c.robot.grid['revision'] = 1
         c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
         c.owner, c.task_id, c.deadline = 'tab', 'updating', time.monotonic() + .45
         poses = [dict(x_m=1, y_m=1, yaw_rad=0), dict(x_m=2, y_m=1, yaw_rad=math.pi / 2)]
@@ -93,9 +91,9 @@ class MapUpdateTest(unittest.TestCase):
             if len(dispatched) == 5:
                 raise Stopped('STOP')
         c.go = go
+        pauses = []
         def resume(_seconds):
-            self.assertEqual(c.map_update['captures'], 0)
-            self.assertEqual(c.map_update['completed'], 0)
+            pauses.append((c.map_update['captures'], c.map_update['completed']))
             c.receive({**packet(), 'type': 'update_start', 'task_id': c.task_id})
         with tempfile.TemporaryDirectory() as directory:
             c.directory = Path(directory)
@@ -103,6 +101,7 @@ class MapUpdateTest(unittest.TestCase):
                 with self.assertRaises(Stopped):
                     c.run_update(dict(limit_s=60))
         self.assertEqual(dispatched[0], dispatched[1])
+        self.assertEqual(pauses, [(0, 0), (2, 2)])
         self.assertEqual(dispatched[1], dispatched[3])
         captures = [call for call in c.capture.call_args_list if 'update_key' in call.kwargs]
         self.assertEqual(len(captures), 3)

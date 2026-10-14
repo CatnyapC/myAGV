@@ -151,12 +151,16 @@ class MapResetTest(unittest.TestCase):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 robot = robot_at(root)
+                robot.set_map(robot.source, robot.grid, robot.zones)
                 c = robot.control
                 c.reset_map = lambda: Control.reset_map(c)
                 saved = root / 'room.yaml'
                 files = [saved, saved.with_suffix('.pgm'), c.stations_path, c.zones_path, robot.directory / 'map.json']
+                files += [root / name for name in ('saved_map.json', 'saved_map.yaml', 'saved_map.pgm')]
                 for path in files:
-                    path.write_text('original ' + path.name)
+                    if path.name != 'saved_map.json':
+                        path.write_text('original ' + path.name)
+                originals = {path: path.read_text() for path in files}
                 starts = []
                 def process(command, **_):
                     if command[1] == 'start':
@@ -178,13 +182,13 @@ class MapResetTest(unittest.TestCase):
                             Control.execute(c, dict(type='reset_map', confirmed=True))
                         self.assertFalse((root / 'mapping.json').exists())
                         for path in files:
-                            self.assertEqual(path.read_text(), 'original ' + path.name)
+                            self.assertEqual(path.read_text(), originals[path])
                     else:
                         result = Control.execute(c, dict(type='reset_map', confirmed=True))
                         self.assertTrue(result['mapping_mode'])
                         manifest = json.loads((Path(result['backup']) / 'manifest.json').read_text())
                         for archived, original in manifest.items():
-                            self.assertEqual((Path(result['backup']) / archived).read_text(), 'original ' + Path(original).name)
+                            self.assertEqual((Path(result['backup']) / archived).read_text(), originals[Path(original)])
                         self.assertFalse(c.stations_path.exists())
                         self.assertFalse(c.localized)
                         self.assertTrue(all(cell == -1 for cell in robot.grid['cells']))

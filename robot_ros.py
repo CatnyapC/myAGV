@@ -1,6 +1,5 @@
 """ROS sensing, virtual obstacles and the sole WebUI chassis velocity publisher."""
 from copy import deepcopy
-import hashlib
 import json
 import math
 import threading
@@ -8,6 +7,7 @@ import time
 import uuid
 
 from navigation import Navigation
+from map_persistence import load_saved_map, map_digest, map_matches, save_map
 from obstacle_filter import filter_grid, filter_scan
 from robot_safety import fresh, footprint_clear, zones_visible
 from web_backend.map_data import local_to_world
@@ -51,6 +51,8 @@ class RobotROS:
         self.costmap_received = {}
         self.costmap_saved = 0
         self.map_saved = None
+        self.map_save_error = ''
+        self.saved_map_revision = 0
         self.scan = None
         self.battery = None
         self.path = []
@@ -104,8 +106,19 @@ class RobotROS:
 
     def set_map(self, source, grid, zones):
         with self.lock:
+            accepted = filter_grid(grid, self.control.config.get('small_obstacle_m', .15))
+            if zones['map_id'] != accepted['map_id']:
+                raise ValueError('No-go zones belong to a different map')
+            if accepted['revision'] > 0:
+                try:
+                    save_map(self.directory, accepted)
+                except (OSError, ValueError) as exc:
+                    self.map_save_error = str(exc)
+                    raise
+            self.saved_map_revision = accepted['revision']
+            self.map_save_error = ''
             self.source = deepcopy(source)
-            self.grid = filter_grid(grid, self.control.config.get('small_obstacle_m', .15))
+            self.grid = accepted
             self.pending_map = None
             if hasattr(self.source, 'info'):
                 info, origin = self.source.info, grid['origin']
@@ -124,6 +137,7 @@ class RobotROS:
                 self.published_at = time.monotonic()
                 self.costmaps = {}
                 self.set_map(source, grid, self.zones)
+            self.write_maps()
 
     def receive_map(self, message):
         try:
@@ -131,12 +145,24 @@ class RobotROS:
             if grid['frame'] != 'map' or not 0 < grid['width'] * grid['height'] <= 2_000_000 or len(grid['cells']) != grid['width'] * grid['height'] or not math.isfinite(grid['resolution_m']) or grid['resolution_m'] <= 0:
                 raise ValueError('Invalid map geometry/frame')
             grid['cells'] = [-1 if c < 0 else 100 if c >= 50 else 0 for c in grid['cells']]
-            digest = hashlib.sha256(json.dumps(grid, sort_keys=True, allow_nan=False).encode()).hexdigest()
+            digest = map_digest(grid)
             with self.lock:
                 marker = self.directory.parent / 'mapping.json'
                 mapping = marker.exists()
-                map_id = ('slam-' + json.loads(marker.read_text())['session_id'] + '-' + self.ros.get_param('/gmapping/map_session')) if mapping else 'ros-' + digest[:16]
                 previous = self.grid or {}
+                saved = load_saved_map(self.directory) if not previous else None
+                if mapping:
+                    map_id = 'slam-' + json.loads(marker.read_text())['session_id'] + '-' + self.ros.get_param('/gmapping/map_session')
+                else:
+                    retained = previous or saved
+                    if retained:
+                        if not map_matches(grid, retained):
+                            raise ValueError('Saved map content changed; reset the map before replacing it')
+                        map_id = retained['map_id']
+                        if previous:
+                            return
+                    else:
+                        map_id = 'ros-' + digest[:16]
                 if previous.get('map_id') == map_id and previous.get('content_hash') == digest:
                     self.pending_map = None
                     return
@@ -161,12 +187,10 @@ class RobotROS:
                             if path.exists():
                                 path.rename(backup / path.name)
                         zones = dict(map_id=map_id, revision=0, zones=[])
-                if mapping and not previous:
-                    path = self.directory / 'map.json'
-                    saved = json.loads(path.read_text()) if path.exists() else {}
-                    if saved.get('map_id') == map_id and saved.get('revision', 0) > 0:
+                if not previous and saved:
+                    if saved['map_id'] == map_id:
                         self.set_map(message, saved, zones)
-                        if saved.get('content_hash') != digest:
+                        if mapping and saved.get('content_hash') != digest:
                             self.pending_map = (message, {**grid, 'revision': saved['revision'] + 1})
                         return
                 self.set_map(message, grid, zones)
@@ -217,13 +241,13 @@ class RobotROS:
         with self.lock:
             grid, derived, zones = self.grid, self.derived, self.zones
             global_map = self.costmaps.get('global')
-        if not grid or not derived or not zones:
-            return
-        key = grid['map_id'], grid['revision'], zones['revision']
-        if self.map_saved != key:
-            atomic_json(self.directory / 'map.json', grid)
-            atomic_json(self.directory / 'navigation_map.json', {**derived, 'zone_revision': zones['revision']})
-            self.map_saved = key
+            if not grid or not derived or not zones:
+                return
+            key = grid['map_id'], grid['revision'], zones['revision']
+            if self.map_saved != key:
+                atomic_json(self.directory / 'navigation_map.json', {**derived, 'zone_revision': zones['revision']})
+                atomic_json(self.directory / 'map.json', grid)
+                self.map_saved = key
         if (global_map and fresh(global_map[0], time.monotonic(), 2)
                 and global_map[1] == zones['revision'] and global_map[0] != self.costmap_saved):
             atomic_json(self.directory / 'global_costmap.json', {**global_map[3], 'map_id': grid['map_id'],

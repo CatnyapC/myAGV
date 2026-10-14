@@ -150,7 +150,11 @@ def main():
         while not rospy.is_shutdown():
             try:
                 robot.write_maps()
+                if robot.grid:
+                    robot.map_save_error = ''
             except Exception as exc:
+                robot.map_save_error = str(exc)
+                control.request_stop('Map snapshot storage failed: ' + str(exc))
                 rospy.logerr_throttle(5, 'Map snapshot error: %s', exc)
             time.sleep(.2)
 
