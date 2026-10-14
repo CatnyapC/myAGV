@@ -606,6 +606,9 @@ class Control:
 
     def execute(self, packet):
         kind = packet['type']
+        if self.config.get('grasp_test_hold') and kind not in ('grasp_test', 'gripper', 'capture',
+                'capture_grasp_height', 'capture_grasp_goal', 'confirm_homed', 'recover_stop', 'connect_arm'):
+            raise ValueError('Place the test item or open the gripper before another action')
         if kind == 'teleop_acquire':
             self.robot.zero()
             self.robot.nav.client.cancel_all_goals()
@@ -686,6 +689,8 @@ class Control:
         elif kind == 'gripper':
             self.robot.nav.wait_stopped()
             self.grip(packet['value'])
+            if packet['value'] == 100 and self.config.pop('grasp_test_hold', None) is not None:
+                atomic_json(self.config_path, self.config)
         elif kind == 'manual':
             if packet.get('mode') not in ('BASE', 'ARM', 'PICKUP'):
                 raise ValueError('Choose BASE, ARM or PICKUP mode')
@@ -1122,7 +1127,15 @@ class Control:
 
     def test_grasp(self, packet):
         self.require_arm()
-        grasp_z = number(packet.get('grasp_z_mm'), LIMITS['Z'][0] + 5,
+        hold = self.config.get('grasp_test_hold')
+        action = packet.get('action')
+        if action != ('place' if hold else 'grasp'):
+            raise ValueError('Grasp / place state changed; refresh before retrying')
+        if not isinstance(packet.get('item_id'), str) or not packet['item_id']:
+            raise ValueError('Selected item required for grasp / place test')
+        if hold and hold['item_id'] != packet['item_id']:
+            raise ValueError('Select the held item before placing it')
+        grasp_z = number(hold['grasp_z_mm'] if hold else packet.get('grasp_z_mm'), LIMITS['Z'][0] + 5,
                          LIMITS['Z'][1] - 5, 'Saved grasp Z')
         self.base_enabled = False
         self.robot.zero()
@@ -1136,10 +1149,13 @@ class Control:
             number(value, LIMITS[axis][0] + 5, LIMITS[axis][1] - 5, 'Arm ' + axis)
         if coords[1] <= 5 or abs(math.degrees(math.atan2(coords[1], coords[0])) - 90) > 15:
             raise ValueError('Pickup arm must face forward near J1=90')
-        start_z = coords[2]
-        if start_z <= grasp_z + 1:
+        start_z = hold['coords'][2] if hold else coords[2]
+        if not hold and start_z <= grasp_z + 1:
             raise ValueError('Run ALIGN above the saved grasp height before grasp / place testing')
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
+        if hold and (hold['map_id'] != map_id or hold['zone_revision'] != revision
+                     or any(abs(a-b) > 1 for a, b in zip(coords[:2], hold['coords'][:2]))):
+            raise ValueError('Pickup position changed; place the item manually')
 
         def current():
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
@@ -1165,17 +1181,27 @@ class Control:
         self.phase = 'grasp_testing'
         try:
             current()
-            self.status = 'Grasp / place test: opening gripper'
-            self.grip(100)
-            for target, status, grip in ((grasp_z, 'lowering to grasp height', 0),
-                                         (start_z, 'lifting item', None),
-                                         (grasp_z, 'lowering and releasing item', 100),
-                                         (start_z, 'restoring starting height', None)):
-                self.status = 'Grasp / place test: ' + status
-                move_z(target)
+            if not hold:
+                self.status = 'Grasp test: opening gripper'
+                self.grip(100)
+            self.status = 'Place test: lowering item' if hold else 'Grasp test: lowering to grasp height'
+            move_z(grasp_z)
+            current()
+            if hold:
+                self.status = 'Place test: releasing item'
+                self.grip(100)
+                self.config.pop('grasp_test_hold')
+                atomic_json(self.config_path, self.config)
+            else:
+                self.config['grasp_test_hold'] = dict(item_id=packet['item_id'], grasp_z_mm=grasp_z,
+                    coords=list(coords[:3]), map_id=map_id, zone_revision=revision)
+                atomic_json(self.config_path, self.config)
                 current()
-                if grip is not None:
-                    self.grip(grip)
+                self.status = 'Grasp test: clamping item'
+                self.grip(0)
+            self.status = 'Place test: restoring starting height' if hold else 'Grasp test: lifting and holding item'
+            move_z(start_z)
+            current()
         finally:
             self.base_enabled = False
             self.robot.zero()
@@ -1248,6 +1274,8 @@ class Control:
             update['remaining_s'] = max(0, math.ceil(update['deadline'] - time.monotonic()))
         return dict(boot_id=self.boot_id, stop_epoch=self.stop_epoch, stamp_s=time.time(), phase=self.phase, status=self.status, map_update=update,
                     item_approach_available=True,
+                    grasp_test_toggle_available=True,
+                    grasp_test_item_id=(self.config.get('grasp_test_hold') or {}).get('item_id'),
                     task_id=self.task_id, arm_available=self.arm is not None, arm_homed=self.arm_homed, metric_alignment_available=True,
                     arm_angles=self.angles if fresh(self.arm_stamp, time.monotonic(), 2) else None,
                     arm_error=self.arm_error, transport_angles=self.config['transport_angles'],

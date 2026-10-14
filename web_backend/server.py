@@ -537,6 +537,10 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Rotation test size or settings revision invalid; retry')
                     data = {**data, 'fetch_settings': dict(fetch_settings['values'])}
                 if kind == 'grasp_test':
+                    if not editor.hardware.control.get('grasp_test_toggle_available'):
+                        raise ValueError('Restart robot controller to enable separate grasp / place actions')
+                    if data.get('action') not in ('grasp', 'place'):
+                        raise ValueError('Choose grasp or place explicitly')
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')
                     item = next((i for i in photos.value['items'] if i['id'] == data.get('item_id')), None)

@@ -20,6 +20,7 @@ type Round = {
 
 export function FetchTest(props: {
   connected: boolean; editable: boolean; turnEnabled: boolean; reasons: string[]; itemId: string; indexRevision?: number;
+  holdingItemId?: string | null; graspToggleAvailable?: boolean;
   itemName?: string; graspZ?: number; metric?: boolean; status?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
 }) {
   const [settings, setSettings] = useState<FetchSettings | null>(null);
@@ -75,7 +76,8 @@ export function FetchTest(props: {
     if (pending) return;
     setPending(true); setError('');
     try {
-      await props.command('grasp_test', { item_id: props.itemId, index_revision: props.indexRevision });
+      await props.command('grasp_test', { item_id: props.itemId, index_revision: props.indexRevision,
+        action: props.holdingItemId ? 'place' : 'grasp' });
     } catch (failure) { setError((failure as Error).message); }
     finally { setPending(false); }
   }
@@ -109,13 +111,13 @@ export function FetchTest(props: {
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
-      <Button disabled={disabled || props.graspZ == null}
-        title={props.reasons.join('; ') || (props.graspZ == null ? 'Save the item grasp height first.' : 'Run after ALIGN. Pick up and put down at the current X/Y; base stays stopped.')}
-        onClick={() => void graspTest()}>GRASP / PLACE</Button>
+      <Button disabled={disabled || props.graspZ == null || !props.graspToggleAvailable || Boolean(props.holdingItemId && props.holdingItemId !== props.itemId)}
+        title={props.reasons.join('; ') || (!props.graspToggleAvailable ? 'Restart the robot controller.' : props.holdingItemId && props.holdingItemId !== props.itemId ? 'Select the held item before placing it.' : props.graspZ == null ? 'Save the item grasp height first.' : props.holdingItemId ? 'Lower and release the held item, then raise the arm.' : 'Run after ALIGN. Grasp and lift; keep the gripper closed until PLACE.')}
+        onClick={() => void graspTest()}>{props.holdingItemId ? 'PLACE' : 'GRASP'}</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
     <span className="muted">Preview: one coarse-alignment round, no movement. ALIGN first restores ARM GOAL Z within 1 mm, then runs both stages with Z fixed. Gripper stays fixed. Target above GOAL: Y−; below: Y+. Up to 33 observations; no cumulative arm travel cap.</span>
-    <span className="muted">Grasp / place: {props.graspZ == null ? 'record the item grasp Z first' : `saved grasp Z ${props.graspZ.toFixed(1)} mm`}. After ALIGN, open, lower to grasp Z, close, lift to starting Z, lower and release, then return to starting Z. X/Y stay fixed.</span>
+    <span className="muted">{props.graspZ == null ? 'Record the item grasp Z first.' : `Saved grasp Z ${props.graspZ.toFixed(1)} mm.`} First click: lower, clamp, lift and hold. Click PLACE separately to lower, release and raise. X/Y stay fixed.</span>
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}

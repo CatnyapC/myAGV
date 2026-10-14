@@ -27,6 +27,7 @@ export function commandId(): string {
 }
 
 export type HardwareState = {
+  grasp_test_item_id?: string | null; grasp_test_toggle_available?: boolean;
   stop_epoch: number; phase: string; status: string; task_id?: string; arm_available: boolean; arm_homed: boolean;
   arm_angles?: number[]; arm_error?: string; navigation_ready: boolean; motion_available: boolean;
   localized: boolean; driver_watchdog: boolean; exclusive: boolean; sensors_ready: boolean;

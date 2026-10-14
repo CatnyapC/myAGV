@@ -29,6 +29,7 @@ def fake_control():
     c = Control.__new__(Control)
     c.boot_id, c.stop_epoch = 'boot', 0
     c.directory = Path('unused/ros')
+    c.config_path = Path('unused/robot_config.json')
     c.phase, c.status, c.task_id = 'idle', 'Ready', None
     c.owner, c.deadline, c.input = None, time.monotonic() + .45, None
     c.manual_lease = False

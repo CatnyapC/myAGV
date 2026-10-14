@@ -28,7 +28,7 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
-    def test_grasp_place_cycle_preserves_xy_and_restores_measured_start_z(self):
+    def test_grasp_holds_until_separate_place_even_after_config_reload(self):
         c = fake_control()
         coords, actions = [0, 150, 35], []
         c.arm.get_coords_info.side_effect = lambda: list(coords)
@@ -43,12 +43,23 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
 
         c.arm.set_coords.side_effect = move
         c.grip = Mock(side_effect=lambda value: actions.append(('grip', value)))
-        with patch('robot_control.wait_arm', return_value=[90, 10, 20]), \
+        with tempfile.TemporaryDirectory() as folder, patch('robot_control.wait_arm', return_value=[90, 10, 20]), \
              patch('robot_control.arm_deadline', return_value=nullcontext()):
-            self.assertEqual(c.execute(dict(type='grasp_test', grasp_z_mm=12.5)), {})
-        self.assertEqual(actions, [('grip', 100), ('z', 25), ('z', 15), ('z', 12.5),
-            ('grip', 0), ('z', 22.5), ('z', 32.5), ('z', 35), ('z', 25), ('z', 15),
-            ('z', 12.5), ('grip', 100), ('z', 22.5), ('z', 32.5), ('z', 35)])
+            c.config_path = Path(folder) / 'robot_config.json'
+            packet = dict(type='grasp_test', item_id='cup', action='grasp', grasp_z_mm=12.5)
+            self.assertEqual(c.execute(packet), {})
+            self.assertEqual(actions, [('grip', 100), ('z', 25), ('z', 15), ('z', 12.5),
+                ('grip', 0), ('z', 22.5), ('z', 32.5), ('z', 35)])
+            self.assertEqual(c.snapshot()['grasp_test_item_id'], 'cup')
+            self.assertTrue(c.snapshot()['grasp_test_toggle_available'])
+            self.assertEqual(coords, [0, 150, 35])
+            c.config = json.loads(c.config_path.read_text())
+            actions.clear()
+            self.assertEqual(c.execute(dict(packet, action='place', grasp_z_mm=999)), {})
+            self.assertEqual(actions, [('z', 25), ('z', 15), ('z', 12.5), ('grip', 100),
+                ('z', 22.5), ('z', 32.5), ('z', 35)])
+            self.assertIsNone(c.snapshot()['grasp_test_item_id'])
+            self.assertNotIn('grasp_test_hold', json.loads(c.config_path.read_text()))
         self.assertEqual(coords, [0, 150, 35])
         self.assertFalse(c.base_enabled)
         c.capture.assert_not_called()
@@ -72,7 +83,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 c.grip = Mock()
                 with patch('robot_control.wait_arm', return_value=angles), \
                      patch('robot_control.arm_deadline', return_value=nullcontext()), self.assertRaises(error):
-                    c.execute(dict(type='grasp_test', grasp_z_mm=target))
+                    c.execute(dict(type='grasp_test', item_id='cup', action='grasp', grasp_z_mm=target))
                 c.grip.assert_not_called()
                 c.arm.set_coords.assert_not_called()
 
@@ -97,8 +108,9 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         'return_value', [0,150,c.arm.get_coords_info.return_value[2] + direction * kwargs['distance']])
                 error = Stopped if failure in ('stop', 'holding', 'lease') else TimeoutError if failure == 'unreached' else Exception
                 with patch('robot_control.wait_arm', return_value=[90,10,20]), \
-                     patch('robot_control.arm_deadline', return_value=nullcontext()), self.assertRaises(error):
-                    c.execute(dict(type='grasp_test', grasp_z_mm=12.5))
+                     patch('robot_control.arm_deadline', return_value=nullcontext()), \
+                     patch('robot_control.atomic_json'), self.assertRaises(error):
+                    c.execute(dict(type='grasp_test', item_id='cup', action='grasp', grasp_z_mm=12.5))
                 if failure == 'holding':
                     self.assertEqual(c.grip.call_args_list, [call(100), call(0)])
                     self.assertEqual(c.arm.get_coords_info.return_value, [0,150,12.5])
@@ -107,6 +119,34 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     if failure != 'unreached': c.arm_step.assert_not_called()
                 self.assertFalse(c.base_enabled)
                 c.robot.zero.assert_called()
+
+    def test_grasp_place_refuses_stale_actions_and_changed_pickup_position(self):
+        hold = dict(item_id='cup', grasp_z_mm=12.5, coords=[0,150,35], map_id='map', zone_revision=2)
+        for action, item_id, stored, feedback in (('place', 'cup', None, [0,150,35]),
+                ('grasp', 'cup', hold, [0,150,35]), ('place', 'other', hold, [0,150,35]),
+                ('place', 'cup', {**hold, 'map_id':'old'}, [0,150,35]),
+                ('place', 'cup', {**hold, 'zone_revision':1}, [0,150,35]),
+                ('place', 'cup', hold, [2,150,35]), (None, 'cup', None, [0,150,35])):
+            with self.subTest(action=action, item_id=item_id, stored=stored, feedback=feedback):
+                c = fake_control()
+                c.config['grasp_test_hold'] = stored
+                c.arm.get_coords_info.return_value = feedback
+                c.grip = Mock()
+                with patch('robot_control.wait_arm', return_value=[90,10,20]), \
+                     patch('robot_control.arm_deadline', return_value=nullcontext()), self.assertRaises(ValueError):
+                    c.execute(dict(type='grasp_test', action=action, item_id=item_id, grasp_z_mm=12.5))
+                c.grip.assert_not_called()
+                c.arm.set_coords.assert_not_called()
+
+        c = fake_control()
+        c.config['grasp_test_hold'] = hold
+        c.grip = Mock()
+        with self.assertRaisesRegex(ValueError, 'Place the test item'):
+            c.execute(dict(type='fetch_test'))
+        with patch('robot_control.atomic_json'):
+            c.execute(dict(type='gripper', value=100))
+        c.grip.assert_called_once_with(100)
+        self.assertNotIn('grasp_test_hold', c.config)
 
     async def test_grasp_place_api_uses_saved_height_without_llm_and_rejects_stale_selection(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -126,17 +166,19 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 hardware = app[EDITOR].hardware
                 hardware.refresh = Mock()
-                hardware.control = dict(phase='idle', stamp_s=time.time(), metric_alignment_available=True)
+                hardware.control = dict(phase='idle', stamp_s=time.time(), metric_alignment_available=True, grasp_test_toggle_available=True)
                 hardware.command = AsyncMock(return_value=dict(status='accepted'))
                 async with TestClient(TestServer(app)) as client:
-                    command = dict(id=str(uuid.uuid4()), type='grasp_test', map_id=grid['map_id'],
+                    command = dict(id=str(uuid.uuid4()), type='grasp_test', action='grasp', map_id=grid['map_id'],
                         expected_revision=app[EDITOR].zones['revision'], item_id=item_ids[0],
                         index_revision=index.value['revision'], grasp_z_mm=999)
                     self.assertEqual((await client.post('/api/commands', json=command)).status, 200)
                     self.assertEqual(hardware.command.call_args.args[0]['grasp_z_mm'], 12.5)
                     hardware.command.reset_mock()
-                    for changes in (dict(index_revision=0), dict(item_id='missing'), dict(item_id=item_ids[1])):
+                    for changes in (dict(index_revision=0), dict(item_id='missing'), dict(item_id=item_ids[1]), dict(action=None)):
                         self.assertEqual((await client.post('/api/commands', json={**command, **changes})).status, 400)
+                    hardware.control['grasp_test_toggle_available'] = False
+                    self.assertEqual((await client.post('/api/commands', json=command)).status, 400)
                     hardware.command.assert_not_called()
 
     def test_rotation_buttons_use_saved_sizes_without_arm_or_camera(self):

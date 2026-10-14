@@ -610,7 +610,8 @@ export function App() {
         {state?.demo === false && <HardwareControls stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
         <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
         <FetchTest metric={state?.llm?.model.startsWith('codex-local/')} connected={connected} editable={canEdit && !busy} turnEnabled={state?.demo === false && Boolean(state?.hardware?.localized)} itemId={selectedItemId} itemName={selectedItem?.name}
-          indexRevision={photos?.revision} graspZ={selectedItem?.grasp_z_mm} command={hardwareCommand} stop={() => void stop()} status={navigation?.status}
+          indexRevision={photos?.revision} graspZ={selectedItem?.grasp_z_mm} holdingItemId={state?.hardware?.grasp_test_item_id}
+          graspToggleAvailable={state?.hardware?.grasp_test_toggle_available} command={hardwareCommand} stop={() => void stop()} status={navigation?.status}
           reasons={[
             ...(!connected ? ['Reconnect to the robot'] : state?.phase !== 'idle' ? [`Robot busy (${state?.phase}); wait for completion`] : busy ? ['Wait for the current operation'] : []),
             ...(state?.demo !== false ? ['Live hardware required'] : []),
