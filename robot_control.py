@@ -293,7 +293,7 @@ class Control:
             reason = 'Control heartbeat expired'
         elif not self.robot.driver_watchdog or not self.robot.exclusive:
             reason = 'Driver watchdog unavailable or competing chassis publisher'
-        elif not self.robot.sensors_ready() and not (self.phase == 'refreshing_map' and not self.base_enabled):
+        elif not self.robot.sensors_ready() and not (self.phase in ('refreshing_map', 'recovering_stop') and not self.base_enabled):
             reason = 'LiDAR or odometry stale'
         elif self.base_enabled and self.phase != 'manual' and not self.robot.zones_ready():
             reason = 'ROS no-go enforcement unavailable'
@@ -680,8 +680,10 @@ class Control:
         elif kind == 'recover_stop':
             if packet.get('confirmed') is not True:
                 raise ValueError('Physically verify stopped hardware before clearing the fault')
+            self.phase, self.base_enabled = 'recovering_stop', False
+            self.arm_homed = False
+            self.robot.recover_base_stop()
             self.connect_arm()
-            self.robot.nav.wait_stopped()
             self.angles = wait_arm(self.arm, timeout=3)
             self.arm_stamp = time.monotonic()
             self.arm_homed, self.home_cancelled = False, False

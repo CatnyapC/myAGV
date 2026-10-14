@@ -31,8 +31,10 @@ MYAGV_WEB_ORIGIN="http://172.28.13.26:5173" \
 pm2 restart myagv-api --update-env
 ```
 
-The driver patch uses a wall-clock loop and makes commands expire after 0.5 seconds. It refuses
-unknown source layouts and saves `.before-web-watchdog` beside the source.
+The driver patch uses a wall-clock loop and makes commands expire after 0.5 seconds.
+It also patches the adjacent `myAGV.cpp` to latch wheel overcurrent until an explicit
+WebUI recovery, replacing the manufacturer's blocking terminal input. It refuses
+unknown source layouts and saves `.before-web-watchdog` beside each changed source.
 The ROS launch initially starts map_server, AMCL and move_base. Both costmaps consume
 `/navigation_map`. The move_base output is remapped to `/myagv/input_vel`; only
 the bridge publishes `/cmd_vel`. Fresh LiDAR/odometry, exclusive publishers and
@@ -309,6 +311,14 @@ Unavailable feedback reports **Stop unconfirmed** and locks motion. After physic
 checking that both mechanisms stopped, use **Verify stopped and clear fault**;
 fresh base/arm feedback is still required and homing confirmation is reset. It never substitutes an
 acknowledgement for feedback.
+
+For a wheel overcurrent latch, the same confirmed button requests the installed
+driver's native motor reset with zero speed, waits for the reset acknowledgement,
+then requires new stationary odometry and arm feedback. Missing odometry alone
+never triggers a motor reset. STOP, lease expiry or timeout revokes the request;
+the interrupted navigation or item update never resumes. Recovery tolerates absent
+sensor feedback while restoring the stopped driver, but motion still requires
+fresh sensors, the driver watchdog and exclusive output ownership.
 
 The manufacturer's [P340 protocol](https://docs.elephantrobotics.com/docs/ultraArm-en/3-HowToUseultraArm/2-SoftwareControl/6-SerialPort/6-SerialPort.html)
 documents M15 as jog stop, not a guaranteed emergency stop for homing or queued

@@ -126,7 +126,7 @@ class Hardware:
                 self.owner, self.manual = old_owner, old_manual
             raise
         if wait and result.get('status') == 'accepted':
-            end = time.monotonic() + (45 if data.get('type') in ('reset_map', 'map_refresh') else 15)
+            end = time.monotonic() + (45 if data.get('type') in ('reset_map', 'map_refresh') else 20 if data.get('type') == 'recover_stop' else 15)
             while time.monotonic() < end:
                 await asyncio.sleep(.1)
                 try:

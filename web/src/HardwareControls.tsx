@@ -45,7 +45,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     </div>}
     {state?.phase === 'fault' && <div role="alert"><strong>Stop unconfirmed · motion locked</strong>
       <p>{state.status}{state.arm_error && ` · ${state.arm_error}`}</p>
-      <Button disabled={confirming || !connected} onClick={() => setConfirmation({ type: 'recover_stop', values: { confirmed: true }, message: 'Have you physically verified that the base and arm have stopped? Fresh base and arm feedback is required to clear the fault. Homing confirmation will be reset.' })}>Verify stopped and clear fault</Button>
+      <Button disabled={confirming || !connected} onClick={() => setConfirmation({ type: 'recover_stop', values: { confirmed: true }, message: 'Have you physically verified that the base, wheels and arm have stopped? Any latched motor overcurrent will be reset with zero motion. Fresh base and arm feedback is required to clear the fault. Homing confirmation will be reset. The previous task will not resume.' })}>Verify stopped and clear fault</Button>
     </div>}
     <span className="muted">{state ? `Driver ${state.driver_watchdog ? '✓' : '✗'} · Sensors ${state.sensors_ready ? '✓' : '✗'} · Exclusive ${state.exclusive ? '✓' : '✗'} · Pose confirmed ${state.localized ? '✓' : '✗'} · Zones ${state.zones_ready ? '✓' : '✗'}` : 'Controller unavailable'}</span>
     {!state?.mapping_mode && <div className="action-line">

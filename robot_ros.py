@@ -9,7 +9,7 @@ import uuid
 from navigation import Navigation
 from map_persistence import load_saved_map, map_digest, map_matches, save_map
 from obstacle_filter import filter_grid, filter_scan
-from robot_safety import fresh, footprint_clear, zones_visible
+from robot_safety import fresh, footprint_clear, lease_valid, zones_visible
 from web_backend.map_data import local_to_world
 from web_backend.simulation import navigation_grid
 from web_backend.storage import atomic_json
@@ -287,6 +287,30 @@ class RobotROS:
             return False
         twist = sample[1].twist.twist
         return math.hypot(twist.linear.x, twist.linear.y) <= .01 and abs(twist.angular.z) <= .02
+
+    def recover_base_stop(self):
+        self.zero()
+        self.nav.cancel()
+        requested = False
+        try:
+            if self.ros.get_param('/myagv_web/motor_overcurrent', False) is True:
+                if self.control.stop_pending or not lease_valid(self.control.deadline, time.monotonic()) or not self.driver_watchdog or not self.exclusive:
+                    raise RuntimeError('Motor recovery requires a live control lease and exclusive stopped hardware')
+                if self.ros.get_param('/myagv_web/driver_recovery', 0) != 1:
+                    raise RuntimeError('Install the chassis motor recovery patch before clearing overcurrent')
+                requested = True
+                self.ros.set_param('/myagv_web/motor_restore_requested', True)
+                end = time.monotonic() + 5
+                while self.ros.get_param('/myagv_web/motor_overcurrent', True) is not False:
+                    if self.control.stop_pending or not lease_valid(self.control.deadline, time.monotonic()) or self.ros.is_shutdown():
+                        raise RuntimeError('Motor recovery stopped or control lease expired')
+                    if time.monotonic() >= end:
+                        raise TimeoutError('Chassis overcurrent reset did not acknowledge')
+                    time.sleep(.05)
+            self.nav.wait_stopped()
+        finally:
+            if requested:
+                self.ros.set_param('/myagv_web/motor_restore_requested', False)
 
     def confirm_slam_pose(self, pose):
         if (pose is not None and self.grid and self.grid.get('revision', 0) > 0
