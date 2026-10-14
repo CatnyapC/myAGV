@@ -443,7 +443,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         with patch('web_backend.resolve.request_json', provider):
             await locate_pickup(images, dict(name='cup', appearance='red'), 'fake-key', images['front'], history, prompt='Edited prompt', trace=trace)
         body = provider.call_args.args[0]
-        self.assertEqual(provider.call_args.args[2], 30)
+        self.assertEqual(provider.call_args.args[2], 65)
         self.assertEqual(body['reasoning'], {'enabled': False})
         self.assertEqual(body['max_tokens'], 64)
         self.assertTrue(body['response_format']['json_schema']['strict'])

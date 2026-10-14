@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from .photos import digest_station, validate_png
-from .codex_bridge import MODEL as CODEX_MODEL, EFFORTS as CODEX_EFFORTS
+from .codex_bridge import MODEL as CODEX_MODEL, EFFORTS as CODEX_EFFORTS, TIMEOUT_S as CODEX_TIMEOUT_S
 
 MODEL = 'deepseek/deepseek-v4.1-flash'
 MODELS = {MODEL: 'DeepSeek V4.1 Flash', 'deepseek/deepseek-v4-pro-0813': 'DeepSeek V4 Pro 0813',
@@ -315,6 +315,8 @@ async def request_json(body, key, timeout, trace=None):
         async with ClientSession(timeout=ClientTimeout(total=timeout)) as session:
             async with session.post(url, headers={'Authorization': f'Bearer {key}'}, json=body, allow_redirects=False) as response:
                 if response.status != 200:
+                    if local and response.status == 504:
+                        raise web.HTTPGatewayTimeout(text=f'Local Codex inference timed out ({CODEX_TIMEOUT_S} s); alignment stopped')
                     # Never return provider error bodies (may echo credentials or prompts).
                     raise web.HTTPBadGateway(text=f'{provider} request failed (HTTP {response.status})')
                 raw = bytearray()

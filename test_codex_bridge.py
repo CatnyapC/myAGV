@@ -141,7 +141,7 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(bridge.load_token(), ('unavailable', ''))
 
     async def test_rpc_completion_failure_timeout_and_cancellation_kill_process(self):
-        for mode in ('completed', 'failed', 'tool', 'timeout', 'cancelled'):
+        for mode in ('completed', 'slow', 'failed', 'tool', 'timeout', 'cancelled'):
             with self.subTest(mode=mode):
                 queue = asyncio.Queue()
                 sent = []
@@ -161,14 +161,19 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                     queue.put_nowait(json.dumps(dict(id=identity, result=result)).encode())
                     if identity == 4 and mode not in ('timeout', 'cancelled'):
                         item = dict(type='commandExecution') if mode == 'tool' else dict(type='agentMessage', phase='final_answer', text='{"ok":true}')
-                        queue.put_nowait(json.dumps(dict(method='item/completed', params=dict(threadId='thread', item=item))).encode())
-                        queue.put_nowait(json.dumps(dict(method='turn/completed', params=dict(threadId='thread', turn=dict(id='turn', status=mode)))).encode())
+                        def finish():
+                            queue.put_nowait(json.dumps(dict(method='item/completed', params=dict(threadId='thread', item=item))).encode())
+                            queue.put_nowait(json.dumps(dict(method='turn/completed', params=dict(threadId='thread', turn=dict(id='turn', status='completed' if mode=='slow' else mode)))).encode())
+                        if mode == 'slow':
+                            asyncio.get_running_loop().call_later(.04,finish)
+                        else:
+                            finish()
 
                 process.stdin.write = write
                 with patch.object(bridge, 'codex_command', return_value=['codex']), \
                      patch.object(bridge.asyncio, 'create_subprocess_exec', AsyncMock(return_value=process)), \
-                     patch.object(bridge, 'TIMEOUT_S', .03):
-                    if mode == 'completed':
+                     patch.object(bridge, 'TIMEOUT_S', bridge.TIMEOUT_S/1000 if mode=='slow' else .03):
+                    if mode in ('completed','slow'):
                         result = await bridge.infer(body())
                         self.assertEqual(json.loads(result['choices'][0]['message']['content']), dict(ok=True))
                         self.assertTrue(sent[3]['params']['ephemeral'])
@@ -189,6 +194,21 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                 process.kill.assert_called_once()
                 process.wait.assert_awaited_once()
 
+    async def test_inference_deadline_has_outer_margin_and_clear_error(self):
+        from fetch_calibration import FETCH_VISION_TIMEOUT_S
+        self.assertEqual(bridge.TIMEOUT_S,60)
+        self.assertGreater(FETCH_VISION_TIMEOUT_S,bridge.TIMEOUT_S)
+        async def deadline(request):
+            return web.Response(status=504,text='private provider details')
+        app = web.Application()
+        app.router.add_post('/v1/chat/completions',deadline)
+        async with TestClient(TestServer(app)) as client:
+            with patch.dict(os.environ,MYAGV_CODEX_URL=str(client.make_url('/v1/chat/completions'))):
+                with self.assertRaises(web.HTTPGatewayTimeout) as error:
+                    await request_json(body(),'token',1)
+                self.assertIn('60 s',error.exception.text)
+                self.assertNotIn('private provider details',error.exception.text)
+
     async def test_http_auth_provider_routing_and_failures(self):
         token = 'private-test-token-' + 'a' * 32
         result = dict(choices=[dict(finish_reason='stop', message=dict(content='{"ok":true}'))])
@@ -202,8 +222,9 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                 with patch.dict(os.environ, dict(MYAGV_CODEX_URL=str(client.make_url('/v1/chat/completions')))):
                     self.assertEqual(await request_json(body(), token, 1), dict(ok=True))
                     infer.side_effect = TimeoutError()
-                    with self.assertRaises(web.HTTPBadGateway) as error:
+                    with self.assertRaises(web.HTTPGatewayTimeout) as error:
                         await request_json(body(), token, 1)
+                    self.assertIn('60 s',error.exception.text)
                     self.assertNotIn(token, error.exception.text)
                 with patch.dict(os.environ, dict(MYAGV_CODEX_URL='http://remote.example/v1/chat/completions')):
                     with self.assertRaises(web.HTTPServiceUnavailable):

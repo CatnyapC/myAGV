@@ -11,10 +11,11 @@ import tempfile
 import tomllib
 
 from aiohttp import web
+from fetch_calibration import FETCH_VISION_TIMEOUT_S
 
 MODEL = 'codex-local/gpt-6.1-sol'
 EFFORTS = ('low', 'medium', 'high', 'max')
-TIMEOUT_S = 28
+TIMEOUT_S = FETCH_VISION_TIMEOUT_S - 5
 
 
 def load_token():
@@ -104,6 +105,9 @@ class CodexConversation:
         self.sequence = None
         self.last_used = 0
         self.service_tier = None
+        self.phase = 'startup'
+        self.turn_id = None
+        self.last_event = None
 
     async def close(self):
         process, self.process = self.process, None
@@ -127,6 +131,7 @@ class CodexConversation:
         if not line:
             raise RuntimeError('Codex app-server disconnected')
         message = json.loads(line)
+        self.last_event = message.get('method', 'rpc_response')
         if 'method' in message and 'id' in message:
             raise RuntimeError('Codex requested an unsupported tool or approval')
         if 'error' in message:
@@ -134,6 +139,7 @@ class CodexConversation:
         return message
 
     async def rpc(self, method, params):
+        self.phase = method
         self.identity += 1
         identity = self.identity
         await self.send(method, params, identity)
@@ -171,6 +177,8 @@ class CodexConversation:
             turn = await self.rpc('turn/start', dict(threadId=self.thread_id, input=content, effort=effort,
                 outputSchema=schema, serviceTier='fast'))
             turn_id = turn['turn']['id']
+            self.turn_id = turn_id
+            self.phase = 'inference'
             answer, usage = None, None
             while True:
                 message = await self.receive()
@@ -205,8 +213,16 @@ class CodexConversation:
 async def infer(body, conversation=None):
     owned = conversation is None
     conversation = conversation or CodexConversation()
+    started = asyncio.get_running_loop().time()
     try:
         return await conversation.run(body)
+    except TimeoutError:
+        diagnostic = dict(event='codex_timeout', phase=conversation.phase,
+            last_event=conversation.last_event, thread_id=conversation.thread_id, turn_id=conversation.turn_id,
+            timeout_s=TIMEOUT_S, elapsed_s=round(asyncio.get_running_loop().time()-started,2))
+        print(json.dumps({k:v for k,v in diagnostic.items() if v is not None}), flush=True)
+        await conversation.close()
+        raise
     except BaseException:
         await conversation.close()
         raise
