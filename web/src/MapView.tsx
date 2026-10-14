@@ -42,7 +42,7 @@ export function MapView(props: {
     updatePoints.current = L.layerGroup().addTo(instance);
     itemPoints.current = L.layerGroup().addTo(instance);
     path.current = L.polyline([], { color: 'var(--cyan-9)', weight: 2, opacity: .85, interactive: false }).addTo(instance);
-    robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 1.8, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
+    robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 3, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
     target.current = L.polygon([], { color: 'var(--orange-9)', weight: 2, fill: false, interactive: false }).addTo(instance);
     const observer = new ResizeObserver(() => instance.invalidateSize({ pan: false }));
     observer.observe(host.current);
@@ -97,9 +97,9 @@ export function MapView(props: {
 
   useEffect(() => {
     const goal = props.navigation?.moving ? props.navigation.goal : props.goal ?? props.navigation?.goal;
-    const color = props.navigation?.moving ? 'var(--orange-9)' : 'var(--cyan-11)';
+    const color = props.navigation?.moving ? 'var(--orange-11)' : 'var(--orange-9)';
     target.current?.setStyle({ color });
-    target.current?.setLatLngs(goal ? chassisOutline(goal, length, width).map(p => toView(p, props.info.display.origin)) : []);
+    target.current?.setLatLngs(goal ? chassisOutline(goal, length * .75, width * .75).map(p => toView(p, props.info.display.origin)) : []);
   }, [props.goal, props.navigation, props.info, length, width]);
 
   useEffect(() => {
@@ -186,9 +186,9 @@ export function MapView(props: {
     props.observationPoints.forEach((pose, i) => {
       const chosen = props.selectedPointId === pose.id;
       const running = activePoint && activePoint.x_m === pose.x_m && activePoint.y_m === pose.y_m && activePoint.yaw_rad === pose.yaw_rad;
-      const color = chosen || running ? 'var(--orange-9)' : 'var(--cyan-9)';
+      const color = chosen || running ? 'var(--orange-11)' : 'var(--orange-9)';
       const label = document.createElement('span'); label.textContent = `Observation point ${i + 1} · (${pose.x_m.toFixed(2)}, ${pose.y_m.toFixed(2)}) · ${(pose.yaw_rad * 180 / Math.PI).toFixed(0)}°`;
-      const marker = L.polygon(chassisOutline(pose, length, width).map(p => toView(p, props.info.display.origin)),
+      const marker = L.polygon(chassisOutline(pose, length * .75, width * .75).map(p => toView(p, props.info.display.origin)),
         { color, weight: chosen ? 2.5 : 1.5, fillOpacity: chosen ? .35 : .12, bubblingMouseEvents: false }).addTo(group).bindTooltip(label);
       const select = () => { if (!latest.current.drawing) latest.current.onPoint(pose.id); };
       marker.on('click', select);
