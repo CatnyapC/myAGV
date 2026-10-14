@@ -57,16 +57,18 @@ Long walls and explicitly drawn no-go zones remain. Change it while idle;
 the threshold persists across restarts and map resets. Raw map cells are retained
 so lowering the threshold restores components in the accepted snapshot.
 SLAM continues collecting
-scans, but the displayed map and navigation map stay fixed. **Pause updates**
-waits for the base to stop, then publishes the latest complete snapshot once.
-It also works while idle, without starting a survey. Time-limit pauses publish
-the snapshot too. Robot position remains live. Map identity stays fixed within
+scans, but the displayed map and navigation map stay fixed. **Refresh LiDAR map**
+waits for the base to stop, then publishes and saves the latest complete snapshot.
+It works while idle or while item position updates are paused, without arm motion
+or photo capture. **Pause item updates** only stops observation collection after
+measured base stop; operator and time-limit pauses never publish the LiDAR map.
+Robot position remains live. Map identity stays fixed within
 one SLAM session; existing no-go zones keep their world coordinates. SLAM
 confirms its pose from fresh sensors automatically. **Set pose from goal** is
 disabled. The accepted snapshot survives API and bridge restarts. An ongoing
 SLAM session is identified by `web_runtime/mapping.json`. Each accepted map is synchronously
 saved to the single authoritative `web_runtime/saved_map.json` checkpoint before
-publication. **Pause updates** completes only after the checkpoint and bridge
+publication. **Refresh LiDAR map** completes only after the checkpoint and bridge
 snapshots are written. The UI shows the saved revision or a storage error;
 storage failures stop automatic movement. Atomic checkpoint replacement keeps
 the previous file intact when writing the new file fails before replacement.
@@ -115,9 +117,9 @@ does not install the new startup command.
 
 Manual BASE driving is supervised and bypasses no-go planning. It uses at most
 0.1 m/s and 0.3 rad/s; PICKUP base motion uses 0.03 m/s and 0.05 rad/s. Releasing
-buttons stops the task. Fetch folds the arm before travel. Map updates use the
+buttons stops the task. Fetch folds the arm before travel. Item position updates use the
 front camera and the same base-only readiness conditions as Go. They do not
-require arm homing or move the arm. Select a goal and press **Start updates**,
+require arm homing or move the arm. Select a goal and press **Start item updates**,
 or add several goals under **Manual update points**. Disabled-start reasons
 appear below the buttons. Starting updates also validates each selected goal;
 it does not require the robot's current footprint to be observed as free.
@@ -244,7 +246,7 @@ Grasp and possession still require the existing operator confirmations. Web STOP
 sends M15 but may not interrupt an absolute move; physical stopping remains a
 supervised acceptance check.
 
-**Map updates** repeatedly refresh observations in the current reachable area.
+**Item position updates** repeatedly capture observations and update item coordinates in the current reachable area.
 Use **Preview update points**, then **Start updating**. **Pause updating** retains
 the current view and all map/photo records. The default window is 10 minutes (1–60 minutes);
 expiry pauses updating. Starting again after expiry opens a new window. Operator

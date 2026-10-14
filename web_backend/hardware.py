@@ -7,6 +7,10 @@ import time
 import uuid
 
 
+class ControllerTimeout(RuntimeError):
+    pass
+
+
 class Hardware:
     def __init__(self, directory):
         self.directory = Path(directory)
@@ -69,8 +73,11 @@ class Hardware:
                 writer.close()
                 await writer.wait_closed()
         try:
-            return await asyncio.wait_for(exchange(), .5)
-        except (OSError, asyncio.TimeoutError, json.JSONDecodeError) as exc:
+            urgent = packet.get('op') in ('stop', 'heartbeat') or packet.get('type') == 'manual'
+            return await asyncio.wait_for(exchange(), .5 if urgent else 2)
+        except asyncio.TimeoutError as exc:
+            raise ControllerTimeout('Hardware controller response timed out; action status unconfirmed') from exc
+        except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError('Hardware controller unavailable; stop unconfirmed') from exc
 
     def challenge(self, session):
@@ -88,8 +95,12 @@ class Hardware:
             return False
         state['nonce'], state['ack'] = None, now
         if session == self.owner and self.control:
-            await self.rpc(dict(op='heartbeat', boot_id=self.control['boot_id'], session_id=session,
-                                deadline=now + (.45 if self.manual else 60), input=message.get('input')))
+            try:
+                await self.rpc(dict(op='heartbeat', boot_id=self.control['boot_id'], session_id=session,
+                                    deadline=now + (.45 if self.manual else 60), input=message.get('input')))
+            except ControllerTimeout:
+                # A late RPC must not tear down the UI; the controller still enforces its lease.
+                return False
         return True
 
     async def command(self, data, wait=False):
@@ -115,10 +126,13 @@ class Hardware:
                 self.owner, self.manual = old_owner, old_manual
             raise
         if wait and result.get('status') == 'accepted':
-            end = time.monotonic() + (45 if data.get('type') == 'reset_map' else 15)
+            end = time.monotonic() + (45 if data.get('type') in ('reset_map', 'map_refresh') else 15)
             while time.monotonic() < end:
                 await asyncio.sleep(.1)
-                result = await self.rpc(dict(op='result', id=data['id']))
+                try:
+                    result = await self.rpc(dict(op='result', id=data['id']))
+                except ControllerTimeout:
+                    continue
                 if result.get('status') != 'pending':
                     break
             else:

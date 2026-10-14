@@ -96,14 +96,15 @@ class Control:
                     if len(line) > 65536 or not line.endswith(b'\n'):
                         raise ValueError('Invalid control packet')
                     packet = json.loads(line)
-                    if packet.get('op') == 'stop':
+                    if packet.get('op') in ('stop', 'heartbeat', 'result'):
                         result = control.receive(packet)
                     else:
                         with control.receive_lock:
                             result = control.receive(packet)
                 except (ValueError, KeyError, TypeError, RuntimeError, OSError) as exc:
                     result = dict(error=str(exc))
-                self.wfile.write((json.dumps(result, allow_nan=False) + '\n').encode())
+                with suppress(BrokenPipeError, ConnectionResetError):
+                    self.wfile.write((json.dumps(result, allow_nan=False) + '\n').encode())
 
         class Server(socketserver.ThreadingUnixStreamServer):
             daemon_threads = True
@@ -203,13 +204,15 @@ class Control:
             return dict(status='accepted', id=command_id)
         if command in ('teleop_acquire', 'teleop_release'):
             raise ValueError('TELEOP handoff requires the local socket')
-        if command in ('update_pause', 'update_start') and (command == 'update_start' or (self.map_update or {}).get('active')):
+        if command in ('update_pause', 'update_start'):
             update = self.map_update
             if not update or not update['active'] or packet.get('task_id') != self.task_id or packet.get('session_id') != self.owner:
                 raise ValueError('Current map update and owning tab required')
             if packet.get('map_id') != update['map_id'] or packet.get('expected_revision') != update['zone_revision']:
                 raise ValueError('Map or no-go revision changed')
             if command == 'update_start':
+                if not self.queue.empty():
+                    raise RuntimeError('Wait for the LiDAR map refresh before resuming item updates')
                 if self.phase != 'update_paused':
                     raise ValueError('Wait for measured update pause before starting updates')
                 if getattr(self.robot, 'map_save_error', ''):
@@ -225,7 +228,7 @@ class Control:
                 if self.phase != 'update_paused':
                     self.requests[command_id] = fingerprint
                     self.update_pause_request = packet
-                update['pause_requested'], update['pause_reason'] = True, 'Map updating paused by operator'
+                update['pause_requested'], update['pause_reason'] = True, 'Item position updates paused by operator'
                 self.base_enabled = False
                 self.robot.zero()
                 self.robot.nav.client.cancel_all_goals()
@@ -240,6 +243,9 @@ class Control:
                 return dict(status='accepted')
             if command != 'align_step' or self.phase != 'review_grasp':
                 raise RuntimeError('Confirm the current grasp stage or stop')
+        elif command == 'map_refresh' and self.phase == 'update_paused':
+            if packet.get('task_id') != self.task_id or packet.get('session_id') != self.owner:
+                raise ValueError('Current item update and owning tab required')
         elif (self.phase != 'idle' and not (self.phase == 'fault' and command == 'recover_stop')) or self.executing or not self.queue.empty():
             raise RuntimeError('Robot is busy; stop before starting another action')
         if packet.get('map_id') != (self.robot.grid or {}).get('map_id'):
@@ -642,7 +648,7 @@ class Control:
     def execute(self, packet):
         kind = packet['type']
         if self.config.get('grasp_test_hold') and kind not in ('grasp_test', 'gripper', 'capture',
-                'capture_grasp_height', 'capture_grasp_goal', 'confirm_homed', 'recover_stop', 'connect_arm'):
+                'capture_grasp_height', 'capture_grasp_goal', 'confirm_homed', 'recover_stop', 'connect_arm', 'map_refresh'):
             raise ValueError('Place the test item or open the gripper before another action')
         if kind == 'teleop_acquire':
             self.robot.zero()
@@ -691,12 +697,17 @@ class Control:
             if packet.get('confirmed') is not True:
                 raise ValueError('Confirm reset of map, no-go zones and taught stations')
             return self.reset_map()
-        elif kind == 'update_pause':
+        elif kind == 'map_refresh':
+            self.phase, self.status = 'refreshing_map', 'Refreshing LiDAR map'
             self.base_enabled = False
             self.robot.zero()
             self.robot.nav.cancel()
             self.robot.nav.wait_stopped()
-            self.robot.commit_map_update()
+            try:
+                self.robot.commit_map_update()
+            except (OSError, ValueError) as exc:
+                self.robot.map_save_error = str(exc)
+                raise
             return dict(map_revision=self.robot.grid['revision'])
         elif kind == 'obstacle_filter':
             minimum = number(packet.get('minimum_m'), 0, .5, 'Small obstacle size')
@@ -874,11 +885,6 @@ class Control:
         self.robot.zero()
         self.robot.nav.cancel()
         self.robot.nav.wait_stopped()
-        try:
-            self.robot.commit_map_update()
-        except (OSError, ValueError) as exc:
-            self.robot.map_save_error = str(exc)
-            raise
         self.phase, self.status = 'update_paused', update['pause_reason']
         update['state'] = 'paused'
         if getattr(self, 'update_pause_request', None):
@@ -889,8 +895,24 @@ class Control:
                 raise Stopped('Map update cancelled while paused')
             if not self.robot.grid or self.robot.grid['map_id'] != update['map_id'] or self.robot.zones['revision'] != update['zone_revision']:
                 raise Stopped('Update map or no-go revision changed')
+            try:
+                refresh = self.queue.get_nowait()
+            except queue.Empty:
+                refresh = None
+            if refresh:
+                try:
+                    if refresh['type'] != 'map_refresh' or refresh['stop_epoch'] != self.stop_epoch:
+                        raise Stopped('Map refresh cancelled')
+                    self.finish(refresh, dict(status='completed', **self.execute(refresh)))
+                except Stopped as exc:
+                    self.finish(refresh, dict(status='cancelled', error=str(exc)))
+                    raise
+                except Exception as exc:
+                    self.finish(refresh, dict(status='failed', error=str(exc)))
+                finally:
+                    self.phase, self.status = 'update_paused', update['pause_reason']
             time.sleep(.05)
-        self.phase, self.status, update['state'] = 'updating_map', 'Updating map observations', 'updating'
+        self.phase, self.status, update['state'] = 'updating_map', 'Updating item positions', 'updating'
 
     def run_update(self, packet):
         limit_s = number(packet.get('limit_s', 600), 60, 3600, 'Update window seconds')
@@ -910,7 +932,7 @@ class Control:
                     self.wait_update()
                     continue
                 self.wait_update()
-                self.phase, self.status = 'updating_map', 'Refreshing map observation'
+                self.phase, self.status = 'updating_map', 'Refreshing item position observation'
                 # Bounded handoff prevents the API/storage backlog from filling the disk.
                 if len(list((self.directory / 'captures').glob('*.json'))) >= 20:
                     update['storage_error'] = 'Photo import backlog; repair storage before restarting updates'
@@ -921,7 +943,7 @@ class Control:
                 update['captures'] += 1
                 update['completed'] += 1
                 if update['completed'] == len(update['goals']):
-                    update['pause_requested'], update['pause_reason'] = True, 'Go queue completed; map updated'
+                    update['pause_requested'], update['pause_reason'] = True, 'View queue completed; item observations captured'
                     self.wait_update()
                     update['completed'] = 0
                     update['round'] += 1

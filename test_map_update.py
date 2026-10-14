@@ -21,16 +21,20 @@ from web_backend.storage import atomic_json
 
 
 class MapUpdateTest(unittest.TestCase):
-    def test_idle_pause_commits_latest_map_without_arm_or_movement(self):
+    def test_idle_refresh_commits_latest_map_without_arm_or_movement(self):
         c = fake_control()
         c.arm, c.arm_homed = None, False
+        c.config['grasp_test_hold'] = dict(item_id='held')
         c.robot.grid['revision'] = 2
-        p = {**packet(), 'type': 'update_pause'}
+        p = {**packet(), 'type': 'map_refresh'}
         self.assertEqual(c.receive(p)['status'], 'accepted')
         self.assertEqual(c.execute(c.queue.get_nowait()), dict(map_revision=2))
         c.robot.nav.wait_stopped.assert_called_once()
         c.robot.commit_map_update.assert_called_once()
         c.robot.nav.go_to.assert_not_called()
+        c.capture.assert_not_called()
+        with self.assertRaises(ValueError):
+            c.receive({**packet(), 'id': str(uuid.uuid4()), 'type': 'update_pause'})
 
     def test_updates_require_manual_points_and_validate_pose_format(self):
         c = fake_control()
@@ -70,7 +74,7 @@ class MapUpdateTest(unittest.TestCase):
         self.assertGreater(c.map_update['deadline'], time.monotonic() + 59)
         self.assertFalse(c.map_update['pause_requested'])
         c.robot.nav.wait_stopped.assert_called_once()
-        c.robot.commit_map_update.assert_called_once()
+        c.robot.commit_map_update.assert_not_called()
 
     def test_pause_retries_current_view_and_updates_repeat_until_cancelled(self):
         c = fake_control()

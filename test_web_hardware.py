@@ -1,4 +1,7 @@
 """Hardware availability guards and expiration; no ROS or physical movement."""
+import asyncio
+from contextlib import suppress
+import json
 import tempfile
 import time
 import unittest
@@ -6,13 +9,54 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 from aiohttp.test_utils import TestClient, TestServer
-from web_backend.hardware import Hardware
+from web_backend.hardware import ControllerTimeout, Hardware
 from web_backend.map_data import demo_map
 from web_backend.server import EDITOR, create_app
 from web_backend.storage import atomic_bytes, atomic_json
 
 
 class HardwareTest(unittest.IsolatedAsyncioTestCase):
+    async def test_delayed_rpc_keeps_urgent_deadlines_and_heartbeat_can_recover(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hardware = Hardware(directory)
+            hardware.owner = 'tab'
+            hardware.control = dict(boot_id='boot')
+            delayed = True
+            async def exchange(reader, writer):
+                try:
+                    packet = json.loads(await reader.readline())
+                    if delayed:
+                        await asyncio.sleep(.6)
+                    writer.write(b'{"status":"ok"}\n')
+                    await writer.drain()
+                except (ConnectionError, asyncio.CancelledError):
+                    pass
+                finally:
+                    writer.close()
+                    with suppress(ConnectionError):
+                        await writer.wait_closed()
+            server = await asyncio.start_unix_server(exchange, path=str(Path(directory) / 'control.sock'))
+            async with server:
+                self.assertEqual((await hardware.rpc(dict(op='result', id='read')))['status'], 'ok')
+                with self.assertRaisesRegex(ControllerTimeout, 'action status unconfirmed'):
+                    await hardware.rpc(dict(op='command', type='manual'))
+                nonce = hardware.challenge('tab')['nonce']
+                self.assertFalse(await hardware.heartbeat('tab', dict(nonce=nonce)))
+                delayed = False
+                nonce = hardware.challenge('tab')['nonce']
+                self.assertTrue(await hardware.heartbeat('tab', dict(nonce=nonce)))
+
+    async def test_result_timeout_retries_polling_without_reissuing_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hardware = Hardware(directory)
+            hardware.refresh = Mock()
+            hardware.control = dict(phase='idle', stamp_s=time.time(), boot_id='boot')
+            hardware.sessions['tab'] = dict(ack=time.monotonic())
+            hardware.rpc = AsyncMock(side_effect=[dict(status='accepted'), ControllerTimeout('late'), dict(status='completed')])
+            result = await hardware.command(dict(id='refresh', type='map_refresh', session_id='tab'), wait=True)
+            self.assertEqual(result['status'], 'completed')
+            self.assertEqual([call.args[0]['op'] for call in hardware.rpc.call_args_list], ['command', 'result', 'result'])
+
     async def test_teleop_photo_does_not_claim_motion_session(self):
         with tempfile.TemporaryDirectory() as directory:
             hardware = Hardware(Path(directory))

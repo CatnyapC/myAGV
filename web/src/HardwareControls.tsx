@@ -106,7 +106,7 @@ export function MapUpdateControls({ state, connected, goal, command }: Pick<Prop
   const cannotPlan = !idle || updating || blockers.length > 0;
   const updateCommand = async (type: string) => {
     setUpdating(true);
-    try { await command(type, type === 'update_start' || type === 'update_pause'
+    try { await command(type, type === 'update_start' || type === 'update_pause' || type === 'map_refresh'
       ? { task_id: state?.task_id } : { limit_s: Number(minutes) * 60, goals }); }
     finally { setUpdating(false); }
   };
@@ -114,12 +114,16 @@ export function MapUpdateControls({ state, connected, goal, command }: Pick<Prop
     <span role="status" className="muted">{state?.map_save_error ? `Map save failed: ${state.map_save_error}`
       : state?.saved_map_revision ? `Map saved · revision ${state.saved_map_revision}` : 'Map not saved yet'}</span>
     <div className="action-line">
-      <Button variant="default" disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start updates</Button>
-      <Button disabled={!connected || updating || paused || (!update?.active && !idle)} onClick={() => void updateCommand('update_pause')}>Pause updates</Button>
+      <Button disabled={!connected || updating || (!idle && !paused)} onClick={() => void updateCommand('map_refresh')}>Refresh LiDAR map</Button>
+    </div>
+    <span className="muted">Publish and save the latest LiDAR map. No item photos or position updates.</span>
+    <div className="action-line">
+      <Button variant="default" disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start item updates</Button>
+      <Button disabled={!connected || updating || paused || !update?.active} onClick={() => void updateCommand('update_pause')}>Pause item updates</Button>
     </div>
     {!paused && blockers.length > 0 && <span role="status" className="muted">{blockers.join(' · ')}</span>}
     <details><summary>Manual update points · {survey.length} views</summary>
-      <span className="muted">Select a map goal and heading, then add it to the queue. The map stays fixed while collecting. Pause updates publishes the latest map.</span>
+      <span className="muted">Select views to capture photos and update item coordinates. Pausing stops collection. Use Refresh LiDAR map separately to publish map changes.</span>
       <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
       <div className="action-line">
         <Button disabled={!idle || updating || !goal || survey.length >= 20} onClick={() => goal && setSurvey(old => [...old, goal])}>Add goal</Button>

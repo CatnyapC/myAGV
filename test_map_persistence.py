@@ -127,7 +127,7 @@ class MapPersistenceTest(unittest.TestCase):
             self.assertEqual(json.loads((robot.directory / 'map.json').read_text()), robot.grid)
             self.assertEqual(robot.map_save_error, '')
 
-    def test_pause_ack_waits_for_storage_and_failure_never_completes(self):
+    def test_paused_item_updates_refresh_lidar_separately_and_report_storage_failure(self):
         for failure in (False, True):
             with self.subTest(failure=failure):
                 c = fake_control()
@@ -140,24 +140,34 @@ class MapPersistenceTest(unittest.TestCase):
                 self.assertEqual(c.receive(request)['status'], 'accepted')
                 self.assertEqual(c.receive(dict(op='result', id=request['id']))['status'], 'pending')
                 def commit():
-                    self.assertNotIn(request['id'], c.results)
+                    self.assertEqual(c.results[request['id']]['status'], 'completed')
+                    self.assertEqual(c.phase, 'refreshing_map')
+                    with self.assertRaises(ValueError):
+                        c.receive({**packet(), 'type': 'update_start', 'task_id': c.task_id})
                     if failure:
                         raise OSError('disk full')
                 c.robot.commit_map_update.side_effect = commit
                 def resume(_seconds):
                     self.assertEqual(c.results[request['id']]['status'], 'completed')
                     self.assertEqual(c.results[request['id']]['map_revision'], 4)
-                    c.map_update['pause_requested'] = False
-                with patch('robot_control.time.sleep', side_effect=resume):
-                    if failure:
-                        with self.assertRaisesRegex(OSError, 'disk full'):
-                            c.wait_update()
-                        c.stop_hardware('disk full')
-                        self.assertEqual(c.results[request['id']]['status'], 'cancelled')
-                        with self.assertRaisesRegex(RuntimeError, 'Map storage failed'):
-                            c.travel_guard({})
+                    if not c.robot.commit_map_update.called:
+                        c.robot.commit_map_update.assert_not_called()
+                        refresh = {**packet(), 'id': 'a39ec919-dd93-4de3-9768-096cc4b013e9', 'type': 'map_refresh', 'task_id': c.task_id}
+                        with self.assertRaises(ValueError):
+                            c.receive({**refresh, 'session_id': 'other'})
+                        self.assertEqual(c.receive(refresh)['status'], 'accepted')
                     else:
-                        c.wait_update()
+                        result = c.results['a39ec919-dd93-4de3-9768-096cc4b013e9']
+                        self.assertEqual(result['status'], 'failed' if failure else 'completed')
+                        self.assertEqual(c.phase, 'update_paused')
+                        c.map_update['pause_requested'] = False
+                with patch('robot_control.time.sleep', side_effect=resume):
+                    c.wait_update()
+                if failure:
+                    with self.assertRaisesRegex(RuntimeError, 'Map storage failed'):
+                        c.travel_guard({})
+                c.robot.commit_map_update.assert_called_once()
+                c.capture.assert_not_called()
 
 
 if __name__ == '__main__':

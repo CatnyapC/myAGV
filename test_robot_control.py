@@ -627,6 +627,13 @@ class IPCtest(unittest.IsolatedAsyncioTestCase):
             h=Hardware(tmp)
             try:
                 self.assertEqual((await h.rpc(packet()))['status'],'accepted')
+                c.receive_lock.acquire()
+                try:
+                    self.assertEqual((await h.rpc(dict(op='result', id='missing')))['status'], 'pending')
+                    heartbeat = dict(op='heartbeat', boot_id=c.boot_id, session_id=c.owner, deadline=time.monotonic()+60)
+                    self.assertEqual((await h.rpc(heartbeat))['status'], 'ok')
+                finally:
+                    c.receive_lock.release()
                 self.assertEqual((await h.stop())['status'],'stopping')
                 self.assertIsNotNone(c.stop_pending)
                 self.assertEqual((await h.rpc(dict(op='result',id='missing')))['status'],'pending')
