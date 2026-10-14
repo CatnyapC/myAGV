@@ -153,7 +153,8 @@ blue-cap alignment**. This saves the measured bounds once, tied to that exact
 photo. Recapturing or removing the goal invalidates the saved measurement.
 The base stage still uses the LLM. The arm stage uses local OpenCV blue-cap
 contours instead of model coordinates, with GOAL/CURRENT boxes in ALIGNMENT
-ROUNDS. One stationary frame within 3% horizontal position, top/bottom boundaries
+ROUNDS. Hardware measurement shows that logical Y+ moves the cap upward: a cap
+above GOAL therefore commands Y−. One stationary frame within 3% horizontal position, top/bottom boundaries
 and 25% visible width completes alignment; no consecutive-frame requirement.
 Missing or ambiguous blue-cap contours stop the task. This detector is specific
 to the saturated blue salt-can cap, not other items. Install/update the API's

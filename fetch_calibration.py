@@ -85,7 +85,8 @@ def measured_arm_alignment(result, config, blue_cap=False):
     goal, current = result['goal'], result['current']
     x = (current[0] + current[2] - goal[0] - goal[2]) / 2
     goal_height, height = goal[3] - goal[1], current[3] - current[1]
-    y = goal[1] - current[1] if blue_cap else height - goal_height  # More exposed => Y+.
+    # Measured on hardware: logical Y+ moves the blue cap upward in the image.
+    y = current[1] - goal[1] if blue_cap else height - goal_height
     tolerance = 30 if blue_cap else 20
     width_ratio = (current[2] - current[0]) / (goal[2] - goal[0])
     area_ratio = width_ratio * height / goal_height

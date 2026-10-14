@@ -56,7 +56,7 @@ class BlueCapTest(unittest.TestCase):
         self.assertLess(current[3], 800)
         self.assertLess(current[1], 400)
         self.assertEqual(blue_cap_bounds(cap_image(denim=True)), goal)
-        self.assertGreater(measured_arm_alignment(dict(goal=goal, current=current), {}, blue_cap=True)['y_mm'], 0)
+        self.assertLess(measured_arm_alignment(dict(goal=goal, current=current), {}, blue_cap=True)['y_mm'], 0)
         self.assertFalse(any(measured_arm_alignment(dict(goal=goal, current=goal), {}, blue_cap=True).values()))
 
     def test_missing_ambiguous_and_invalid_images_stop(self):
@@ -135,7 +135,7 @@ class BlueCapAPITest(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(.025)
                     response = json.loads(response_path.read_text())
                     self.assertFalse(response['aligned_perfectly'])
-                    self.assertGreater(response['result']['y_mm'], 0)
+                    self.assertLess(response['result']['y_mm'], 0)
                     provider.assert_not_awaited()
                     log = await (await client.get('/api/fetch-log')).json()
                     entry = log['rounds'][0]
