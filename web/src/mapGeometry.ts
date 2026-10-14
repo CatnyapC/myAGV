@@ -28,9 +28,8 @@ export type Navigation = {
 };
 
 export function chassisOutline(pose: Origin, length: number, width: number): Point[] {
-  const a = length / 2, b = width / 2, cut = Math.min(length, width) * .15;
-  return [[-a + cut, -b], [a - cut, -b], [a, -b + cut], [a, b - cut],
-    [a - cut, b], [-a + cut, b], [-a, b - cut], [-a, -b + cut]]
+  const a = length / 2, b = width / 2, nose = length * .25;
+  return [[-a, -b], [a - nose, -b], [a, 0], [a - nose, b], [-a, b]]
     .map(([u, v]) => toWorld([v, u], pose));
 }
 

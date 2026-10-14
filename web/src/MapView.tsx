@@ -20,13 +20,13 @@ export function MapView(props: {
   const polygons = useRef<L.LayerGroup | null>(null);
   const bounds = useRef<L.LatLngBounds | null>(null);
   const robot = useRef<L.Polygon | null>(null);
-  const heading = useRef<L.Polyline | null>(null);
   const path = useRef<L.Polyline | null>(null);
-  const target = useRef<L.CircleMarker | null>(null);
-  const targetHeading = useRef<L.Polyline | null>(null);
+  const target = useRef<L.Polygon | null>(null);
   const observations = useRef<L.LayerGroup | null>(null);
   const updatePoints = useRef<L.LayerGroup | null>(null);
   const itemPoints = useRef<L.LayerGroup | null>(null);
+  const length = props.navigation?.footprint.length_m ?? .32;
+  const width = props.navigation?.footprint.width_m ?? .28;
 
   useEffect(() => {
     if (!host.current) return;
@@ -41,9 +41,7 @@ export function MapView(props: {
     itemPoints.current = L.layerGroup().addTo(instance);
     path.current = L.polyline([], { color: 'var(--cyan-9)', weight: 2, opacity: .85, interactive: false }).addTo(instance);
     robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 1.8, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
-    heading.current = L.polyline([], { color: 'var(--cyan-11)', weight: 1.5, interactive: false }).addTo(instance);
-    target.current = L.circleMarker([0, 0], { radius: 5, color: 'var(--orange-9)', weight: 2, fillOpacity: 0, opacity: 0, interactive: false }).addTo(instance);
-    targetHeading.current = L.polyline([], { color: 'var(--orange-9)', weight: 1.5, interactive: false }).addTo(instance);
+    target.current = L.polygon([], { color: 'var(--orange-9)', weight: 2, fill: false, interactive: false }).addTo(instance);
     const observer = new ResizeObserver(() => instance.invalidateSize({ pan: false }));
     observer.observe(host.current);
     instance.on('click', (event: L.LeafletMouseEvent) => {
@@ -86,27 +84,21 @@ export function MapView(props: {
   useEffect(() => {
     const nav = props.navigation;
     if (!nav || !nav.pose || nav.map_id !== props.info.map_id) {
-      robot.current?.setLatLngs([]); heading.current?.setLatLngs([]); path.current?.setLatLngs([]);
+      robot.current?.setLatLngs([]); path.current?.setLatLngs([]);
       return;
     }
     const origin = props.info.display.origin;
     robot.current?.setLatLngs(chassisOutline(nav.pose, nav.footprint.length_m, nav.footprint.width_m).map(p => toView(p, origin)));
     robot.current?.getElement()?.classList.toggle('moving', props.connected && nav.moving);
-    heading.current?.setLatLngs([toView([nav.pose.x_m, nav.pose.y_m], origin), toView(toWorld([0, nav.footprint.length_m / 2 + .08], nav.pose), origin)]);
     path.current?.setLatLngs(props.connected ? nav.path.map(p => toView(p, origin)) : []);
   }, [props.navigation, props.info, props.connected]);
 
   useEffect(() => {
     const goal = props.navigation?.moving ? props.navigation.goal : props.goal ?? props.navigation?.goal;
     const color = props.navigation?.moving ? 'var(--orange-9)' : 'var(--cyan-11)';
-    target.current?.setStyle({ opacity: goal ? 1 : 0, color });
-    targetHeading.current?.setStyle({ color });
-    if (goal) {
-      target.current?.setLatLng(toView([goal.x_m, goal.y_m], props.info.display.origin));
-      targetHeading.current?.setLatLngs([toView([goal.x_m, goal.y_m], props.info.display.origin),
-        toView(toWorld([0, .35], goal), props.info.display.origin)]);
-    } else targetHeading.current?.setLatLngs([]);
-  }, [props.goal, props.navigation, props.info]);
+    target.current?.setStyle({ color });
+    target.current?.setLatLngs(goal ? chassisOutline(goal, length, width).map(p => toView(p, props.info.display.origin)) : []);
+  }, [props.goal, props.navigation, props.info, length, width]);
 
   useEffect(() => {
     const pose = latest.current.navigation?.pose;
@@ -192,14 +184,12 @@ export function MapView(props: {
     const update = props.update;
     if (!update || update.map_id !== props.info.map_id || (!update.active && update.state !== 'planned')) return;
     update.goals.forEach((pose, i) => {
-      const point = toView([pose.x_m, pose.y_m], props.info.display.origin);
       const color = i === update.completed ? 'var(--orange-9)' : 'var(--cyan-9)';
       const label = document.createElement('span'); label.textContent = `Update view ${i + 1} · ${(pose.yaw_rad * 180 / Math.PI).toFixed(0)}°`;
-      L.circleMarker(point, { radius: 3, color, weight: 1, fillOpacity: .25, interactive: false }).addTo(group).bindTooltip(label);
-      L.polyline([point, toView([pose.x_m + .16 * Math.cos(pose.yaw_rad), pose.y_m + .16 * Math.sin(pose.yaw_rad)], props.info.display.origin)],
-        { color, weight: 1, interactive: false }).addTo(group);
+      L.polygon(chassisOutline(pose, length, width).map(p => toView(p, props.info.display.origin)),
+        { color, weight: 1, fillOpacity: .25, interactive: false }).addTo(group).bindTooltip(label);
     });
-  }, [props.update, props.info]);
+  }, [props.update, props.info, length, width]);
 
   useEffect(() => {
     preview.current?.remove();
