@@ -18,8 +18,10 @@ git pull --ff-only
 source /opt/ros/noetic/setup.bash
 source ~/myagv_ros/devel/setup.bash
 python3 install_driver_watchdog.py ~/myagv_ros/src/myagv_odometry/src/myAGVSub.cpp
+python3 install_navigation_turn.py ~/myagv_ros/src/navigation/base_local_planner/src/trajectory_planner.cpp
 cd ~/myagv_ros
 catkin_make --pkg myagv_odometry -j2
+catkin_make --pkg base_local_planner -j1
 cd ~/myAGV
 uv sync --locked --extra web
 npm --prefix web ci
@@ -39,6 +41,20 @@ The ROS launch initially starts map_server, AMCL and move_base. Both costmaps co
 `/navigation_map`. The move_base output is remapped to `/myagv/input_vel`; only
 the bridge publishes `/cmd_vel`. Fresh LiDAR/odometry, exclusive publishers and
 the driver watchdog are required for motion.
+
+The navigation patch ranks legal in-place turns by the shortest angle toward a
+visible path point, using the planner's existing `headingDiff` calculation.
+The upstream grid-distance score can tie at 0.1 rad/s and prefer the clockwise
+sample even when counterclockwise is shorter. Collision checks, speed limits,
+oscillation checks and final goal-heading alignment stay in the planner.
+The installer refuses unknown source layouts and keeps `.before-shortest-turn`.
+Rebuild and restart navigation to load the patch. Run the offline regression
+on the ROS machine; it publishes no motion commands:
+
+```bash
+g++ -std=c++14 test_navigation_turn.cpp -o /tmp/myagv-navigation-turn $(pkg-config --cflags --libs base_local_planner)
+/tmp/myagv-navigation-turn
+```
 
 ## Initial setup in the UI
 

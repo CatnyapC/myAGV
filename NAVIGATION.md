@@ -37,6 +37,11 @@ After updating this launch file, stop and restart only the navigation launch;
 keep chassis/LiDAR running, then set **2D Pose Estimate** again. Updating ROS
 parameters alone does not reload all final-alignment settings in this planner.
 
+Apply the `install_navigation_turn.py` patch and rebuild `base_local_planner` as
+described in [HARDWARE_WEBUI.md](HARDWARE_WEBUI.md#install-and-start). It removes
+the upstream clockwise sampling bias when slow in-place turns receive the same
+grid-distance score. The same patch covers CLI and WebUI navigation.
+
 Use the robot's existing chassis/LiDAR startup procedure without duplicating drivers. In RViz, use **2D Pose Estimate** to set the actual starting position and heading, then check scan alignment.
 The scripts use `map -> base_footprint` TF, `odom`, `move_base`, and `cmd_vel`. Do not send simultaneous navigation goals from RViz or another client.
 

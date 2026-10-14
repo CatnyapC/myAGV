@@ -3,6 +3,8 @@ import json
 import math
 from pathlib import Path
 import signal
+import subprocess
+import sys
 import tempfile
 from types import SimpleNamespace as NS
 import unittest
@@ -10,12 +12,48 @@ from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
 
 import fetch_demo
+from install_navigation_turn import patch as patch_navigation_turn
 import navigation
 from teleop_control import Controller, parse_args, record_station
 
 
 POSE = {"x_m": 1.2, "y_m": 0.5, "yaw_deg": 90}
 STATION = {"base": POSE, "arm_angles_deg": [90, 20, 30]}
+
+
+class NavigationTurnPatchTest(unittest.TestCase):
+    def test_only_rotation_score_changes_and_install_is_idempotent(self):
+        score = 'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;'
+        source = ('//next we want to generate trajectories for rotating in place\n'
+                  + score + '\n//do we have a legal trajectory\n' + score)
+        updated = patch_navigation_turn(source)
+        self.assertIn('headingDiff(cell_x, cell_y, x_r, y_r, th_r)', updated)
+        self.assertEqual(updated.count(score), 1)
+        self.assertTrue(updated.endswith(score))
+        self.assertEqual(patch_navigation_turn(updated), updated)
+        for invalid in ('', source.replace(score, ''), source.replace(score, score * 2)):
+            with self.subTest(source=invalid), self.assertRaises(ValueError):
+                patch_navigation_turn(invalid)
+
+    def test_installer_preserves_backup_and_refuses_overwriting_it(self):
+        source = ('//next we want to generate trajectories for rotating in place\n'
+                  'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;\n'
+                  '//do we have a legal trajectory\n')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'trajectory_planner.cpp'
+            path.write_text(source)
+            command = [sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')), str(path)]
+            for _ in range(2):
+                subprocess.run(command, check=True, capture_output=True, text=True)
+            self.assertEqual(path.read_text(), patch_navigation_turn(source))
+            backup = path.with_suffix('.cpp.before-shortest-turn')
+            self.assertEqual(backup.read_text(), source)
+            path.write_text(source)
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('Backup exists', result.stderr)
+            self.assertEqual(path.read_text(), source)
+            self.assertEqual(backup.read_text(), source)
 
 
 class FakeArm:
