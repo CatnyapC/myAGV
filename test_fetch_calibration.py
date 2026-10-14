@@ -126,7 +126,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 hardware = app[EDITOR].hardware
                 hardware.refresh = Mock()
-                hardware.control = dict(phase='idle', stamp_s=time.time())
+                hardware.control = dict(phase='idle', stamp_s=time.time(), metric_alignment_available=True)
                 hardware.command = AsyncMock(return_value=dict(status='accepted'))
                 async with TestClient(TestServer(app)) as client:
                     command = dict(id=str(uuid.uuid4()), type='grasp_test', map_id=grid['map_id'],
@@ -326,12 +326,12 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(alignment_command({'x_mm': 0, 'turn_deg': 0}, None), {'X': 0, 'turn_deg': 0})
         self.assertEqual(alignment_command({'x_mm': 2, 'turn_deg': -2}, {'max_step_mm': 1}), {'X': 1, 'turn_deg': -2})
         for bad in (None, {}, {'x_mm': None, 'turn_deg': 0}, {'x_mm': True, 'turn_deg': 0},
-                    {'x_mm': float('nan'), 'turn_deg': 0}, {'x_mm': 10.1, 'turn_deg': 0},
+                    {'x_mm': float('nan'), 'turn_deg': 0}, {'x_mm': 20.1, 'turn_deg': 0},
                     {'x_mm': .05, 'turn_deg': 0}, {'x_mm': 0, 'turn_deg': 0, 'grip': True}):
             with self.assertRaises(ValueError):
                 alignment_command(bad, None)
         with self.assertRaises(ValueError):
-            calibration_config({'max_step_mm': 11})
+            calibration_config({'max_step_mm': 21})
         self.assertEqual(pickup_delta('X', 1), (0, 1, 0))
         self.assertEqual(pickup_delta('Y', 1), (-1, 0, 0))
         cv2 = SimpleNamespace(INTER_AREA=3, IMWRITE_JPEG_QUALITY=1,
@@ -533,7 +533,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             entered, release = asyncio.Event(), asyncio.Event()
             provider_result = dict(front='left_large')
 
-            async def provider(body, key, timeout):
+            async def provider(body, key, timeout, trace=None):
                 entered.set()
                 await release.wait()
                 return provider_result
@@ -544,7 +544,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 hardware = app[EDITOR].hardware
                 hardware.refresh = Mock()
-                hardware.control = dict(phase='idle', stamp_s=time.time())
+                hardware.control = dict(phase='idle', stamp_s=time.time(), metric_alignment_available=True)
                 async with TestClient(TestServer(app)) as client:
                     from web_backend.codex_bridge import MODEL as CODEX_MODEL
                     preferences = await (await client.get('/api/settings')).json()
@@ -552,8 +552,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         values={**preferences['values'], 'llm_model': CODEX_MODEL, 'reasoning_effort': 'low'}))
                     self.assertEqual(response.status, 200)
                     settings = await (await client.get('/api/fetch-settings')).json()
-                    values = {**settings['values'], 'max_step_mm': .5, 'prompt': 'Edited prompt'}
-                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values={**values, 'max_step_mm': 11}))).status, 400)
+                    values = {**settings['values'], 'max_step_mm': 20, 'prompt': 'Edited prompt'}
+                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values={**values, 'max_step_mm': 21}))).status, 400)
                     saved = await (await client.put('/api/fetch-settings', json=dict(expected_revision=0, values=values))).json()
                     self.assertEqual(saved['revision'], 1)
                     self.assertEqual(json.loads((ui / 'fetch_settings.json').read_text()), saved)
@@ -583,7 +583,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     images = dict(front='data:image/jpeg;base64,AQ==', arm='data:image/jpeg;base64,Ag==')
                     value = dict(id='request', task_id='task', boot_id='boot', stop_epoch=0, map_id=grid['map_id'],
                         expires_at_s=time.time()+20, round=1, preview=True, prompt=values['prompt'], limits=values,
-                        images=images, history=[], item=dict(name='Cup', appearance='Red', reference_photo_id=reference['id']))
+                        images=images, arm_position_mm=[0,150,35], history=[], item=dict(name='Cup', appearance='Red', reference_photo_id=reference['id']))
                     atomic_json(bridge / 'fetch_vision_request.json', value)
                     try:
                         await asyncio.wait_for(entered.wait(), 2)
@@ -619,7 +619,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(entry['status'], 'returned')
                     self.assertEqual(entry['model'], CODEX_MODEL)
                     self.assertEqual(entry['measurement'], provider_result)
-                    self.assertEqual(entry['correction'], dict(X=0, Y=-.25, turn_deg=0))
+                    self.assertEqual(entry['correction'], dict(X=5, Y=0, turn_deg=0))
                     self.assertEqual([v['label'] for v in entry['measured_images']], ['GOAL','CURRENT'])
                     self.assertEqual(entry['measured_images'][0]['image'], index.reference_image(cameras['arm']))
                     entered.clear()

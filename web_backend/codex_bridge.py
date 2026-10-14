@@ -4,6 +4,7 @@ import base64
 import hmac
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -93,79 +94,125 @@ def codex_command():
     return command
 
 
-async def infer(body):
-    instructions, content, schema, effort = inputs(body)
-    environment = dict(os.environ)
-    for name in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'):
-        environment.pop(name, None)
-    # shortcut: one isolated app-server per request; keep it warm if startup dominates latency.
-    with tempfile.TemporaryDirectory(prefix='myagv-codex-') as directory:
-        process = await asyncio.create_subprocess_exec(*codex_command(), cwd=directory, env=environment,
-            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, limit=32 * 1024 * 1024)
-        try:
-            async def send(method, params, identity=None):
-                message = dict(method=method, params=params)
-                if identity is not None:
-                    message['id'] = identity
-                process.stdin.write(json.dumps(message).encode() + b'\n')
-                await process.stdin.drain()
+class CodexConversation:
+    def __init__(self):
+        self.process = None
+        self.directory = None
+        self.thread_id = None
+        self.instructions = None
+        self.identity = 0
+        self.sequence = None
+        self.last_used = 0
+        self.service_tier = None
 
-            async def receive():
-                line = await process.stdout.readline()
-                if not line:
-                    raise RuntimeError('Codex app-server disconnected')
-                message = json.loads(line)
-                if 'method' in message and 'id' in message:
-                    raise RuntimeError('Codex requested an unsupported tool or approval')
-                if 'error' in message:
-                    raise RuntimeError('Codex rejected the inference request')
-                return message
+    async def close(self):
+        process, self.process = self.process, None
+        if process:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+        if self.directory:
+            self.directory.cleanup()
+            self.directory = None
 
-            async def rpc(identity, method, params):
-                await send(method, params, identity)
-                while True:
-                    message = await receive()
-                    if message.get('id') == identity:
-                        return message['result']
+    async def send(self, method, params, identity=None):
+        message = dict(method=method, params=params)
+        if identity is not None:
+            message['id'] = identity
+        self.process.stdin.write(json.dumps(message).encode() + b'\n')
+        await self.process.stdin.drain()
 
-            async with asyncio.timeout(TIMEOUT_S):
-                await rpc(1, 'initialize', dict(clientInfo=dict(name='myagv_vision', title='myAGV Vision', version='1.0')))
-                await send('initialized', {})
-                account = await rpc(2, 'account/read', dict(refreshToken=False))
+    async def receive(self):
+        line = await self.process.stdout.readline()
+        if not line:
+            raise RuntimeError('Codex app-server disconnected')
+        message = json.loads(line)
+        if 'method' in message and 'id' in message:
+            raise RuntimeError('Codex requested an unsupported tool or approval')
+        if 'error' in message:
+            raise RuntimeError('Codex rejected the inference request')
+        return message
+
+    async def rpc(self, method, params):
+        self.identity += 1
+        identity = self.identity
+        await self.send(method, params, identity)
+        while True:
+            message = await self.receive()
+            if message.get('id') == identity:
+                return message['result']
+
+    async def run(self, body):
+        instructions, content, schema, effort = inputs(body)
+        async with asyncio.timeout(TIMEOUT_S):
+            if self.process is None:
+                environment = dict(os.environ)
+                for name in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_ACCESS_TOKEN'):
+                    environment.pop(name, None)
+                self.directory = tempfile.TemporaryDirectory(prefix='myagv-codex-')
+                self.process = await asyncio.create_subprocess_exec(*codex_command(), cwd=self.directory.name, env=environment,
+                    stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL, limit=32 * 1024 * 1024)
+                await self.rpc('initialize', dict(clientInfo=dict(name='myagv_vision', title='myAGV Vision', version='1.0')))
+                await self.send('initialized', {})
+                account = await self.rpc('account/read', dict(refreshToken=False))
                 if (account.get('account') or {}).get('type') != 'chatgpt':
                     raise RuntimeError('Sign in to Codex CLI with ChatGPT first')
-                thread = await rpc(3, 'thread/start', dict(model=body['model'].removeprefix('codex-local/'), cwd=directory,
+                thread = await self.rpc('thread/start', dict(model=body['model'].removeprefix('codex-local/'), cwd=self.directory.name,
                     ephemeral=True, approvalPolicy='never', sandbox='read-only', serviceTier='fast',
                     baseInstructions=instructions,
                     developerInstructions='Use only the supplied text and images. Never call tools, execute commands, access files or control hardware. Return only the requested JSON.',
                     serviceName='myagv_vision'))
-                thread_id = thread['thread']['id']
-                await rpc(4, 'turn/start', dict(threadId=thread_id, input=content, effort=effort, outputSchema=schema, serviceTier='fast'))
-                answer = None
-                while True:
-                    message = await receive()
-                    params = message.get('params', {})
-                    if params.get('threadId') != thread_id:
+                self.thread_id = thread['thread']['id']
+                self.service_tier = thread.get('serviceTier')
+                self.instructions = instructions
+            elif instructions != self.instructions:
+                raise ValueError('Session instructions changed; restart ALIGN')
+            turn = await self.rpc('turn/start', dict(threadId=self.thread_id, input=content, effort=effort,
+                outputSchema=schema, serviceTier='fast'))
+            turn_id = turn['turn']['id']
+            answer, usage = None, None
+            while True:
+                message = await self.receive()
+                params = message.get('params', {})
+                if params.get('threadId') != self.thread_id:
+                    continue
+                if params.get('turnId', turn_id) != turn_id:
+                    continue
+                if message.get('method') == 'thread/tokenUsage/updated':
+                    usage = params.get('tokenUsage', {}).get('last')
+                if message.get('method') == 'item/completed':
+                    item = params['item']
+                    if item['type'] == 'agentMessage' and item.get('phase') != 'commentary':
+                        answer = item['text']
+                    elif item['type'] not in ('userMessage', 'agentMessage', 'reasoning'):
+                        raise RuntimeError('Codex returned an unsupported tool action')
+                if message.get('method') == 'turn/completed':
+                    if params['turn']['id'] != turn_id:
                         continue
-                    if message.get('method') == 'item/completed':
-                        item = params['item']
-                        if item['type'] == 'agentMessage' and item.get('phase') != 'commentary':
-                            answer = item['text']
-                        elif item['type'] not in ('userMessage', 'agentMessage', 'reasoning'):
-                            raise RuntimeError('Codex returned an unsupported tool action')
-                    if message.get('method') == 'turn/completed':
-                        if params['turn']['status'] != 'completed' or not answer:
-                            code = (params['turn'].get('error') or {}).get('codexErrorInfo', 'unknown')
-                            code = code if isinstance(code, str) and code.isalnum() else 'unknown'
-                            raise RuntimeError('Codex inference failed (' + code + ')')
-                        if len(answer.encode()) > 65536 or not isinstance(json.loads(answer), dict):
-                            raise RuntimeError('Invalid Codex JSON result')
-                        return dict(choices=[dict(finish_reason='stop', message=dict(content=answer))])
-        finally:
-            if process.returncode is None:
-                process.kill()
-            await process.wait()
+                    if params['turn']['status'] != 'completed' or not answer:
+                        raise RuntimeError('Codex inference failed; restart ALIGN')
+                    if len(answer.encode()) > 65536 or not isinstance(json.loads(answer), dict):
+                        raise RuntimeError('Invalid Codex JSON result')
+                    self.last_used = asyncio.get_running_loop().time()
+                    result = dict(choices=[dict(finish_reason='stop', message=dict(content=answer))],
+                        codex=dict(thread_id=self.thread_id, turn_id=turn_id, service_tier=self.service_tier))
+                    if usage:
+                        result['usage'] = {k: v for k, v in usage.items() if type(v) is int and v >= 0}
+                    return result
+
+
+async def infer(body, conversation=None):
+    owned = conversation is None
+    conversation = conversation or CodexConversation()
+    try:
+        return await conversation.run(body)
+    except BaseException:
+        await conversation.close()
+        raise
+    finally:
+        if owned:
+            await conversation.close()
 
 
 def create_app():
@@ -173,6 +220,12 @@ def create_app():
     if status != 'configured':
         raise RuntimeError('Set MYAGV_CODEX_TOKEN_FILE to a protected token file')
     lock = asyncio.Lock()
+    sessions = {}
+
+    async def close_session(identity):
+        conversation = sessions.pop(identity, None)
+        if conversation:
+            await conversation.close()
 
     @web.middleware
     async def boundary(request, handler):
@@ -193,14 +246,60 @@ def create_app():
         if lock.locked():
             raise web.HTTPTooManyRequests(text='Codex inference already running')
         async with lock:
-            return web.json_response(await infer(await request.json()))
+            body = await request.json()
+            session = body.get('session')
+            if session is None:
+                return web.json_response(await infer(body))
+            identity, sequence = session['id'], session['sequence']
+            if (not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9:_-]{1,160}', identity)
+                    or type(sequence) is not int or not 1 <= sequence <= 33 or type(session['start']) is not bool):
+                raise ValueError('Invalid ALIGN session')
+            if session['start']:
+                if identity in sessions:
+                    raise web.HTTPConflict(text='ALIGN session already exists')
+                for old in list(sessions):
+                    await close_session(old)
+                sessions[identity] = CodexConversation()
+            conversation = sessions.get(identity)
+            if conversation is None or (conversation.sequence is not None and sequence != conversation.sequence + 1):
+                raise web.HTTPConflict(text='ALIGN session missing or sequence changed; restart ALIGN')
+            try:
+                result = await infer(body, conversation)
+                conversation.sequence = sequence
+                return web.json_response(result)
+            except BaseException:
+                await close_session(identity)
+                raise
+
+    async def delete_session(request):
+        await close_session(request.match_info['id'])
+        return web.Response(status=204)
+
+    async def cleanup(application):
+        async def reap():
+            while True:
+                await asyncio.sleep(1)
+                now = asyncio.get_running_loop().time()
+                for identity, conversation in list(sessions.items()):
+                    if not lock.locked() and now - conversation.last_used > 180:
+                        await close_session(identity)
+        task = asyncio.create_task(reap())
+        try:
+            yield
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            for identity in list(sessions):
+                await close_session(identity)
 
     async def health(request):
         return web.json_response(dict(status='configured', model=MODEL))
 
     app = web.Application(middlewares=[boundary], client_max_size=32 * 1024 * 1024)
     app.router.add_post('/v1/chat/completions', complete)
+    app.router.add_delete('/v1/sessions/{id}', delete_session)
     app.router.add_get('/healthz', health)
+    app.cleanup_ctx.append(cleanup)
     return app
 
 

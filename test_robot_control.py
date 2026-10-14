@@ -323,7 +323,7 @@ class ControlTest(unittest.TestCase):
                 c.arm.get_coords_info.return_value = [0, 200, 0]
                 axis, distance = 'X', 10
                 if reason == 'distance':
-                    distance = 10.1
+                    distance = 20.1
                 elif reason == 'workspace':
                     c.arm.get_coords_info.return_value = [0, 359, 0]
                 elif reason == 'heading':

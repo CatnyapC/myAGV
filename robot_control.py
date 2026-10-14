@@ -16,7 +16,7 @@ import time
 import uuid
 
 from navigation import arm_deadline, load_stations, pickup_angles, save_station, validate_angles, wait_arm
-from fetch_calibration import FETCH_VISION_TIMEOUT_S, alignment_command, calibration_config, pickup_delta
+from fetch_calibration import FETCH_VISION_TIMEOUT_S, alignment_command, calibration_config, metric_arm_alignment, pickup_delta
 from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
 from web_backend.map_data import validate_rectangle
@@ -410,7 +410,7 @@ class Control:
         self.require_arm()
         if axis not in LIMITS or direction not in (-1, 1):
             raise ValueError('Invalid arm step')
-        number(distance, .001, 10 if pickup else 1, 'Arm step distance')
+        number(distance, .001, (10 if axis == 'Z' else 20) if pickup else 1, 'Arm step distance')
         with arm_deadline(.4):
             coords = self.arm.get_coords_info()
         if not coords or len(coords) < 3 or not all(type(v) in (float, int) and math.isfinite(v) for v in coords[:3]):
@@ -1036,12 +1036,22 @@ class Control:
                 self.status = 'Round %d: capturing front and arm cameras' % (round_index + 1)
                 self.robot.nav.wait_stopped()
                 images = {camera: self.capture(camera, vision=True)['image'] for camera in (('front',) if stage == 'base' else ('arm',))}
+                position = None
+                if stage == 'arm' and packet.get('alignment_protocol') == 'metric-v1':
+                    with arm_deadline(.4):
+                        position = self.arm.get_coords_info()
+                    if not position or len(position) < 3:
+                        raise RuntimeError('Measured ARM coordinates required for metric alignment')
+                    position = [number(position[i], *LIMITS[axis], 'ARM position feedback') for i, axis in enumerate('XYZ')]
+                    if abs(position[2] - target_z) > 1:
+                        raise ValueError('ARM Z left calibration GOAL height during alignment')
                 request_id = str(uuid.uuid4())
                 atomic_json(request_path, dict(id=request_id, boot_id=self.boot_id, task_id=self.task_id,
                     stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + FETCH_VISION_TIMEOUT_S + 5,
                     item=packet['vision_item'], images=images, history=history, stage=stage,
                     round=round_index + 1, preview=packet.get('preview', False), limits=config,
-                    prompt=packet.get('fetch_settings', {}).get('prompt')))
+                    prompt=packet.get('fetch_settings', {}).get('prompt'), arm_position_mm=position,
+                    alignment_protocol=packet.get('alignment_protocol')))
                 self.status = '%s alignment round %d: waiting for LLM' % (stage, round_index + 1)
                 end = time.monotonic() + FETCH_VISION_TIMEOUT_S + 5
                 while True:
@@ -1054,6 +1064,16 @@ class Control:
                         if response.get('error'):
                             raise RuntimeError(response['error'])
                         moves = alignment_command(response.get('result'), config)
+                        if stage == 'arm' and packet.get('alignment_protocol') == 'metric-v1':
+                            if response.get('metric_ready') is not True and response.get('aligned_perfectly') is not False:
+                                raise ValueError('Metric calibration must finish before alignment')
+                            if response.get('metric_ready') is True:
+                                residual = response.get('residual_mm')
+                                if not isinstance(residual, dict):
+                                    raise ValueError('Full millimeter residual required before alignment')
+                                expected, aligned = metric_arm_alignment(dict(residual, aligned=response.get('model_aligned')), config)
+                                if moves != alignment_command(expected, config) or response.get('aligned_perfectly') is not aligned:
+                                    raise ValueError('Metric alignment response contradicts the full residual')
                         break
                     if time.monotonic() >= end:
                         raise TimeoutError('Fetch vision calibration timed out')
@@ -1085,7 +1105,14 @@ class Control:
                     if delta:
                         current()
                         self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=abs(delta))
-                history = (history + [dict(images=images, commanded=moves)])[-(5 if stage == 'base' else 2):]
+                actual = None
+                if position is not None:
+                    with arm_deadline(.4):
+                        after = self.arm.get_coords_info()
+                    if not after or len(after) < 3:
+                        raise RuntimeError('ARM feedback unavailable after metric correction')
+                    actual = dict(X=after[1]-position[1], Y=position[0]-after[0], Z=after[2]-position[2])
+                history = (history + [dict(images=images, commanded=moves, actual_mm=actual)])[-(5 if stage == 'base' else 2):]
             raise RuntimeError('Fetch alignment did not finish both stages')
         finally:
             self.base_enabled = False
@@ -1221,7 +1248,7 @@ class Control:
             update['remaining_s'] = max(0, math.ceil(update['deadline'] - time.monotonic()))
         return dict(boot_id=self.boot_id, stop_epoch=self.stop_epoch, stamp_s=time.time(), phase=self.phase, status=self.status, map_update=update,
                     item_approach_available=True,
-                    task_id=self.task_id, arm_available=self.arm is not None, arm_homed=self.arm_homed,
+                    task_id=self.task_id, arm_available=self.arm is not None, arm_homed=self.arm_homed, metric_alignment_available=True,
                     arm_angles=self.angles if fresh(self.arm_stamp, time.monotonic(), 2) else None,
                     arm_error=self.arm_error, transport_angles=self.config['transport_angles'],
                     clearance_m=self.config['clearance_m'], localized=self.localized,

@@ -193,14 +193,33 @@ location estimation, approach and ALIGN use the selected provider. ALIGN freezes
 the model and effort for each task and retains the existing measured-Z gate,
 image bounds checks, movement limits and STOP checks. Local Codex receives inline
 images and an output schema over app-server stdio, with ephemeral threads, shell,
-MCP, plugins, hooks and child agents disabled. Each child process is terminated
-after completion, cancellation or a 28-second deadline. The adapter accepts one
+MCP, plugins, hooks and child agents disabled. ALIGN keeps one isolated process
+and ephemeral thread per stage. The first turn supplies identity and GOAL;
+later turns append only CURRENT and the last measured movement. BASE and ARM
+never share a thread. Sequential turn IDs prevent duplicate or missing rounds
+from silently losing context. Stage changes, task completion, STOP, errors and
+28-second inference deadlines close the process; abandoned sessions expire after
+180 seconds. Other requests use one process per request. The adapter accepts one
 request at a time. Offline Macs, broken tunnels, unavailable models, quota errors,
 timeouts and incomplete JSON fail explicitly; there is no provider fallback.
 Configured means the bridge token was loaded, not that inference is healthy.
 The myAGV adapter explicitly requests Codex Fast mode for every thread and turn.
 This leaves the user's global Codex configuration unchanged. Fast mode consumes
 more subscription allowance; see [Codex speed](https://learn.chatgpt.com/docs/agent-configuration/speed).
+
+Local Codex ARM alignment first restores the saved calibration GOAL Z within
+1 mm. Two independent X/Y probes of at most 5 mm use measured arm displacement
+and visible image bounds to establish a local image-to-millimeter transform,
+without manually recording object dimensions. Clipped targets first receive
+coarse corrections; failed or ambiguous probes stop the task. GOAL bounds freeze
+after the first measurement. Later model turns return only the full signed X/Y
+residual and an alignment flag. The model requires planar error below 1 mm;
+the controller independently finishes when `abs(X) + abs(Y) < 1.25 mm`, before
+gain or movement limits. Large corrections use 80% of the residual, up to 20 mm
+per axis; corrections within 5 mm use full residual. Z movements remain limited
+to 10 mm. Round logs expose residuals, thread IDs and cached input tokens.
+The transform is local to the current object, pose and height; actual accuracy
+still depends on image measurement and must be checked on hardware.
 
 Official references: [Codex app-server](https://learn.chatgpt.com/docs/app-server)
 and [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source).

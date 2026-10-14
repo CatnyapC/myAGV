@@ -12,13 +12,13 @@ import uuid
 from urllib.parse import urlsplit
 
 from aiohttp import web
-from fetch_calibration import alignment_command, calibration_config
+from fetch_calibration import alignment_command, calibration_config, MetricArmCalibration
 from .map_data import demo_map, dominant_angle, render_map, validate_rectangle
 from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
-from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
+from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, close_codex_session, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
 from .codex_bridge import MODEL as CODEX_MODEL, load_token
 from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, refine_approach
 
@@ -176,6 +176,12 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     # ponytail: latest task only, memory-only logs; persist when long-term comparison is needed.
     fetch_log = dict(revision=0, rounds=[])
     stopped_fetch_task = None
+    fetch_sessions = set()
+
+    async def release_fetch_sessions():
+        for identity in list(fetch_sessions):
+            await close_codex_session(identity, codex_key)
+            fetch_sessions.discard(identity)
 
     async def fetch_config(request):
         nonlocal fetch_settings
@@ -538,6 +544,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Record the item grasp height before testing grasp / place')
                     data = {**data, 'grasp_z_mm': item['grasp_z_mm']}
                 if kind in ('fetch', 'fetch_test'):
+                    metric_protocol = editor.settings['values']['llm_model'] == CODEX_MODEL
+                    if metric_protocol and not editor.hardware.control.get('metric_alignment_available'):
+                        raise ValueError('Restart robot controller to enable millimeter alignment')
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')
                     item = next((i for i in photos.snapshot(editor.grid['map_id'])['items'] if i['id'] == data.get('item_id')), None)
@@ -556,6 +565,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         link = item['station_link']
                         data = {**data, 'station': link['name'], 'station_digest': link['digest']}
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
+                            'alignment_protocol': 'metric-v1' if metric_protocol else 'visual-bounds-v1',
                             'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'], calibration_z_mm=item['calibration_z_mm']) if model_key() else None}
                 if kind in ('map_update', 'update_plan'):
                     if not editor.hardware.cameras.get('front'):
@@ -692,6 +702,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 await editor.hardware.stop('API shutdown', passive=True)
         for socket in tuple(editor.sockets):
             await socket.close(code=1001, message=b'Service stopping')
+        await release_fetch_sessions()
 
     async def simulation_tick(application):
         async def estimate_observations():
@@ -738,6 +749,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             directory = editor.hardware.directory
             request_path, response_path = directory / 'fetch_vision_request.json', directory / 'fetch_vision_response.json'
             handled = None
+            metric = None
 
             def current(value):
                 control = editor.hardware.control
@@ -753,6 +765,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
             while True:
                 await asyncio.sleep(.1)
+                if fetch_sessions and (editor.hardware.control.get('phase') != 'calibrating'
+                        or any(not identity.startswith(str(editor.hardware.control.get('boot_id')) + ':' + str(editor.hardware.control.get('task_id')) + ':') for identity in fetch_sessions)):
+                    await release_fetch_sessions()
                 try:
                     value = await asyncio.to_thread(load_json, request_path, {})
                     if not value or value['id'] == handled or not current(value):
@@ -761,6 +776,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     continue
                 handled = value['id']
                 if fetch_log.get('task_id') != value['task_id']:
+                    await release_fetch_sessions()
+                    metric = MetricArmCalibration()
                     fetch_log.update(task_id=value['task_id'], rounds=[], llm_model=editor.settings['values']['llm_model'],
                                      reasoning_effort=editor.settings['values']['reasoning_effort'])
                 entry = dict(id=handled, round=value.get('round', len(fetch_log['rounds']) + 1),
@@ -814,15 +831,41 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             goal_image = None
                             if value.get('stage', 'base') == 'arm':
                                 goal_image = await asyncio.to_thread(photos.reference_image, value['item']['arm_goal_photo_id'])
-                            result = await locate_pickup(value['images'], value['item'], key, reference_image, value['history'],
-                                                         prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image,
-                                                         model=model, effort=fetch_log['reasoning_effort'])
+                            session = None
+                            if model == CODEX_MODEL:
+                                identity = value['boot_id'] + ':' + value['task_id'] + ':' + value.get('stage', 'base')
+                                if fetch_sessions and identity not in fetch_sessions:
+                                    await release_fetch_sessions()
+                                session = dict(id=identity, sequence=value.get('round', entry['round']), start=not value['history'])
+                                fetch_sessions.add(identity)
+                                if metric is None:
+                                    metric = MetricArmCalibration()
+                            inference = asyncio.create_task(locate_pickup(value['images'], value['item'], key, reference_image, value['history'],
+                                prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image,
+                                model=model, effort=fetch_log['reasoning_effort'], session=session,
+                                metric=metric if model == CODEX_MODEL and value.get('stage') == 'arm' else None, position=value.get('arm_position_mm')))
+                            try:
+                                while not inference.done():
+                                    await asyncio.wait({inference}, timeout=.1)
+                                    if not current(value):
+                                        raise ValueError('Alignment stopped or changed during inference')
+                                result = await inference
+                            finally:
+                                if not inference.done():
+                                    inference.cancel()
+                                await asyncio.gather(inference, return_exceptions=True)
+                                if not current(value):
+                                    await release_fetch_sessions()
                             entry.update(correction=alignment_command(result, value.get('limits')))
                     entry.update(status='returned')
                     response = dict(id=handled, result=result)
                     if 'aligned_perfectly' in entry:
                         response['aligned_perfectly'] = entry['aligned_perfectly']
+                    for field in ('metric_ready', 'residual_mm', 'model_aligned'):
+                        if field in entry:
+                            response[field] = entry[field]
                 except (web.HTTPException, OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+                    await release_fetch_sessions()
                     error = exc.text if isinstance(exc, web.HTTPException) else str(exc)
                     entry.update(status='error', error=error)
                     response = dict(id=handled, error=error)

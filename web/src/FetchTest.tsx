@@ -12,13 +12,15 @@ type Round = {
   model?: string; messages?: [{ content: string }, { content: Part[] }];
   result_json?: string; correction?: { X: number; Y?: number; turn_deg: number }; error?: string;
   measurement?: { goal: number[]; current: number[] };
+  residual_mm?: { x_mm: number; y_mm: number }; metric_ready?: boolean;
+  usage?: { inputTokens?: number; cachedInputTokens?: number }; codex?: { thread_id: string; turn_id: string; service_tier?: string };
   measured_images?: { label: string; image: string; bounds?: number[] }[];
   base_command?: { forward_m: number; turn_deg: number }; corrected_location?: { x_m: number; y_m: number; uncertainty_m: number };
 };
 
 export function FetchTest(props: {
   connected: boolean; editable: boolean; turnEnabled: boolean; reasons: string[]; itemId: string; indexRevision?: number;
-  itemName?: string; graspZ?: number; status?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
+  itemName?: string; graspZ?: number; metric?: boolean; status?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
 }) {
   const [settings, setSettings] = useState<FetchSettings | null>(null);
   const [draft, setDraft] = useState<FetchSettings['values'] | null>(null);
@@ -83,7 +85,7 @@ export function FetchTest(props: {
     <span className="muted">Item: {props.itemName || 'Select an item above'} · Align accepts J1 75–105° near the object. No map-pose confirmation needed for this local test.</span>
     {draft && <>
       <div className="goal-inputs">
-        <label>Arm X/Y step (mm)<input type="number" min={0.1} max={10} step={0.1} value={draft.max_step_mm}
+        <label>Arm X/Y step (mm)<input type="number" min={0.1} max={20} step={0.1} value={draft.max_step_mm}
           disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, max_step_mm: Number(event.target.value) })} /></label>
 
       </div>
@@ -103,7 +105,7 @@ export function FetchTest(props: {
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
     <span className="muted">Shared with Fetch · original-resolution photos. Alignment and rotation tests save edits first.</span>
-    <span className="muted">Stage 1: front midpoint within 45–55%; base only. Stage 2: base locked, arm X/Y match the same visible item fragment in GOAL. All items use LLM bounds: top edge within 0.5%, horizontal/bottom position within 2%, width within 10% and visible area within 15%. Near GOAL, corrections use 0.25 mm steps. Missing or ambiguous targets stop with an error.</span>
+    <span className="muted">{props.metric ? 'Stage 1: base coarse alignment. Stage 2: two measured X/Y probes (up to 5 mm each) establish millimeter scale automatically. Model alignment: planar error <1 mm. Controller alignment: full |X| + |Y| <1.25 mm before step limits. Larger corrections use up to the saved 20 mm limit. Missing or ambiguous targets stop.' : 'Stage 1: base coarse alignment. Stage 2: arm X/Y match GOAL using visible bounds: top within 0.5%, horizontal/bottom within 2%, width within 10%, area within 15%. Missing or ambiguous targets stop.'}</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
@@ -126,6 +128,9 @@ export function FetchTest(props: {
         <span className="muted">{new Date(round.started_at_s * 1000).toLocaleTimeString()} · {round.model}</span>
         {round.result_json && <pre>LLM: {round.result_json}</pre>}
         {round.measurement && <pre>Measured: {JSON.stringify(round.measurement)}</pre>}
+        {round.metric_ready === false && <span className="muted">Measuring millimeter scale; alignment cannot finish yet.</span>}
+        {round.residual_mm && <span>Remaining error: X {round.residual_mm.x_mm.toFixed(2)} mm · Y {round.residual_mm.y_mm.toFixed(2)} mm · total {(Math.abs(round.residual_mm.x_mm) + Math.abs(round.residual_mm.y_mm)).toFixed(2)} mm</span>}
+        {round.codex && <span className="muted">Codex {round.codex.service_tier} · thread {round.codex.thread_id.slice(-8)}{round.usage?.inputTokens ? ` · cache ${Math.round(100 * (round.usage.cachedInputTokens ?? 0) / round.usage.inputTokens)}%` : ''}</span>}
         {round.correction && <span>Suggestion: arm X {round.correction.X} mm · Y {round.correction.Y ?? 0} mm · base {round.correction.turn_deg}° (positive = clockwise)</span>}
         {round.base_command && <span>Base suggestion: forward {(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
         {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}

@@ -26,6 +26,98 @@ def body():
 
 
 class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_conversation_reuses_process_and_thread_but_appends_turns(self):
+        queue = asyncio.Queue()
+        sent = []
+        process = Mock(returncode=None)
+        process.wait = AsyncMock(return_value=0)
+        process.stdin.drain = AsyncMock()
+        process.stdout.readline = queue.get
+        def write(raw):
+            message = json.loads(raw)
+            sent.append(message)
+            if 'id' not in message:
+                return
+            method, identity = message['method'], message['id']
+            if method == 'account/read':
+                result = dict(account=dict(type='chatgpt'))
+            elif method == 'thread/start':
+                result = dict(thread=dict(id='same-thread'),serviceTier='priority')
+            elif method == 'turn/start':
+                result = dict(turn=dict(id='turn-' + str(identity)))
+            else:
+                result = {}
+            queue.put_nowait(json.dumps(dict(id=identity,result=result)).encode())
+            if method == 'turn/start':
+                params=dict(threadId='same-thread',turnId=result['turn']['id'])
+                queue.put_nowait(json.dumps(dict(method='thread/tokenUsage/updated',params=dict(params,tokenUsage=dict(last=dict(inputTokens=500,cachedInputTokens=400))))).encode())
+                queue.put_nowait(json.dumps(dict(method='item/completed',params=dict(params,item=dict(type='agentMessage',text='{"ok":true}')))).encode())
+                queue.put_nowait(json.dumps(dict(method='turn/completed',params=dict(threadId='same-thread',turn=dict(id=result['turn']['id'],status='completed')))).encode())
+        process.stdin.write = write
+        conversation = bridge.CodexConversation()
+        with patch.object(bridge,'codex_command',return_value=['codex']), \
+             patch.object(bridge.asyncio,'create_subprocess_exec',AsyncMock(return_value=process)) as spawn:
+            first = await bridge.infer(body(),conversation)
+            followup = body()
+            followup['messages'][1]['content'] = [dict(type='text',text='Only the new CURRENT')]
+            second = await bridge.infer(followup,conversation)
+            self.assertEqual(first['codex']['thread_id'],second['codex']['thread_id'])
+            self.assertNotEqual(first['codex']['turn_id'],second['codex']['turn_id'])
+            self.assertEqual(second['usage']['cachedInputTokens'],400)
+            self.assertEqual(sum(m['method']=='thread/start' for m in sent),1)
+            self.assertEqual(sum(m['method']=='turn/start' for m in sent),2)
+            self.assertEqual(sent[-1]['params']['input'],followup['messages'][1]['content'])
+            spawn.assert_awaited_once()
+            process.kill.assert_not_called()
+            await conversation.close()
+        process.kill.assert_called_once()
+
+    async def test_http_sessions_reject_duplicate_out_of_order_and_missing_turns(self):
+        conversation = Mock(sequence=None,last_used=asyncio.get_running_loop().time())
+        conversation.close = AsyncMock()
+        conversation.run = AsyncMock(return_value=dict(choices=[dict(finish_reason='stop',message=dict(content='{"ok":true}'))]))
+        token = 't'*64
+        headers=dict(Authorization='Bearer '+token)
+        with patch.object(bridge,'load_token',return_value=('configured',token)), \
+             patch.object(bridge,'CodexConversation',return_value=conversation):
+            async with TestClient(TestServer(bridge.create_app())) as client:
+                value=body()
+                value['session']=dict(id='boot:task:arm',sequence=3,start=True)
+                self.assertEqual((await client.post('/v1/chat/completions',json=value,headers=headers)).status,200)
+                value['session'].update(sequence=4,start=False)
+                self.assertEqual((await client.post('/v1/chat/completions',json=value,headers=headers)).status,200)
+                self.assertEqual((await client.post('/v1/chat/completions',json=value,headers=headers)).status,409)
+                value['session']['sequence']=6
+                self.assertEqual((await client.post('/v1/chat/completions',json=value,headers=headers)).status,409)
+                conversation.run.assert_awaited()
+                self.assertEqual(conversation.run.await_count,2)
+                self.assertEqual((await client.delete('/v1/sessions/boot:task:arm',headers=headers)).status,204)
+                conversation.close.assert_awaited_once()
+                value['session']['sequence']=5
+                self.assertEqual((await client.post('/v1/chat/completions',json=value,headers=headers)).status,409)
+
+    async def test_delete_interrupts_an_active_session_without_waiting_for_inference_lock(self):
+        started, stopped = asyncio.Event(), asyncio.Event()
+        conversation = Mock(sequence=None,last_used=asyncio.get_running_loop().time())
+        async def run(value):
+            started.set()
+            await stopped.wait()
+            raise RuntimeError('Inference interrupted')
+        conversation.run = run
+        conversation.close = AsyncMock(side_effect=lambda: stopped.set())
+        token = 't'*64
+        headers = dict(Authorization='Bearer '+token)
+        with patch.object(bridge,'load_token',return_value=('configured',token)), \
+             patch.object(bridge,'CodexConversation',return_value=conversation):
+            async with TestClient(TestServer(bridge.create_app())) as client:
+                value = body()
+                value['session'] = dict(id='boot:cancel:arm',sequence=1,start=True)
+                request = asyncio.create_task(client.post('/v1/chat/completions',json=value,headers=headers))
+                await asyncio.wait_for(started.wait(),1)
+                deletion = await asyncio.wait_for(client.delete('/v1/sessions/boot:cancel:arm',headers=headers),1)
+                self.assertEqual(deletion.status,204)
+                self.assertEqual((await asyncio.wait_for(request,1)).status,502)
+
     def test_inputs_and_credentials_are_bounded(self):
         instructions, content, schema, effort = bridge.inputs(body())
         self.assertEqual(content[1]['type'], 'image')
@@ -70,7 +162,7 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                     if identity == 4 and mode not in ('timeout', 'cancelled'):
                         item = dict(type='commandExecution') if mode == 'tool' else dict(type='agentMessage', phase='final_answer', text='{"ok":true}')
                         queue.put_nowait(json.dumps(dict(method='item/completed', params=dict(threadId='thread', item=item))).encode())
-                        queue.put_nowait(json.dumps(dict(method='turn/completed', params=dict(threadId='thread', turn=dict(status=mode)))).encode())
+                        queue.put_nowait(json.dumps(dict(method='turn/completed', params=dict(threadId='thread', turn=dict(id='turn', status=mode)))).encode())
 
                 process.stdin.write = write
                 with patch.object(bridge, 'codex_command', return_value=['codex']), \
