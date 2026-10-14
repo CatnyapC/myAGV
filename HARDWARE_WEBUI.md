@@ -179,7 +179,7 @@ ARM GOAL stores measured `arm_z_mm` alongside the
 image, with joint and Z stability checks around acquisition. The item exposes that
 photo's height as `calibration_z_mm`. ALIGN and vision-guided Fetch restore this Z
 before any alignment observations or X/Y corrections, preserving current X/Y.
-Measured Z must reach within 0.5 mm; STOP, invalid feedback or failure to arrive
+Measured Z must reach within 1 mm; STOP, invalid feedback or failure to arrive
 abort alignment. Preview remains motionless. Legacy GOAL photos without Z must be
 recaptured; grasp height and current height are never used as substitutes. New
 items are saved before acquisition. Recording either height does not move the arm.

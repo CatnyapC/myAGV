@@ -431,16 +431,19 @@ class Control:
             self.arm.set_mode(0)
             self.arm.set_coords(coords, 30)
         end = time.monotonic() + 3 * max(1, distance)
+        actual = None
         while time.monotonic() < end:
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
                 raise Stopped('Arm step cancelled or lease expired')
             with arm_deadline(.4):
                 actual = self.arm.get_coords_info()
-            if actual and len(actual) >= 3 and all(type(a) in (int, float) and math.isfinite(a) and abs(a-b) <= .5 for a, b in zip(actual[:3], coords)):
+            if actual and len(actual) >= 3 and all(type(a) in (int, float) and math.isfinite(a)
+                    and abs(a-b) <= (1 if pickup and axis == 'Z' and i == 2 else .5)
+                    for i, (a, b) in enumerate(zip(actual[:3], coords))):
                 self.read_arm()
                 return
             time.sleep(.05)
-        raise TimeoutError('Arm step did not reach its measured target')
+        raise TimeoutError('Arm step did not reach its measured target: target=%s actual=%s' % (coords, actual))
 
     def finish(self, packet, result):
         command_id = packet['id']
@@ -1019,7 +1022,9 @@ class Control:
                     if not coords or len(coords) < 3:
                         raise RuntimeError('Arm coordinate feedback unavailable')
                     delta = target_z - number(coords[2], *LIMITS['Z'], 'Arm Z feedback')
-                    if abs(delta) <= .5:
+                    print(json.dumps(dict(event='alignment_z', time_s=time.time(), task_id=self.task_id,
+                        target_z_mm=target_z, actual_z_mm=coords[2], reached=abs(delta) <= 1)), flush=True)
+                    if abs(delta) <= 1:
                         break
                     self.arm_step('Z', 1 if delta > 0 else -1, pickup=True, distance=min(10, abs(delta)))
                 else:

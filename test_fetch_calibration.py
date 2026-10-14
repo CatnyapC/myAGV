@@ -297,7 +297,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 c.calibrate_fetch({'vision_item': {'name': 'cup', 'calibration_z_mm': 30}}, None)
 
     def test_goal_z_is_reached_before_any_alignment_image(self):
-        for start_z in (10, 65, 39.7):
+        for start_z in (10, 65, 39, 39.42, 40.58, 41):
             with self.subTest(start_z=start_z), tempfile.TemporaryDirectory() as folder:
                 c = fake_control()
                 c.directory = Path(folder)
@@ -308,7 +308,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     coords[2] += direction * kwargs['distance']
                 c.arm_step = Mock(side_effect=step)
                 def capture(*args, **kwargs):
-                    self.assertLessEqual(abs(coords[2] - 40), .5)
+                    self.assertLessEqual(abs(coords[2] - 40), 1)
                     self.assertEqual(coords[:2], [0, 150])
                     raise RuntimeError('height verified before vision')
                 c.capture.side_effect = capture

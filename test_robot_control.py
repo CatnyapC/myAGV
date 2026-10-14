@@ -274,6 +274,26 @@ class ControlTest(unittest.TestCase):
                 c.arm.set_coords.assert_called_once_with(target, 30)
                 self.assertEqual(c.angles, [90, 0, 0])
 
+    def test_pickup_z_accepts_one_mm_but_preserves_xy_and_stop_checks(self):
+        for z_error, x_error, stop in ((.58,0,False), (1,0,False), (1.01,0,False), (.58,.51,False), (.58,0,True)):
+            with self.subTest(z_error=z_error, x_error=x_error, stop=stop):
+                c = fake_control()
+                clock = [time.monotonic()]
+                c.deadline = clock[0] + 60
+                c.arm.get_angles_info.return_value = [90,0,0]
+                values = iter([[0,150,0], [x_error,150,10+z_error]])
+                c.arm.get_coords_info.side_effect = lambda: next(values, [x_error,150,10+z_error])
+                if stop:
+                    c.stop_pending = 'STOP'
+                with patch('robot_control.time.monotonic', side_effect=lambda: clock[0]), \
+                        patch('robot_control.time.sleep', side_effect=lambda _: clock.__setitem__(0,clock[0]+1)):
+                    if stop or z_error > 1 or x_error > .5:
+                        with self.assertRaises(Stopped if stop else TimeoutError):
+                            c.arm_step('Z',1,pickup=True,distance=10)
+                    else:
+                        c.arm_step('Z',1,pickup=True,distance=10)
+                self.assertEqual(c.arm.set_coords.call_count, 0 if stop else 1)
+
     def test_pickup_correction_waits_for_full_travel_and_checks_stop(self):
         for stop in (False, True):
             with self.subTest(stop=stop):
