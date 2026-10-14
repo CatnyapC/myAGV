@@ -1,5 +1,7 @@
 export type Point = [number, number];
 export type Origin = { x_m: number; y_m: number; yaw_rad: number };
+export type ObservationPoint = Origin & { id: string };
+export type ObservationPoints = { map_id: string; revision: number; points: ObservationPoint[] };
 export type MapInfo = {
   map_id: string; revision: number; frame: string; width: number; height: number;
   resolution_m: number; origin: Origin; png_url: string;

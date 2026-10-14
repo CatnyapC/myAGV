@@ -571,6 +571,7 @@ class Control:
         saved_map = Path(os.environ.get('MYAGV_MAP_FILE', str(Path.home() / 'maps' / 'room.yaml')))
         paths = [self.zones_path, self.stations_path, marker, saved_map, saved_map.with_suffix('.pgm')]
         paths += [self.directory.parent / name for name in ('saved_map.json', 'saved_map.yaml', 'saved_map.pgm')]
+        paths.append(self.directory.parent / 'observation_points')
         paths += [self.directory / name for name in ('map.json', 'navigation_map.json', 'global_costmap.json', 'zones.json', 'state.json', 'captures')]
         moved = []
         marker_written = False
@@ -864,7 +865,8 @@ class Control:
             captures = []
             for pose in poses:
                 self.go(dict(x_m=pose['x_m'], y_m=pose['y_m'], yaw_deg=math.degrees(pose['yaw_rad'])))
-                captures.append(self.capture('front'))
+                key = '%.2f:%.2f:%.2f' % (pose['x_m'], pose['y_m'], pose['yaw_rad'])
+                captures.append(self.capture('front', update_key=key))
             return dict(captures=captures)
         else:
             raise ValueError('Unsupported hardware command')

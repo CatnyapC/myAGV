@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { chassisOutline, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
+import { chassisOutline, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type ObservationPoint, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
 
 export function MapView(props: {
   info: MapInfo; image: string; zones: Zone[]; selected: string | null;
@@ -11,6 +11,7 @@ export function MapView(props: {
   photos: Photo[]; selectedPhotoId: string | null; onPhoto: (id: string) => void;
   locations: ItemLocation[]; onLocation: (location: ItemLocation) => void;
   update?: { map_id: string; goals: Origin[]; completed: number; active: boolean; state: string };
+  observationPoints: ObservationPoint[]; selectedPointId: string | null; onPoint: (id: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -27,6 +28,7 @@ export function MapView(props: {
   const itemPoints = useRef<L.LayerGroup | null>(null);
   const length = props.navigation?.footprint.length_m ?? .32;
   const width = props.navigation?.footprint.width_m ?? .28;
+  const activePoint = props.update?.active && props.update.map_id === props.info.map_id ? props.update.goals[props.update.completed] : null;
 
   useEffect(() => {
     if (!host.current) return;
@@ -181,15 +183,23 @@ export function MapView(props: {
     const group = updatePoints.current;
     if (!group) return;
     group.clearLayers();
-    const update = props.update;
-    if (!update || update.map_id !== props.info.map_id || (!update.active && update.state !== 'planned')) return;
-    update.goals.forEach((pose, i) => {
-      const color = i === update.completed ? 'var(--orange-9)' : 'var(--cyan-9)';
-      const label = document.createElement('span'); label.textContent = `Update view ${i + 1} · ${(pose.yaw_rad * 180 / Math.PI).toFixed(0)}°`;
-      L.polygon(chassisOutline(pose, length, width).map(p => toView(p, props.info.display.origin)),
-        { color, weight: 1, fillOpacity: .25, interactive: false }).addTo(group).bindTooltip(label);
+    props.observationPoints.forEach((pose, i) => {
+      const chosen = props.selectedPointId === pose.id;
+      const running = activePoint && activePoint.x_m === pose.x_m && activePoint.y_m === pose.y_m && activePoint.yaw_rad === pose.yaw_rad;
+      const color = chosen || running ? 'var(--orange-9)' : 'var(--cyan-9)';
+      const label = document.createElement('span'); label.textContent = `Observation point ${i + 1} · (${pose.x_m.toFixed(2)}, ${pose.y_m.toFixed(2)}) · ${(pose.yaw_rad * 180 / Math.PI).toFixed(0)}°`;
+      const marker = L.polygon(chassisOutline(pose, length, width).map(p => toView(p, props.info.display.origin)),
+        { color, weight: chosen ? 2.5 : 1.5, fillOpacity: chosen ? .35 : .12, bubblingMouseEvents: false }).addTo(group).bindTooltip(label);
+      const select = () => { if (!latest.current.drawing) latest.current.onPoint(pose.id); };
+      marker.on('click', select);
+      const element = marker.getElement();
+      element?.setAttribute('tabindex', '0'); element?.setAttribute('role', 'button'); element?.setAttribute('aria-label', label.textContent);
+      element?.setAttribute('aria-pressed', String(chosen));
+      element?.addEventListener('keydown', event => {
+        if ((event as KeyboardEvent).key === 'Enter' || (event as KeyboardEvent).key === ' ') { event.preventDefault(); select(); }
+      });
     });
-  }, [props.update, props.info, length, width]);
+  }, [props.observationPoints, props.selectedPointId, props.info, length, width, activePoint?.x_m, activePoint?.y_m, activePoint?.yaw_rad]);
 
   useEffect(() => {
     preview.current?.remove();

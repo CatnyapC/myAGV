@@ -161,6 +161,9 @@ class MapResetTest(unittest.TestCase):
                     if path.name != 'saved_map.json':
                         path.write_text('original ' + path.name)
                 originals = {path: path.read_text() for path in files}
+                point_file = root / 'observation_points' / 'saved-views.json'
+                atomic_json(point_file, dict(map_id=robot.grid['map_id'], points=[]))
+                original_points = point_file.read_text()
                 starts = []
                 def process(command, **_):
                     if command[1] == 'start':
@@ -183,12 +186,18 @@ class MapResetTest(unittest.TestCase):
                         self.assertFalse((root / 'mapping.json').exists())
                         for path in files:
                             self.assertEqual(path.read_text(), originals[path])
+                        self.assertEqual(point_file.read_text(), original_points)
                     else:
                         result = Control.execute(c, dict(type='reset_map', confirmed=True))
                         self.assertTrue(result['mapping_mode'])
                         manifest = json.loads((Path(result['backup']) / 'manifest.json').read_text())
                         for archived, original in manifest.items():
-                            self.assertEqual((Path(result['backup']) / archived).read_text(), originals[Path(original)])
+                            archived_path = Path(result['backup']) / archived
+                            if Path(original).name == 'observation_points':
+                                self.assertEqual((archived_path / point_file.name).read_text(), original_points)
+                            else:
+                                self.assertEqual(archived_path.read_text(), originals[Path(original)])
+                        self.assertFalse(point_file.exists())
                         self.assertFalse(c.stations_path.exists())
                         self.assertFalse(c.localized)
                         self.assertTrue(all(cell == -1 for cell in robot.grid['cells']))

@@ -1,8 +1,8 @@
 import { useState, type PointerEvent } from 'react';
 import { Button } from './ui';
-import type { Origin, Stations } from './mapGeometry';
+import type { ObservationPoint, Origin, Stations } from './mapGeometry';
 
-import { hardwareBlocks, type HardwareState } from './api';
+import { commandId, hardwareBlocks, type HardwareState } from './api';
 export type { HardwareState } from './api';
 export type HeldInput = { mode: string; key: string } | null;
 
@@ -91,23 +91,30 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
   </details>;
 }
 
-export function MapUpdateControls({ state, connected, goal, command }: Pick<Props, 'state' | 'connected' | 'goal' | 'command'>) {
-  const [survey, setSurvey] = useState<Origin[]>([]);
+export function MapUpdateControls({ state, connected, goal, command, points, revision, saving, selectedId, onSelect, onSave }:
+  Pick<Props, 'state' | 'connected' | 'goal' | 'command'> & {
+    points: ObservationPoint[]; revision: number; saving: boolean; selectedId: string | null;
+    onSelect: (id: string | null) => void; onSave: (points: ObservationPoint[], selectedId?: string | null) => Promise<void>;
+  }) {
   const [minutes, setMinutes] = useState('10');
   const [updating, setUpdating] = useState(false);
   const update = state?.map_update;
   const paused = state?.phase === 'update_paused';
   const idle = connected && state?.phase === 'idle';
   const validUpdate = Number.isFinite(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 60;
-  const goals = survey.length ? survey : goal ? [goal] : [];
+  const goals = points.map(({ x_m, y_m, yaw_rad }) => ({ x_m, y_m, yaw_rad }));
+  const selected = points.find(p => p.id === selectedId);
+  const pointBlockers = !connected ? ['Connect to the controller'] : hardwareBlocks(state);
   const blockers = !connected ? ['Connect to the controller'] : hardwareBlocks(state, false);
-  if (!goals.length) blockers.push('Select a map goal and heading');
+  if (!goals.length) blockers.push('Add an observation point');
   if (!validUpdate) blockers.push('Choose an update window from 1 to 60 minutes');
-  const cannotPlan = !idle || updating || blockers.length > 0;
+  const cannotPlan = !idle || updating || saving || blockers.length > 0;
   const updateCommand = async (type: string) => {
     setUpdating(true);
     try { await command(type, type === 'update_start' || type === 'update_pause' || type === 'map_refresh'
-      ? { task_id: state?.task_id } : { limit_s: Number(minutes) * 60, goals }); }
+      ? { task_id: state?.task_id } : type === 'survey'
+        ? { observation_point_id: selectedId, observation_revision: revision }
+        : { limit_s: Number(minutes) * 60, goals }); }
     finally { setUpdating(false); }
   };
   return <div className="map-updates">
@@ -122,15 +129,25 @@ export function MapUpdateControls({ state, connected, goal, command }: Pick<Prop
       <Button disabled={!connected || updating || paused || !update?.active} onClick={() => void updateCommand('update_pause')}>Pause item updates</Button>
     </div>
     {!paused && blockers.length > 0 && <span role="status" className="muted">{blockers.join(' · ')}</span>}
-    <details><summary>Item observation points · {survey.length} views</summary>
-      <span className="muted">Select views to capture photos and update item coordinates. Pausing stops collection. Use Refresh LiDAR map separately to publish map changes.</span>
+    <div className="action-line">
+      <Button disabled={!selected || !idle || updating || saving || pointBlockers.length > 0}
+        onClick={() => void updateCommand('survey')}>Update selected point</Button>
+      <Button disabled={!selected || !idle || updating || saving}
+        onClick={() => void onSave(points.filter(p => p.id !== selectedId), null)}>Remove selected point</Button>
+    </div>
+    <span role="status" className="muted">{selected ? `Selected view ${points.indexOf(selected) + 1} · (${selected.x_m.toFixed(2)}, ${selected.y_m.toFixed(2)}) · ${(selected.yaw_rad * 180 / Math.PI).toFixed(0)}°` : 'Click an observation point on the map to select it.'}{saving && ' · Saving…'}</span>
+    {selected && pointBlockers.length > 0 && <span role="status" className="muted">{pointBlockers.join(' · ')}</span>}
+    <details><summary>Item observation points · {points.length} views</summary>
+      <span className="muted">Points stay on the map and are saved with it. Update the selected point once, or start updates for all saved points. Use Refresh LiDAR map separately to publish map changes.</span>
       <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
       <div className="action-line">
-        <Button disabled={!idle || updating || !goal || survey.length >= 20} onClick={() => goal && setSurvey(old => [...old, goal])}>Add goal</Button>
-        <Button disabled={!idle || updating} onClick={() => setSurvey([])}>Clear queue</Button>
-        <Button disabled={cannotPlan} onClick={() => void updateCommand('update_plan')}>Preview points</Button>
+        <Button disabled={!idle || updating || saving || !goal || points.length >= 20} onClick={() => {
+          if (goal) { const point = { ...goal, id: commandId() }; void onSave([...points, point], point.id); }
+        }}>Add goal</Button>
+        <Button disabled={!idle || updating || saving || !points.length} onClick={() => void onSave([], null)}>Clear points</Button>
       </div>
-      <span className="muted">{survey.map((p,i) => `${i+1}: (${p.x_m.toFixed(2)}, ${p.y_m.toFixed(2)})`).join(' · ')}</span>
+      <div className="action-line">{points.map((p, i) => <Button key={p.id} aria-pressed={p.id === selectedId}
+        onClick={() => onSelect(p.id)}>{i + 1}: ({p.x_m.toFixed(2)}, {p.y_m.toFixed(2)}) · {(p.yaw_rad * 180 / Math.PI).toFixed(0)}°</Button>)}</div>
     </details>
     {update && <span role="status" className="muted">{update.state === 'planned' ? 'Item views planned' : paused ? 'Item updates paused' : update.active ? 'Updating item positions' : 'Item updates interrupted'} · {update.goals.length} views · round {update.round} · {update.completed}/{update.goals.length} · {update.captures} captures{update.active && ` · ${Math.floor(update.remaining_s / 60)}:${String(update.remaining_s % 60).padStart(2, '0')} left`}</span>}
   </div>;

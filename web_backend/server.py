@@ -21,6 +21,7 @@ from .simulation import Simulation, plan_path, validate_pose
 from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
+from .observation_points import ObservationPoints
 from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, close_codex_session, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
 from .codex_bridge import MODEL as CODEX_MODEL, load_token
 from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, refine_approach
@@ -55,6 +56,8 @@ class Editor:
             if not self.hardware.grid:
                 raise ValueError('Waiting for ROS bridge map snapshot')
         self.grid = self.hardware.grid if self.hardware else demo_map()
+        self.observation_points = ObservationPoints(self.hardware.directory.parent if self.hardware else self.directory)
+        self.observation_points.migrate(self.grid['map_id'], self.hardware.control.get('map_update') if self.hardware else None)
         self.settings = load_json(self.directory / 'settings.json', dict(revision=0, values=DEFAULT_SETTINGS.copy()))
         if isinstance(self.settings['values'], dict) and set(self.settings['values']) in (set(DISPLAY_FIELDS), set(DEFAULT_SETTINGS) - {'fast_mode'}):
             self.settings['values'] = {**DEFAULT_SETTINGS, **self.settings['values']}
@@ -460,6 +463,20 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     async def zones(request):
         return web.json_response(editor.zones)
 
+    async def observation_points(request):
+        async with editor.lock:
+            current = editor.observation_points.load(editor.grid['map_id'])
+            if request.method == 'GET':
+                return web.json_response(current)
+            data = await request.json()
+            if data.get('map_id') != current['map_id'] or type(data.get('expected_revision')) is not int or data['expected_revision'] != current['revision']:
+                raise web.HTTPConflict(text='Observation points or map changed; reload before editing')
+            if editor.hardware and editor.hardware.control.get('phase') != 'idle':
+                raise web.HTTPConflict(text='Stop the current task before editing observation points')
+            saved = editor.observation_points.save(current['map_id'], data.get('points'), current['revision'] + 1)
+        await editor.emit('observation_points')
+        return web.json_response(saved)
+
     async def costmap(request):
         if editor.hardware:
             return web.json_response({**editor.hardware.costmap(request.path == '/api/navigation-map'), 'source': 'ros'})
@@ -517,6 +534,14 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 if data['map_id'] != editor.grid['map_id'] or data['expected_revision'] != editor.zones['revision']:
                     raise ValueError('Map or no-go revision changed; reload')
                 kind = data['type']
+                if kind == 'survey' and 'observation_point_id' in data:
+                    saved = editor.observation_points.load(editor.grid['map_id'])
+                    if type(data.get('observation_revision')) is not int or data['observation_revision'] != saved['revision']:
+                        raise web.HTTPConflict(text='Observation points changed; select the point again')
+                    point = next((p for p in saved['points'] if p['id'] == data['observation_point_id']), None)
+                    if not point:
+                        raise ValueError('Select a saved observation point')
+                    data = {**data, 'goals': [{k: v for k, v in point.items() if k != 'id'}]}
                 if kind in ('zone_add', 'zone_delete'):
                     current = list(editor.zones['zones'])
                     if kind == 'zone_add':
@@ -591,7 +616,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
                             'alignment_protocol': 'metric-v1' if metric_protocol else 'visual-bounds-v1',
                             'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'], calibration_z_mm=item['calibration_z_mm']) if model_key() else None}
-                if kind in ('map_update', 'update_plan'):
+                if kind in ('map_update', 'update_plan', 'survey'):
                     if not editor.hardware.cameras.get('front'):
                         raise ValueError('Fresh front camera required for map updating')
                     if len(photos.value['photos']) >= 1000:
@@ -1018,6 +1043,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app.router.add_get('/api/map', map_info)
     app.router.add_get('/api/map.png', map_image)
     app.router.add_get('/api/no-go-zones', zones)
+    app.router.add_get('/api/observation-points', observation_points)
+    app.router.add_put('/api/observation-points', observation_points)
     app.router.add_get('/api/navigation-map', costmap)
     app.router.add_get('/api/global-costmap', costmap)
     app.router.add_get('/api/global-costmap.png', costmap_image)

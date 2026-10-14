@@ -4,7 +4,7 @@ import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
 import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu, MoreHorizontal, Play, Plus, RotateCcw, Search, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
-import { type ItemLocation, type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
+import { type ItemLocation, type MapInfo, type Navigation, type ObservationPoint, type ObservationPoints, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
 import { BatteryStatus } from './BatteryStatus';
 import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
@@ -43,6 +43,9 @@ export function App() {
   const [obstacleSize, setObstacleSize] = useState<number | null>(null);
   const [packet, setPacket] = useState<{ info: MapInfo; image: string } | null>(null);
   const [zones, setZones] = useState<Zones | null>(null);
+  const [observationPoints, setObservationPoints] = useState<ObservationPoints | null>(null);
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
+  const [pointsSaving, setPointsSaving] = useState(false);
   const [savedSettings, setSavedSettings] = useState<Settings | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Settings['values']>({ auto_align: false, manual_angle_deg: 0, llm_model: 'deepseek/deepseek-v4.1-flash', reasoning_effort: 'off', fast_mode: true });
   const [angleText, setAngleText] = useState('0');
@@ -99,6 +102,7 @@ export function App() {
   const canResize = canLayout && !maximized;
   const canMove = canResize && layoutEditing;
   const navigation = state?.navigation ?? null;
+  const visiblePoints = observationPoints?.map_id === packet?.info.map_id ? observationPoints?.points ?? [] : [];
   const goalValid = goalText.every(v => v.trim() !== '' && Number.isFinite(Number(v))) && Math.abs(Number(goalText[2])) <= 180;
   const goal = goalValid ? { x_m: Number(goalText[0]), y_m: Number(goalText[1]), yaw_rad: Number(goalText[2]) * Math.PI / 180 } : null;
   const costmapReady = navigation?.costmap.ready && navigation.costmap.applied_zone_revision === zones?.revision;
@@ -124,9 +128,10 @@ export function App() {
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
-    const [nextState, info, nextZones, preferences, nextPhotos, nextStations] = await Promise.all([
+    const [nextState, info, nextZones, preferences, nextPhotos, nextStations, nextPoints] = await Promise.all([
       api<State>('/api/state'), api<MapInfo>('/api/map'), api<Zones>('/api/no-go-zones'), api<Settings>('/api/settings'),
       api<PhotoIndex>('/api/items'), api<Stations>('/api/stations'),
+      api<ObservationPoints>('/api/observation-points'),
     ]);
     const imageResponse = await fetch(info.png_url);
     if (!imageResponse.ok) throw new Error('Map changed; reload required');
@@ -136,7 +141,7 @@ export function App() {
       if (current !== generation.current) { URL.revokeObjectURL(image); return; }
       const key = `${info.map_id}:${info.display.view_revision}`;
       if (key !== previousMap.current) { setDraft([]); setDrawing(false); }
-      if (!previousMap.current.startsWith(`${info.map_id}:`)) { setSelected(null); setGoalText(['', '', '0']); }
+      if (!previousMap.current.startsWith(`${info.map_id}:`)) { setSelected(null); setGoalText(['', '', '0']); setSelectedPointId(null); }
       previousMap.current = key;
       setPacket(old => {
         // Keep map/pan intact on zone events; replace raster only on a new view.
@@ -148,11 +153,13 @@ export function App() {
       setState(old => old && old.navigation.stamp_s > nextState.navigation.stamp_s ? old : nextState);
       setZones(nextZones); setSavedSettings(preferences);
       setPhotos(nextPhotos); setStations(nextStations);
+      setObservationPoints(old => old?.map_id === nextPoints.map_id && old.revision > nextPoints.revision ? old : nextPoints);
       if (!editingSettings.current) { setSettingsDraft(preferences.values); setAngleText(String(preferences.values.manual_angle_deg)); }
     } catch (failure) { URL.revokeObjectURL(image); throw failure; }
   }, []);
 
   useEffect(() => () => { if (packet) URL.revokeObjectURL(packet.image); }, [packet]);
+  useEffect(() => { setSelectedPointId(old => observationPoints?.points.some(p => p.id === old) ? old : null); }, [observationPoints]);
   useEffect(() => () => resolutionRequest.current?.abort(), []);
   useEffect(() => {
     if (resolution && `${resolution.map_id}:${resolution.index_revision}:${resolution.settings_revision}` !== resolutionContext.current) {
@@ -306,6 +313,19 @@ export function App() {
       if (type === 'manual' && session.current && failure instanceof DOMException && failure.name === 'AbortError') return;
       held.current = null; setError((failure as Error).message); if (type === 'reset_map' || type === 'fetch_test' || type === 'fetch_turn_test' || type === 'grasp_test') throw failure;
     }
+  }
+  async function saveObservationPoints(points: ObservationPoint[], selectId: string | null = selectedPointId) {
+    if (!observationPoints || !packet || observationPoints.map_id !== packet.info.map_id) return;
+    setPointsSaving(true); setError('');
+    try {
+      const saved = await api<ObservationPoints>('/api/observation-points', { method: 'PUT', body: JSON.stringify({
+        map_id: observationPoints.map_id, expected_revision: observationPoints.revision, points,
+      }) });
+      if (previousMap.current.startsWith(`${saved.map_id}:`)) {
+        setObservationPoints(saved); setSelectedPointId(selectId);
+      }
+    } catch (failure) { setError((failure as Error).message); void reload().catch(() => {}); }
+    finally { setPointsSaving(false); }
   }
   async function stop() {
     ++actionEpoch.current;
@@ -527,6 +547,7 @@ export function App() {
           drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
           navigation={navigation} goal={goal} connected={connected} showCostmap={showCostmap} focusRobotVersion={focusRobotVersion}
           photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto} update={state?.hardware?.map_update}
+          observationPoints={visiblePoints} selectedPointId={selectedPointId} onPoint={setSelectedPointId}
           locations={photos?.locations ?? []} onLocation={location => void selectLocation(location)}
           onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
         {locationPhotos.some(p => p.location_analysis?.status === 'running' || p.location_analysis?.status === 'queued') &&
@@ -539,7 +560,9 @@ export function App() {
             item_id: selectedItemId, index_revision: photos?.revision,
           })}>Refine approach</Button>
         </div>}
-        {state?.demo === false && <MapUpdateControls state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} />}
+        {state?.demo === false && <MapUpdateControls state={state.hardware} connected={connected} goal={goal} command={hardwareCommand}
+          points={visiblePoints} revision={observationPoints?.revision ?? 0} saving={pointsSaving}
+          selectedId={selectedPointId} onSelect={setSelectedPointId} onSave={saveObservationPoints} />}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
           <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"
             value={keyboardCorners[i]} onChange={e => setKeyboardCorners(v => v.map((item, n) => n === i ? e.target.value : item))} /></label>)}
