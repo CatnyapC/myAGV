@@ -278,7 +278,10 @@ class Control:
         self.robot.nav.client.cancel_all_goals()
         if not self.stopping:
             first = self.stop_pending is None
-            self.stop_pending = str(reason)
+            if first:
+                self.stop_pending = str(reason)
+                print(json.dumps(dict(event='stop_requested', time_s=time.time(), reason=str(reason),
+                                      phase=self.phase, task_id=self.task_id)), flush=True)
             if first and self.executing and not self.stopping:
                 os.kill(os.getpid(), signal.SIGUSR1)
 

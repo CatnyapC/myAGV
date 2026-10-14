@@ -21,6 +21,12 @@ from web_backend.storage import atomic_json
 
 
 class MapUpdateTest(unittest.TestCase):
+    def test_stop_preserves_original_cause_before_watchdog_sees_cleared_lease(self):
+        c = fake_control()
+        c.request_stop('LiDAR or odometry stale')
+        c.request_stop('Control heartbeat expired')
+        self.assertEqual(c.stop_pending, 'LiDAR or odometry stale')
+
     def test_idle_refresh_commits_latest_map_without_arm_or_movement(self):
         c = fake_control()
         c.arm, c.arm_homed = None, False
