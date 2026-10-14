@@ -21,6 +21,24 @@ from web_backend.storage import atomic_json
 
 
 class MapUpdateTest(unittest.TestCase):
+    def test_stopped_map_refresh_tolerates_delayed_sensors_but_preserves_safety_guards(self):
+        c = fake_control()
+        c.phase, c.base_enabled, c.deadline = 'refreshing_map', False, time.monotonic() + 60
+        c.robot.sensors_ready = Mock(return_value=False)
+        c.request_stop = Mock()
+        c.watchdog()
+        c.request_stop.assert_not_called()
+        c.base_enabled = True
+        c.watchdog()
+        c.request_stop.assert_called_with('LiDAR or odometry stale')
+        c.base_enabled, c.deadline = False, 0
+        c.watchdog()
+        c.request_stop.assert_called_with('Control heartbeat expired')
+        c.deadline = time.monotonic() + 60
+        c.robot.driver_watchdog = False
+        c.watchdog()
+        c.request_stop.assert_called_with('Driver watchdog unavailable or competing chassis publisher')
+
     def test_stop_preserves_original_cause_before_watchdog_sees_cleared_lease(self):
         c = fake_control()
         c.request_stop('LiDAR or odometry stale')

@@ -293,7 +293,7 @@ class Control:
             reason = 'Control heartbeat expired'
         elif not self.robot.driver_watchdog or not self.robot.exclusive:
             reason = 'Driver watchdog unavailable or competing chassis publisher'
-        elif not self.robot.sensors_ready():
+        elif not self.robot.sensors_ready() and not (self.phase == 'refreshing_map' and not self.base_enabled):
             reason = 'LiDAR or odometry stale'
         elif self.base_enabled and self.phase != 'manual' and not self.robot.zones_ready():
             reason = 'ROS no-go enforcement unavailable'

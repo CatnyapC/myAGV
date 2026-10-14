@@ -60,7 +60,10 @@ SLAM continues collecting
 scans, but the displayed map and navigation map stay fixed. **Refresh LiDAR map**
 waits for the base to stop, then publishes and saves the latest complete snapshot.
 It works while idle or while item position updates are paused, without arm motion
-or photo capture. **Pause item updates** only stops observation collection after
+or photo capture. The stopped refresh tolerates sensor callback delays during
+map processing; motion still requires fresh sensors, and STOP, control lease,
+driver watchdog and exclusive chassis ownership remain enforced.
+**Pause item updates** only stops observation collection after
 measured base stop; operator and time-limit pauses never publish the LiDAR map.
 Robot position remains live. Map identity stays fixed within
 one SLAM session; existing no-go zones keep their world coordinates. SLAM

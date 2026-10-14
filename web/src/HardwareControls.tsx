@@ -73,7 +73,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     <label className="setting-row">Folded clearance radius (m)<input type="number" min=".15" max="1" step=".01" value={radius} disabled={!idle} onChange={e => { setRadius(e.target.value); setMeasured(false); }} /></label>
     <label><input type="checkbox" checked={measured} disabled={!idle} onChange={e => setMeasured(e.target.checked)} /> Arm folded; measured radius encloses base, arm and payload</label>
     <Button disabled={!idle || !state?.arm_homed || !measured} onClick={() => void command('transport_record', { clearance_m: Number(radius), measured })}>Record transport pose</Button>
-    <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before Fetch or map updates'}</span>
+    <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before Fetch'}</span>
     <label className="setting-row">Station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>
     <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => {
       const previous = stations[name.trim()];
@@ -122,7 +122,7 @@ export function MapUpdateControls({ state, connected, goal, command }: Pick<Prop
       <Button disabled={!connected || updating || paused || !update?.active} onClick={() => void updateCommand('update_pause')}>Pause item updates</Button>
     </div>
     {!paused && blockers.length > 0 && <span role="status" className="muted">{blockers.join(' · ')}</span>}
-    <details><summary>Manual update points · {survey.length} views</summary>
+    <details><summary>Item observation points · {survey.length} views</summary>
       <span className="muted">Select views to capture photos and update item coordinates. Pausing stops collection. Use Refresh LiDAR map separately to publish map changes.</span>
       <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
       <div className="action-line">
@@ -132,6 +132,6 @@ export function MapUpdateControls({ state, connected, goal, command }: Pick<Prop
       </div>
       <span className="muted">{survey.map((p,i) => `${i+1}: (${p.x_m.toFixed(2)}, ${p.y_m.toFixed(2)})`).join(' · ')}</span>
     </details>
-    {update && <span role="status" className="muted">{update.state === 'planned' ? 'Planned' : paused ? 'Updating paused' : update.active ? 'Updating' : 'Updates interrupted'} · {update.goals.length} views · round {update.round} · {update.completed}/{update.goals.length} · {update.captures} captures{update.active && ` · ${Math.floor(update.remaining_s / 60)}:${String(update.remaining_s % 60).padStart(2, '0')} left`}</span>}
+    {update && <span role="status" className="muted">{update.state === 'planned' ? 'Item views planned' : paused ? 'Item updates paused' : update.active ? 'Updating item positions' : 'Item updates interrupted'} · {update.goals.length} views · round {update.round} · {update.completed}/{update.goals.length} · {update.captures} captures{update.active && ` · ${Math.floor(update.remaining_s / 60)}:${String(update.remaining_s % 60).padStart(2, '0')} left`}</span>}
   </div>;
 }
