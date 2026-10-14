@@ -33,7 +33,7 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     onKeyUp={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); release(); } }} onBlur={() => hold(null)} aria-label={`Hold ${label}`}>{label}</Button>;
   return <details className="hardware-controls" open>
     <summary>Hardware controls</summary>
-    {state?.phase === 'teleop' && <div role="status"><strong>TELEOP controls hardware · WebUI monitoring only</strong><p>Exit TELEOP, then verify stopped hardware to resume WebUI control.</p></div>}
+    {state?.phase === 'teleop' && <div role="status"><strong>TELEOP controls hardware</strong><p>Item Z and GOAL recording remain available. Exit TELEOP to resume WebUI motion; stopped feedback is verified automatically.</p></div>}
     {confirmation && <div role="alertdialog" aria-label="Confirm hardware action">
       <p>{confirmation.message}</p>
       <Button disabled={confirming || !connected || (!idle && !(state?.phase === 'fault' && confirmation.type === 'recover_stop'))} onClick={async () => {
