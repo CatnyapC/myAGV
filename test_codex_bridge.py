@@ -82,6 +82,9 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
              patch.object(bridge,'CodexConversation',return_value=conversation):
             async with TestClient(TestServer(bridge.create_app())) as client:
                 value=body()
+                value['response_format']['json_schema']['name']='pickup_alignment'
+                self.assertEqual((await client.post('/v1/chat/completions',json=value,headers=headers)).status,400)
+                conversation.run.assert_not_awaited()
                 value['session']=dict(id='boot:task:arm',sequence=3,start=True)
                 self.assertEqual((await client.post('/v1/chat/completions',json=value,headers=headers)).status,200)
                 value['session'].update(sequence=4,start=False)
@@ -249,9 +252,12 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
     async def test_alignment_passes_selected_model_and_preserves_measurement_guard(self):
         trace = {}
         with patch('web_backend.resolve.request_json', AsyncMock(return_value=dict(goal=[350,780,650,1000], current=[400,600,700,1000]))) as request:
+            with self.assertRaisesRegex(ValueError,'persistent session'):
+                await locate_pickup({}, {}, 'private-token', None, [], model=bridge.MODEL)
+            request.assert_not_awaited()
             moves = await locate_pickup(dict(arm='data:image/jpeg;base64,AQ=='), dict(name='item', appearance='plain'),
                 'private-token', 'data:image/jpeg;base64,AQ==', [], stage='arm', goal='data:image/jpeg;base64,AQ==',
-                model=bridge.MODEL, effort='medium', trace=trace)
+                model=bridge.MODEL, effort='medium', trace=trace,session=dict(id='boot:test:arm',sequence=1,start=True))
         self.assertEqual(request.call_args.args[0]['model'], bridge.MODEL)
         self.assertEqual(request.call_args.args[0]['reasoning'], dict(effort='medium'))
         self.assertEqual(trace['model'], bridge.MODEL)

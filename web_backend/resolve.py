@@ -175,6 +175,8 @@ async def locate_pickup(images, item, key, reference, history, prompt=PICKUP_PRO
     config = calibration_config(limits)
     if stage not in ('base', 'arm'):
         raise ValueError('Invalid alignment stage')
+    if model == CODEX_MODEL and (not isinstance(session, dict) or set(session) != {'id', 'sequence', 'start'}):
+        raise ValueError('Local Codex ALIGN requires a persistent session')
     metric_stage = stage == 'arm' and metric is not None
     continuation = session is not None and not session['start']
     if stage == 'base':

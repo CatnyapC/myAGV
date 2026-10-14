@@ -265,6 +265,8 @@ def create_app():
             body = await request.json()
             session = body.get('session')
             if session is None:
+                if body.get('response_format', {}).get('json_schema', {}).get('name') == 'pickup_alignment':
+                    raise ValueError('ALIGN requires a persistent session')
                 return web.json_response(await infer(body))
             identity, sequence = session['id'], session['sequence']
             if (not isinstance(identity, str) or not re.fullmatch(r'[A-Za-z0-9:_-]{1,160}', identity)

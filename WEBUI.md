@@ -196,7 +196,9 @@ images and an output schema over app-server stdio, with ephemeral threads, shell
 MCP, plugins, hooks and child agents disabled. ALIGN keeps one isolated process
 and ephemeral thread per stage. The first turn supplies identity and GOAL;
 later turns append only CURRENT and the last measured movement. BASE and ARM
-never share a thread. Sequential turn IDs prevent duplicate or missing rounds
+never share a thread. Local Codex ALIGN requires persistent-session metadata;
+both the caller and HTTP adapter reject requests that would fall back to one-shot
+inference. Sequential turn IDs prevent duplicate or missing rounds
 from silently losing context. Stage changes, task completion, STOP, errors and
 60-second inference deadlines close the process; abandoned sessions expire after
 180 seconds. Other requests use one process per request. The adapter accepts one
