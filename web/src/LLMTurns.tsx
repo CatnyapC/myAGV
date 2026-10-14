@@ -56,7 +56,13 @@ export function LLMTurns(props: { connected: boolean; onLog: LogReporter }) {
       return <article className="fetch-round" key={round.id}>
         <header><strong>Round {round.round}</strong><span>{round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.stage || round.mode} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
         <span className="muted">{new Date(round.started_at_s * 1000).toLocaleTimeString()} · {round.model}</span>
-        {round.result_json && <pre>LLM: {round.result_json}</pre>}
+        {round.result_json && <pre>Output: {round.result_json}</pre>}
+        <div className="fetch-log-images">{round.measured_images?.map(view => <figure key={view.label}>
+          <MeasuredPhoto src={view.image} alt={view.label} bounds={view.bounds} /><figcaption>{view.label}{view.bounds && ` · ${view.bounds.join(', ')}`}</figcaption>
+        </figure>)}{parts.map((part, i) => part.image_url && <figure key={i}>
+          <img src={part.image_url.url} alt={parts[i - 1]?.text ?? 'LLM camera input'} />
+          <figcaption>{parts[i - 1]?.text}</figcaption>
+        </figure>)}</div>
         {round.measurement && <pre>Measured: {JSON.stringify(round.measurement)}</pre>}
         {round.metric_ready === false && <span className="muted">Measuring millimeter scale; alignment cannot finish yet.</span>}
         {round.calibration_reused && <span className="muted">Reusing this GOAL's measured millimeter scale; no repeated probes.</span>}
@@ -67,13 +73,9 @@ export function LLMTurns(props: { connected: boolean; onLog: LogReporter }) {
         {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}
         <span className="muted">Request history · movement completion appears in LOG.</span>
         {round.error && <span role="alert" className="muted">{round.error}</span>}
-        <div className="fetch-log-images">{round.measured_images?.map(view => <figure key={view.label}>
-          <MeasuredPhoto src={view.image} alt={view.label} bounds={view.bounds} /><figcaption>{view.label}{view.bounds && ` · ${view.bounds.join(', ')}`}</figcaption>
-        </figure>)}{parts.map((part, i) => part.image_url && <figure key={i}>
-          <img src={part.image_url.url} alt={parts[i - 1]?.text ?? 'LLM camera input'} />
-          <figcaption>{parts[i - 1]?.text}</figcaption>
-        </figure>)}</div>
-        {round.messages && <details><summary>Sent prompt & item</summary><pre>{round.messages[0].content}</pre><pre>{parts[0]?.text}</pre></details>}
+        {round.messages && <details><summary>Prompt</summary><pre>{round.messages[0].content}</pre>
+          {parts.map((part, i) => part.text && <pre key={i}>{part.text}</pre>)}
+        </details>}
       </article>;
     })}
   </div>;
