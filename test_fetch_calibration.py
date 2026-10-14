@@ -11,7 +11,7 @@ import time
 import threading
 import unittest
 import uuid
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import ANY, AsyncMock, Mock, call, patch
 from navigation import Navigation
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -408,12 +408,13 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(alignment_command({'x_mm': 0, 'turn_deg': 0}, None), {'X': 0, 'turn_deg': 0})
         self.assertEqual(alignment_command({'x_mm': 2, 'turn_deg': -2}, {'max_step_mm': 1}), {'X': 1, 'turn_deg': -2})
         for bad in (None, {}, {'x_mm': None, 'turn_deg': 0}, {'x_mm': True, 'turn_deg': 0},
-                    {'x_mm': float('nan'), 'turn_deg': 0}, {'x_mm': 20.1, 'turn_deg': 0},
+                    {'x_mm': float('nan'), 'turn_deg': 0}, {'x_mm': float('inf'), 'turn_deg': 0},
                     {'x_mm': .05, 'turn_deg': 0}, {'x_mm': 0, 'turn_deg': 0, 'grip': True}):
             with self.assertRaises(ValueError):
                 alignment_command(bad, None)
         with self.assertRaises(ValueError):
-            calibration_config({'max_step_mm': 21})
+            calibration_config({'max_step_mm': -1})
+        self.assertEqual(alignment_command(dict(x_mm=60,y_mm=-12,turn_deg=0),None),dict(X=60,Y=-12,turn_deg=0))
         self.assertEqual(pickup_delta('X', 1), (0, 1, 0))
         self.assertEqual(pickup_delta('Y', 1), (-1, 0, 0))
         cv2 = SimpleNamespace(INTER_AREA=3, IMWRITE_JPEG_QUALITY=1,
@@ -478,9 +479,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(requests[2]['history'], [])
             self.assertEqual(c.capture.call_args_list, [call('front', vision=True)] * 2 + [call('arm', vision=True)] * 3)
             c.turn_fetch.assert_called_once_with(1, calibration_config(None), local_alignment=False)
-            self.assertEqual(c.arm_step.call_args_list, [call('X', 1, pickup=True, distance=10),
-                call('Y', -1, pickup=True, distance=10), call('X', 1, pickup=True, distance=1),
-                call('Y', -1, pickup=True, distance=1)])
+            self.assertEqual(c.arm_step.call_args_list, [call('X', 1, pickup=True, distance=10,y_mm=-10,guard=ANY),
+                call('X', 1, pickup=True, distance=1,y_mm=-1,guard=ANY)])
             self.assertFalse(list(c.directory.iterdir()))
             results = iter([dict(x_mm=1, turn_deg=0)])
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):
@@ -634,8 +634,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                         values={**preferences['values'], 'llm_model': CODEX_MODEL, 'reasoning_effort': 'low'}))
                     self.assertEqual(response.status, 200)
                     settings = await (await client.get('/api/fetch-settings')).json()
-                    values = {**settings['values'], 'max_step_mm': 20, 'prompt': 'Edited prompt'}
-                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values={**values, 'max_step_mm': 21}))).status, 400)
+                    values = {**settings['values'], 'max_step_mm': 0, 'prompt': 'Edited prompt'}
+                    self.assertEqual((await client.put('/api/fetch-settings', json=dict(expected_revision=0, values={**values, 'max_step_mm': -1}))).status, 400)
                     saved = await (await client.put('/api/fetch-settings', json=dict(expected_revision=0, values=values))).json()
                     self.assertEqual(saved['revision'], 1)
                     self.assertEqual(json.loads((ui / 'fetch_settings.json').read_text()), saved)
@@ -665,7 +665,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     images = dict(front='data:image/jpeg;base64,AQ==', arm='data:image/jpeg;base64,Ag==')
                     value = dict(id='request', task_id='task', boot_id='boot', stop_epoch=0, map_id=grid['map_id'],
                         expires_at_s=time.time()+20, round=1, preview=True, prompt=values['prompt'], limits=values,
-                        images=images, arm_position_mm=[0,150,35], history=[], item=dict(name='Cup', appearance='Red', reference_photo_id=reference['id']))
+                        images=images, arm_position_mm=[0,150,35], history=[], item=dict(name='Cup', appearance='Red', calibration_z_mm=35, reference_photo_id=reference['id']))
                     atomic_json(bridge / 'fetch_vision_request.json', value)
                     try:
                         await asyncio.wait_for(entered.wait(), 2)
@@ -704,6 +704,34 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(entry['correction'], dict(X=5, Y=0, turn_deg=0))
                     self.assertEqual([v['label'] for v in entry['measured_images']], ['GOAL','CURRENT'])
                     self.assertEqual(entry['measured_images'][0]['image'], index.reference_image(cameras['arm']))
+                    async def arm_round(request, output):
+                        nonlocal provider_result
+                        entered.clear()
+                        provider_result = output
+                        atomic_json(bridge / 'fetch_vision_request.json', request)
+                        await asyncio.wait_for(entered.wait(),2)
+                        for _ in range(40):
+                            latest = await (await client.get('/api/fetch-log')).json()
+                            if latest['rounds'][-1]['status'] != 'requesting':
+                                self.assertEqual(latest['rounds'][-1]['status'],'returned')
+                                return latest['rounds'][-1]
+                            await asyncio.sleep(.025)
+                        self.fail('Metric round did not finish')
+                    previous = dict(images=images,commanded=dict(X=5,Y=0,turn_deg=0))
+                    await arm_round(dict(arm_request,id='probe-x',round=3,history=[previous],arm_position_mm=[0,155,35]),
+                        dict(goal=[350,850,650,1000],current=[310,844,610,1000]))
+                    await arm_round(dict(arm_request,id='probe-y',round=4,history=[previous,previous],arm_position_mm=[5,155,35]),
+                        dict(goal=[350,850,650,1000],current=[310,894,610,1000]))
+                    await arm_round(dict(arm_request,id='metric-done',round=5,history=[previous,previous],arm_position_mm=[.6,150,35]),
+                        dict(x_mm=0,y_mm=0,aligned=True))
+                    cached = json.loads((ui/'arm_metric_calibrations.json').read_text())
+                    self.assertIn(json.dumps([cameras['arm'],35]),cached)
+                    hardware.control['task_id'] = 'warm-task'
+                    warm = await arm_round(dict(arm_request,id='warm-start',task_id='warm-task',round=1),
+                        dict(x_mm=35,y_mm=-10,aligned=False))
+                    self.assertTrue(warm['calibration_reused'])
+                    self.assertEqual(warm['correction'],dict(X=35,Y=-10,turn_deg=0))
+                    hardware.control['task_id'] = 'task'
                     entered.clear()
                     release.clear()
                     provider_result = dict(front='left_large')
@@ -724,9 +752,16 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     response = json.loads((bridge / 'fetch_vision_response.json').read_text())
                     self.assertNotEqual(response['id'], 'request-2')
                 restarted = create_app(ui, root / 'stations.json', hardware_dir=bridge)
+                hardware = restarted[EDITOR].hardware
+                hardware.refresh = Mock()
+                hardware.control = dict(phase='calibrating',boot_id='boot',task_id='restart-task',stop_epoch=0,stamp_s=time.time())
                 async with TestClient(TestServer(restarted)) as client:
                     self.assertEqual(await (await client.get('/api/fetch-settings')).json(), saved)
                     self.assertEqual((await (await client.get('/api/fetch-log')).json())['rounds'], [])
+                    warm = await arm_round(dict(arm_request,id='restart-warm',task_id='restart-task',round=1),
+                        dict(x_mm=35,y_mm=-10,aligned=False))
+                    self.assertTrue(warm['calibration_reused'])
+                    self.assertEqual(warm['correction'],dict(X=35,Y=-10,turn_deg=0))
 
 
 if __name__ == '__main__':

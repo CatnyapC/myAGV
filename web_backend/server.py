@@ -177,6 +177,13 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     fetch_log = dict(revision=0, rounds=[])
     stopped_fetch_task = None
     fetch_sessions = set()
+    metric_cache_path = editor.directory / 'arm_metric_calibrations.json'
+    try:
+        metric_cache = load_json(metric_cache_path, {})
+    except (OSError, ValueError):
+        metric_cache = {}
+    if not isinstance(metric_cache, dict):
+        metric_cache = {}
 
     async def release_fetch_sessions():
         for identity in list(fetch_sessions):
@@ -835,6 +842,12 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             goal_image = None
                             if value.get('stage', 'base') == 'arm':
                                 goal_image = await asyncio.to_thread(photos.reference_image, value['item']['arm_goal_photo_id'])
+                                cache_key = json.dumps([value['item']['arm_goal_photo_id'], value['item']['calibration_z_mm']])
+                                if model == CODEX_MODEL and not value['history']:
+                                    try:
+                                        metric = MetricArmCalibration(metric_cache.get(cache_key))
+                                    except (ValueError, KeyError, TypeError):
+                                        metric = MetricArmCalibration()
                             session = None
                             if model == CODEX_MODEL:
                                 identity = value['boot_id'] + ':' + value['task_id'] + ':' + value.get('stage', 'base')
@@ -860,6 +873,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                 await asyncio.gather(inference, return_exceptions=True)
                                 if not current(value):
                                     await release_fetch_sessions()
+                            if value.get('stage') == 'arm' and model == CODEX_MODEL and entry.get('aligned_perfectly') and current(value):
+                                metric_cache[cache_key] = metric.context()
+                                await asyncio.to_thread(atomic_json, metric_cache_path, metric_cache)
                             entry.update(correction=alignment_command(result, value.get('limits')))
                     entry.update(status='returned')
                     response = dict(id=handled, result=result)

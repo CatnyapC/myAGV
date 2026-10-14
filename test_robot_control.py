@@ -324,7 +324,7 @@ class ControlTest(unittest.TestCase):
                 c.arm.get_coords_info.return_value = [0, 200, 0]
                 axis, distance = 'X', 10
                 if reason == 'distance':
-                    distance = 20.1
+                    distance = 1000
                 elif reason == 'workspace':
                     c.arm.get_coords_info.return_value = [0, 359, 0]
                 elif reason == 'heading':
@@ -339,6 +339,23 @@ class ControlTest(unittest.TestCase):
                     c.arm_step(axis, -1 if reason == 'heading' else 1,
                                pickup=reason != 'manual', distance=distance)
                 c.arm.set_coords.assert_not_called()
+
+    def test_large_combined_pickup_correction_sends_one_complete_target(self):
+        c = fake_control()
+        c.read_arm = Mock()
+        c.arm.get_coords_info.side_effect = [[0,150,35,27],[12,210,35,27]]
+        guard = Mock()
+        with patch('robot_control.arm_deadline', return_value=nullcontext()):
+            c.arm_step('X',1,pickup=True,distance=60,y_mm=-12,guard=guard)
+        c.arm.set_coords.assert_called_once_with([12,210,35,27],30)
+        c.arm.set_gripper_state.assert_not_called()
+        self.assertGreaterEqual(guard.call_count,2)
+        for y in (-80,1000,float('nan')):
+            c = fake_control()
+            c.arm.get_coords_info.return_value = [0,150,35,27]
+            with self.subTest(y=y), patch('robot_control.arm_deadline', return_value=nullcontext()), self.assertRaises(ValueError):
+                c.arm_step('X',1,pickup=True,distance=60,y_mm=y)
+            c.arm.set_coords.assert_not_called()
 
     def test_transport_sends_one_full_target_and_waits_for_measured_completion(self):
         c = fake_control()

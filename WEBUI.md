@@ -208,16 +208,27 @@ This leaves the user's global Codex configuration unchanged. Fast mode consumes
 more subscription allowance; see [Codex speed](https://learn.chatgpt.com/docs/agent-configuration/speed).
 
 Local Codex ARM alignment first restores the saved calibration GOAL Z within
-1 mm. Two independent X/Y probes of at most 5 mm use measured arm displacement
+1 mm. For a new GOAL, two independent X/Y probes of at most 5 mm use measured arm displacement
 and visible image bounds to establish a local image-to-millimeter transform,
 without manually recording object dimensions. Clipped targets first receive
 coarse corrections; failed or ambiguous probes stop the task. GOAL bounds freeze
-after the first measurement. Later model turns return only the full signed X/Y
+after the first measurement. Successful alignments save that transform in
+`arm_metric_calibrations.json`, keyed by GOAL photo ID and recorded calibration Z.
+Subsequent tests with the same GOAL and height reuse it without probe rounds,
+including after a service restart. Changing the GOAL or height starts fresh.
+Recapture GOAL after changing the camera mount or recorded object pose.
+With a known transform and a horizontally clipped target, use the matching
+unclipped side edge for a coarse X error; clipped views cannot confirm alignment.
+Later model turns return only the full signed X/Y
 residual and an alignment flag. The model requires planar error below 1 mm;
 the controller independently finishes when `abs(X) + abs(Y) < 1.25 mm`, before
-gain or movement limits. Large corrections use 80% of the residual, up to 20 mm
-per axis; corrections within 5 mm use full residual. Z movements remain limited
-to 10 mm. Round logs expose residuals, thread IDs and cached input tokens.
+movement limits. Apply the full remaining X/Y correction with no gain reduction
+or hardcoded 20 mm ceiling. `max_step_mm=0` disables the optional user step limit;
+a positive value retains that explicit limit. X/Y share one complete coordinate
+target, preserving Z, the fourth axis and gripper state. All motion still validates
+the target workspace, forward-facing pose, measured completion, STOP and lease.
+Z restoration also sends its full target once. Round logs expose residuals,
+calibration reuse, thread IDs and cached input tokens.
 The transform is local to the current object, pose and height; actual accuracy
 still depends on image measurement and must be checked on hardware.
 

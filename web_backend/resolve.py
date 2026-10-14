@@ -147,9 +147,17 @@ The controller uses independent measured X/Y probes to establish millimeter scal
 During 'metric', return only {\"x_mm\":number,\"y_mm\":number,\"aligned\":boolean}.
 Measure CURRENT internally with the same visible-fragment convention. Set
 e=[CURRENT horizontal midpoint - GOAL horizontal midpoint, CURRENT top - GOAL top].
+If CURRENT is horizontally clipped, use the same identifiable unclipped side edge
+in CURRENT and GOAL for e_x instead of the biased visible midpoint. This is a coarse
+correction only; never claim alignment from a horizontally or top-clipped view.
 Multiply image_error_to_remaining_mm by e to obtain the FULL signed remaining
 X/Y corrections in millimeters. Do not limit the correction, apply gain, round
 small errors to zero, or return a fixed tiny step. Keep two decimal places near GOAL.
+Advance the entire measured remaining distance in one correction, including both
+X and Y when needed. There is no 20 mm step ceiling and no 80% gain. Do not split
+a large known error into several same-direction rounds or repeat calibration
+probes when image_error_to_remaining_mm is already supplied. Only report the error;
+the hardware owner validates the complete target against its physical workspace.
 Set aligned=true only if the planar remaining error sqrt(x_mm^2+y_mm^2) < 1 mm
 and the target's visible size/cropping and pose also match GOAL. Return the raw
 residual even then: the controller independently checks abs(X)+abs(Y) < 1.25 mm.
@@ -212,7 +220,7 @@ Earlier history images are not CURRENT and must not supply its coordinates."""
         instruction = METRIC_PROMPT
         fields = ('x_mm', 'y_mm', 'aligned') if metric.inverse else ('goal', 'current')
     if metric_stage and metric.inverse:
-        number_schema = dict(anyOf=[dict(type='number', minimum=-300, maximum=300), dict(type='null')])
+        number_schema = dict(anyOf=[dict(type='number'), dict(type='null')])
         schema = dict(type='object', properties=dict(x_mm=number_schema, y_mm=number_schema, aligned=dict(type='boolean')),
                       required=list(fields), additionalProperties=False)
     elif stage == 'base':
@@ -275,7 +283,7 @@ Earlier history images are not CURRENT and must not supply its coordinates."""
         else:
             moves, aligned, residual = metric.observe(result, position, config)
         if trace is not None:
-            trace.update(measurement=result, calibration=metric.context(), metric_ready=metric.inverse is not None)
+            trace.update(measurement=result, calibration=metric.context(), metric_ready=metric.inverse is not None, calibration_reused=metric.reused)
             if residual is not None:
                 trace.update(residual_mm={k: residual[k] for k in ('x_mm', 'y_mm')}, model_aligned=residual['aligned'])
             if 'current' in result:

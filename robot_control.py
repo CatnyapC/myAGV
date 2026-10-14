@@ -410,11 +410,15 @@ class Control:
                 self.arm._respone()
         time.sleep(1.5)
 
-    def arm_step(self, axis, direction, pickup=False, distance=1, guard=None):
+    def arm_step(self, axis, direction, pickup=False, distance=1, guard=None, y_mm=0):
         self.require_arm()
         if axis not in LIMITS or direction not in (-1, 1):
             raise ValueError('Invalid arm step')
-        number(distance, .001, (LIMITS['Z'][1] - LIMITS['Z'][0] - 10 if axis == 'Z' else 20) if pickup else 1, 'Arm step distance')
+        native_axis = {'X': 'Y', 'Y': 'X', 'Z': 'Z'}[axis] if pickup else axis
+        number(distance, .001, LIMITS[native_axis][1] - LIMITS[native_axis][0] - 10 if pickup else 1, 'Arm step distance')
+        number(y_mm, LIMITS['X'][0] - LIMITS['X'][1] + 10, LIMITS['X'][1] - LIMITS['X'][0] - 10, 'Combined pickup Y correction')
+        if y_mm and (not pickup or axis != 'X'):
+            raise ValueError('Combined Y correction requires pickup X motion')
         with arm_deadline(.4):
             coords = self.arm.get_coords_info()
         if not coords or len(coords) < 3 or not all(type(v) in (float, int) and math.isfinite(v) for v in coords[:3]):
@@ -426,6 +430,8 @@ class Control:
             raise ValueError('Pickup arm must face forward near J1=90')
         delta = pickup_delta(axis, direction * distance) if pickup else tuple(
             direction * distance if a == axis else 0 for a in 'XYZ')
+        if y_mm:
+            delta = (-y_mm, delta[1], 0)
         coords[:3] = [value + step for value, step in zip(coords[:3], delta)]
         if any(not LIMITS[a][0] + 5 <= coords[i] <= LIMITS[a][1] - 5 for i, a in enumerate('XYZ')) or (pickup and coords[1] <= 5):
             raise ValueError('Arm workspace limit')
@@ -438,7 +444,7 @@ class Control:
         with arm_deadline(.4):
             self.arm.set_mode(0)
             self.arm.set_coords(coords, 30)
-        end = time.monotonic() + 3 * max(1, distance)
+        end = time.monotonic() + 3 * max(1, distance, abs(y_mm))
         actual = None
         while time.monotonic() < end:
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
@@ -1122,10 +1128,11 @@ class Control:
                     self.status = 'Aligning left/right with base rotation'
                     self.turn_fetch(moves['turn_deg'], config, local_alignment=packet.get('type') == 'fetch_test')
                     moves['X'] = 0  # Rotation changes the arm view; recapture before advancing.
-                for axis, delta in [('X', moves['X']), ('Y', moves.get('Y', 0))]:
-                    if delta:
-                        current()
-                        self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=abs(delta))
+                x, y = moves['X'], moves.get('Y', 0)
+                if x:
+                    self.arm_step('X', 1 if x > 0 else -1, pickup=True, distance=abs(x), y_mm=y, guard=current)
+                elif y:
+                    self.arm_step('Y', 1 if y > 0 else -1, pickup=True, distance=abs(y), guard=current)
                 actual = None
                 if position is not None:
                     with arm_deadline(.4):

@@ -17,8 +17,9 @@ class MetricAlignmentTest(unittest.TestCase):
                 self.assertEqual(done, aligned)
                 self.assertEqual(not any(moves.values()), aligned)
                 self.assertLessEqual(abs(moves['x_mm']), .5)
-        self.assertEqual(metric_arm_alignment(dict(x_mm=50, y_mm=-30, aligned=False), None)[0], dict(x_mm=20,y_mm=-20,turn_deg=0))
-        for bad in (None, True, float('nan'), float('inf'), 301):
+        self.assertEqual(metric_arm_alignment(dict(x_mm=50, y_mm=-30, aligned=False), None)[0], dict(x_mm=50,y_mm=-30,turn_deg=0))
+        self.assertEqual(metric_arm_alignment(dict(x_mm=36.015625,y_mm=-7.395833333,aligned=False), dict(max_step_mm=0))[0], dict(x_mm=36.015625,y_mm=-7.395833333,turn_deg=0))
+        for bad in (None, True, float('nan'), float('inf')):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 metric_arm_alignment(dict(x_mm=bad,y_mm=0,aligned=False), None)
         with self.assertRaises(ValueError):
@@ -39,7 +40,18 @@ class MetricAlignmentTest(unittest.TestCase):
         self.assertAlmostEqual(residual['x_mm'], 510/78)
         self.assertAlmostEqual(residual['y_mm'], 90/78)
         self.assertFalse(done)
-        self.assertAlmostEqual(moves['x_mm'], .8*510/78)
+        self.assertAlmostEqual(moves['x_mm'], 510/78)
+
+    def test_successful_goal_scale_can_be_restored_without_probes(self):
+        saved = dict(goal_bounds=[350,750,650,1000], image_error_to_remaining_mm=[[.125,0],[0,.1]])
+        restored = MetricArmCalibration(saved)
+        self.assertTrue(restored.reused)
+        self.assertEqual(restored.context()['phase'], 'metric')
+        self.assertEqual(restored.inverse, saved['image_error_to_remaining_mm'])
+        self.assertIsNone(restored.pending)
+        for bad in ([[0,0],[0,0]], [[1,1],[2,2]], [[float('nan'),0],[0,1]], [[1e300,0],[0,1e300]], [[True,0],[0,1]], [[1,0]]):
+            with self.subTest(matrix=bad), self.assertRaises(ValueError):
+                MetricArmCalibration(dict(saved,image_error_to_remaining_mm=bad))
 
     def test_clipped_fragment_is_coarse_only_and_bad_probes_stop(self):
         goal = [350,750,650,1000]

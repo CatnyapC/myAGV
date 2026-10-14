@@ -11,13 +11,13 @@ def calibration_config(value):
     if not isinstance(value, dict):
         raise ValueError('Invalid fetch_calibration configuration')
     result = {key: value.get(key, default) for key, default in (
-        ('max_step_mm', 20), ('turn_speed_rad_s', .015),
+        ('max_step_mm', 0), ('turn_speed_rad_s', .015),
         ('turn_duration_scale', .8), ('turn_step_deg', 2))}
     for key in result:
         number = result.get(key)
         if type(number) not in (int, float) or not math.isfinite(number):
             raise ValueError('Invalid fetch calibration: ' + key)
-    if not .1 <= result['max_step_mm'] <= 20:
+    if result['max_step_mm'] < 0:
         raise ValueError('Invalid fetch alignment step limit')
     for key, low, high in (('turn_speed_rad_s', .005, .1), ('turn_duration_scale', .1, 1.5), ('turn_step_deg', .4, 2)):
         if not low <= result[key] <= high:
@@ -43,12 +43,12 @@ def alignment_command(result, config):
         delta = result[field]
         if delta is None:
             raise ValueError('Pickup target missing or ambiguous')
-        if type(delta) not in (int, float) or not math.isfinite(delta) or abs(delta) > (2 if axis == 'turn_deg' else 20):
+        if type(delta) not in (int, float) or not math.isfinite(delta) or (axis == 'turn_deg' and abs(delta) > 2):
             raise ValueError('Invalid model arm adjustment')
         if 0 < abs(delta) < .1:
             raise ValueError('Model arm adjustment is below measurable step size')
         limit = 2 if axis == 'turn_deg' else config['max_step_mm']
-        moves[axis] = max(-limit, min(limit, delta))
+        moves[axis] = max(-limit, min(limit, delta)) if limit else delta
     return moves
 
 
@@ -65,7 +65,7 @@ def qualitative_alignment(result, config):
             raise ValueError('Pickup target missing or ambiguous: ' + camera)
         if not isinstance(label, str) or label not in steps:
             raise ValueError('Invalid visual alignment label')
-        limit = config['max_step_mm'] if camera == 'arm' else config['turn_step_deg']
+        limit = (config['max_step_mm'] or 10) if camera == 'arm' else config['turn_step_deg']
         if camera == 'arm':
             step = math.copysign({2: 10, 1: 5, .5: 1, 0: 0}[abs(steps[label])], steps[label])
         else:
@@ -87,26 +87,40 @@ def metric_arm_alignment(result, config):
     if not isinstance(result, dict) or set(result) != {'x_mm', 'y_mm', 'aligned'} or type(result['aligned']) is not bool:
         raise ValueError('Invalid metric alignment result')
     values = [result[k] for k in ('x_mm', 'y_mm')]
-    if any(type(v) not in (int, float) or not math.isfinite(v) or abs(v) > 300 for v in values):
+    if any(type(v) not in (int, float) or not math.isfinite(v) for v in values):
         raise ValueError('Arm metric error missing, ambiguous or out of range')
     if result['aligned'] and math.hypot(*values) >= 1:
         raise ValueError('Model alignment flag contradicts its one-millimeter error')
-    # Check the full residual before gain or travel limits can make a large error look small.
+    # Check the full residual before an optional travel limit can make a large error look small.
     aligned = sum(abs(v) for v in values) < 1.25
     limit = calibration_config(config)['max_step_mm']
-    gain = .8 if max(abs(v) for v in values) > 5 else 1
-    moves = [0 if aligned or abs(v) < .1 else max(-limit, min(limit, gain * v)) for v in values]
+    moves = [0 if aligned or abs(v) < .1 else max(-limit, min(limit, v)) if limit else v for v in values]
     return dict(x_mm=moves[0], y_mm=moves[1], turn_deg=0), aligned
 
 
 class MetricArmCalibration:
     """Learn a local 2x2 image/millimeter map using measured, independent axis moves."""
-    def __init__(self):
+    def __init__(self, saved=None):
         self.goal = None
         self.pending = None
         self.columns = []
         self.inverse = None
         self.z = None
+        self.reused = saved is not None
+        if saved is not None:
+            visible_bounds(saved['goal_bounds'])
+            matrix = saved['image_error_to_remaining_mm']
+            if (not isinstance(matrix, list) or len(matrix) != 2
+                    or any(not isinstance(row, list) or len(row) != 2 for row in matrix)
+                    or any(type(v) not in (int, float) or not math.isfinite(v) for row in matrix for v in row)):
+                raise ValueError('Invalid saved ARM metric calibration')
+            a, b = matrix[0]
+            c, d = matrix[1]
+            determinant = a*d-b*c
+            if not math.isfinite(determinant) or abs(determinant) <= 0 or abs(determinant) < .25 * math.hypot(a,c) * math.hypot(b,d):
+                raise ValueError('Saved ARM metric calibration is ambiguous')
+            self.goal = list(saved['goal_bounds'])
+            self.inverse = [list(row) for row in matrix]
 
     def context(self):
         return dict(phase='metric' if self.inverse else 'calibrate', goal_bounds=self.goal,
@@ -127,7 +141,7 @@ class MetricArmCalibration:
             self.z = position[2]
         if abs(position[2] - self.z) > 1:
             raise ValueError('ARM Z changed during millimeter calibration')
-        limit = calibration_config(config)['max_step_mm']
+        limit = calibration_config(config)['max_step_mm'] or 20
         box = result['current']
         if self.pending:
             axis, before, old_feature, requested = self.pending
@@ -187,7 +201,7 @@ def measured_arm_alignment(result, config):
             return 0
         size = .25 if abs(error) <= 30 else 1
         size = 10 if abs(error) > 150 else 5 if abs(error) > 60 else size
-        return math.copysign(min(config['max_step_mm'], size), error)
+        return math.copysign(min(config['max_step_mm'] or 10, size), error)
     return dict(x_mm=step(x, tolerance), y_mm=step(y, top_tolerance), turn_deg=0)
 
 
