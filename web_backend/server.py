@@ -530,6 +530,13 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if data.get('size') not in ('s', 'm', 'l') or data.get('fetch_revision') != fetch_settings['revision']:
                         raise ValueError('Rotation test size or settings revision invalid; retry')
                     data = {**data, 'fetch_settings': dict(fetch_settings['values'])}
+                if kind == 'grasp_test':
+                    if data.get('index_revision') != photos.value['revision']:
+                        raise ValueError('Photo index changed; reconfirm selection')
+                    item = next((i for i in photos.value['items'] if i['id'] == data.get('item_id')), None)
+                    if not item or 'grasp_z_mm' not in item:
+                        raise ValueError('Record the item grasp height before testing grasp / place')
+                    data = {**data, 'grasp_z_mm': item['grasp_z_mm']}
                 if kind in ('fetch', 'fetch_test'):
                     if data.get('index_revision') != photos.value['revision']:
                         raise ValueError('Photo index changed; reconfirm selection')

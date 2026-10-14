@@ -28,6 +28,117 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
+    def test_grasp_place_cycle_preserves_xy_and_restores_measured_start_z(self):
+        c = fake_control()
+        coords, actions = [0, 150, 35], []
+        c.arm.get_coords_info.side_effect = lambda: list(coords)
+        c.read_arm = Mock()
+        c.localized = False
+
+        def move(target, speed):
+            self.assertEqual(target[:2], [0, 150])
+            self.assertLessEqual(abs(target[2] - coords[2]), 10)
+            coords[:] = target
+            actions.append(('z', target[2]))
+
+        c.arm.set_coords.side_effect = move
+        c.grip = Mock(side_effect=lambda value: actions.append(('grip', value)))
+        with patch('robot_control.wait_arm', return_value=[90, 10, 20]), \
+             patch('robot_control.arm_deadline', return_value=nullcontext()):
+            self.assertEqual(c.execute(dict(type='grasp_test', grasp_z_mm=12.5)), {})
+        self.assertEqual(actions, [('grip', 100), ('z', 25), ('z', 15), ('z', 12.5),
+            ('grip', 0), ('z', 22.5), ('z', 32.5), ('z', 35), ('z', 25), ('z', 15),
+            ('z', 12.5), ('grip', 100), ('z', 22.5), ('z', 32.5), ('z', 35)])
+        self.assertEqual(coords, [0, 150, 35])
+        self.assertFalse(c.base_enabled)
+        c.capture.assert_not_called()
+        c.robot.nav.go_to.assert_not_called()
+        c.arm.set_angles.assert_not_called()
+
+    def test_grasp_place_rejects_invalid_heights_feedback_and_pose_before_gripping(self):
+        for target, feedback, angles, error in ((None, [0,150,35], [90,10,20], ValueError),
+                (True, [0,150,35], [90,10,20], ValueError),
+                (float('nan'), [0,150,35], [90,10,20], ValueError),
+                (LIMITS['Z'][0], [0,150,35], [90,10,20], ValueError),
+                (35, [0,150,35], [90,10,20], ValueError),
+                (40, [0,150,35], [90,10,20], ValueError),
+                (12.5, None, [90,10,20], RuntimeError),
+                (12.5, [0,150,float('nan')], [90,10,20], ValueError),
+                (12.5, [150,0,35], [90,10,20], ValueError),
+                (12.5, [0,150,35], [110,10,20], ValueError)):
+            with self.subTest(target=target, feedback=feedback, angles=angles):
+                c = fake_control()
+                c.arm.get_coords_info.return_value = feedback
+                c.grip = Mock()
+                with patch('robot_control.wait_arm', return_value=angles), \
+                     patch('robot_control.arm_deadline', return_value=nullcontext()), self.assertRaises(error):
+                    c.execute(dict(type='grasp_test', grasp_z_mm=target))
+                c.grip.assert_not_called()
+                c.arm.set_coords.assert_not_called()
+
+    def test_grasp_place_stops_without_release_or_return_motion(self):
+        for failure in ('stop', 'holding', 'lease', 'sensors', 'map', 'zones', 'unreached'):
+            with self.subTest(failure=failure):
+                c = fake_control()
+                c.arm.get_coords_info.return_value = [0,150,35]
+                c.arm_step = Mock()
+
+                def interrupt(value):
+                    if failure == 'stop': c.stop_pending = 'stop'
+                    if failure == 'holding' and value == 0: c.stop_pending = 'stop'
+                    if failure == 'lease': c.deadline = 0
+                    if failure == 'sensors': c.robot.sensors_ready = lambda: False
+                    if failure == 'map': c.robot.grid['map_id'] = 'changed'
+                    if failure == 'zones': c.robot.zones['revision'] += 1
+
+                c.grip = Mock(side_effect=interrupt)
+                if failure == 'holding':
+                    c.arm_step.side_effect = lambda axis, direction, **kwargs: setattr(c.arm.get_coords_info,
+                        'return_value', [0,150,c.arm.get_coords_info.return_value[2] + direction * kwargs['distance']])
+                error = Stopped if failure in ('stop', 'holding', 'lease') else TimeoutError if failure == 'unreached' else Exception
+                with patch('robot_control.wait_arm', return_value=[90,10,20]), \
+                     patch('robot_control.arm_deadline', return_value=nullcontext()), self.assertRaises(error):
+                    c.execute(dict(type='grasp_test', grasp_z_mm=12.5))
+                if failure == 'holding':
+                    self.assertEqual(c.grip.call_args_list, [call(100), call(0)])
+                    self.assertEqual(c.arm.get_coords_info.return_value, [0,150,12.5])
+                else:
+                    c.grip.assert_called_once_with(100)
+                    if failure != 'unreached': c.arm_step.assert_not_called()
+                self.assertFalse(c.base_enabled)
+                c.robot.zero.assert_called()
+
+    async def test_grasp_place_api_uses_saved_height_without_llm_and_rejects_stale_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bridge, ui = root / 'ros', root / 'ui'
+            grid = {**demo_map(), 'map_id': 'test-map'}
+            atomic_json(bridge / 'map.json', grid)
+            index = PhotoIndex(ui, root / 'stations.json')
+            item_ids = []
+            for name in ('Cup', 'Bottle'):
+                photo = index.add(demo_frame('front'), dict(kind='reference', source='phone'), index.value['revision'])
+                index.edit(photo['id'], dict(expected_revision=index.value['revision'], item_id='new', name=name, confirmed=True), grid['map_id'])
+                item_ids.append(index.value['items'][-1]['id'])
+            index.save_grasp_height(item_ids[0], 12.5, index.value['revision'])
+            with patch('web_backend.server.load_key', return_value=('not_configured', '')), \
+                 patch('web_backend.server.load_token', return_value=('not_configured', '')):
+                app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
+                hardware = app[EDITOR].hardware
+                hardware.refresh = Mock()
+                hardware.control = dict(phase='idle', stamp_s=time.time())
+                hardware.command = AsyncMock(return_value=dict(status='accepted'))
+                async with TestClient(TestServer(app)) as client:
+                    command = dict(id=str(uuid.uuid4()), type='grasp_test', map_id=grid['map_id'],
+                        expected_revision=app[EDITOR].zones['revision'], item_id=item_ids[0],
+                        index_revision=index.value['revision'], grasp_z_mm=999)
+                    self.assertEqual((await client.post('/api/commands', json=command)).status, 200)
+                    self.assertEqual(hardware.command.call_args.args[0]['grasp_z_mm'], 12.5)
+                    hardware.command.reset_mock()
+                    for changes in (dict(index_revision=0), dict(item_id='missing'), dict(item_id=item_ids[1])):
+                        self.assertEqual((await client.post('/api/commands', json={**command, **changes})).status, 400)
+                    hardware.command.assert_not_called()
+
     def test_rotation_buttons_use_saved_sizes_without_arm_or_camera(self):
         c = fake_control()
         c.arm, c.arm_homed, c.turn_fetch = None, False, Mock()

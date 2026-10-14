@@ -763,6 +763,8 @@ class Control:
             if not packet['preview']:
                 pickup_angles(angles)
             self.calibrate_fetch(packet, packet['fetch_settings'])
+        elif kind == 'grasp_test':
+            self.test_grasp(packet)
         elif kind == 'zones':
             self.robot.nav.wait_stopped()
             zones = packet.get('zones')
@@ -1090,6 +1092,66 @@ class Control:
             self.robot.zero()
             request_path.unlink(missing_ok=True)
             response_path.unlink(missing_ok=True)
+
+    def test_grasp(self, packet):
+        self.require_arm()
+        grasp_z = number(packet.get('grasp_z_mm'), LIMITS['Z'][0] + 5,
+                         LIMITS['Z'][1] - 5, 'Saved grasp Z')
+        self.base_enabled = False
+        self.robot.zero()
+        self.robot.nav.wait_stopped()
+        pickup_angles(wait_arm(self.arm, timeout=3))
+        with arm_deadline(.4):
+            coords = self.arm.get_coords_info()
+        if not coords or len(coords) < 3:
+            raise RuntimeError('Arm coordinate feedback unavailable')
+        for axis, value in zip('XYZ', coords[:3]):
+            number(value, LIMITS[axis][0] + 5, LIMITS[axis][1] - 5, 'Arm ' + axis)
+        if coords[1] <= 5 or abs(math.degrees(math.atan2(coords[1], coords[0])) - 90) > 15:
+            raise ValueError('Pickup arm must face forward near J1=90')
+        start_z = coords[2]
+        if start_z <= grasp_z + 1:
+            raise ValueError('Run ALIGN above the saved grasp height before grasp / place testing')
+        map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
+
+        def current():
+            if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+                raise Stopped('Grasp / place test cancelled or lease expired')
+            if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
+                raise ValueError('Map or no-go zones changed during grasp / place test')
+            if not self.robot.sensors_ready():
+                raise RuntimeError('Fresh sensors required during grasp / place test')
+
+        def move_z(target):
+            for _ in range(30):
+                current()
+                with arm_deadline(.4):
+                    actual = self.arm.get_coords_info()
+                if not actual or len(actual) < 3:
+                    raise RuntimeError('Arm coordinate feedback unavailable')
+                delta = target - number(actual[2], *LIMITS['Z'], 'Arm Z feedback')
+                if abs(delta) <= 1:
+                    return
+                self.arm_step('Z', 1 if delta > 0 else -1, pickup=True, distance=min(10, abs(delta)))
+            raise TimeoutError('Arm did not reach grasp / place test Z')
+
+        self.phase = 'grasp_testing'
+        try:
+            current()
+            self.status = 'Grasp / place test: opening gripper'
+            self.grip(100)
+            for target, status, grip in ((grasp_z, 'lowering to grasp height', 0),
+                                         (start_z, 'lifting item', None),
+                                         (grasp_z, 'lowering and releasing item', 100),
+                                         (start_z, 'restoring starting height', None)):
+                self.status = 'Grasp / place test: ' + status
+                move_z(target)
+                current()
+                if grip is not None:
+                    self.grip(grip)
+        finally:
+            self.base_enabled = False
+            self.robot.zero()
 
     def fetch(self, packet):
         records = load_stations(self.stations_path)

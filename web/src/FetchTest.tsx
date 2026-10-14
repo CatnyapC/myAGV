@@ -18,7 +18,7 @@ type Round = {
 
 export function FetchTest(props: {
   connected: boolean; editable: boolean; turnEnabled: boolean; reasons: string[]; itemId: string; indexRevision?: number;
-  itemName?: string; status?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
+  itemName?: string; graspZ?: number; status?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
 }) {
   const [settings, setSettings] = useState<FetchSettings | null>(null);
   const [draft, setDraft] = useState<FetchSettings['values'] | null>(null);
@@ -69,6 +69,14 @@ export function FetchTest(props: {
     } catch (failure) { setError((failure as Error).message); }
     finally { setPending(false); }
   }
+  async function graspTest() {
+    if (pending) return;
+    setPending(true); setError('');
+    try {
+      await props.command('grasp_test', { item_id: props.itemId, index_revision: props.indexRevision });
+    } catch (failure) { setError((failure as Error).message); }
+    finally { setPending(false); }
+  }
   const disabled = pending || !settings || !draft || props.reasons.length > 0;
   return <section className="fetch-test" aria-label="Grasp calibration test">
     <div className="section-divider" /><h3 className="subheading">GRASP TEST</h3>
@@ -94,14 +102,18 @@ export function FetchTest(props: {
         disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, prompt: event.target.value })} /></label>
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
-    <span className="muted">Shared with Fetch · original-resolution photos. Test buttons save edits first.</span>
+    <span className="muted">Shared with Fetch · original-resolution photos. Alignment and rotation tests save edits first.</span>
     <span className="muted">Stage 1: front midpoint within 45–55%; base only. Stage 2: base locked, arm X/Y match the same visible item fragment in GOAL. All items use LLM bounds: top edge within 0.5%, horizontal/bottom position within 2%, width within 10% and visible area within 15%. Near GOAL, corrections use 0.25 mm steps. Missing or ambiguous targets stop with an error.</span>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
+      <Button disabled={disabled || props.graspZ == null}
+        title={props.reasons.join('; ') || (props.graspZ == null ? 'Save the item grasp height first.' : 'Run after ALIGN. Pick up and put down at the current X/Y; base stays stopped.')}
+        onClick={() => void graspTest()}>GRASP / PLACE</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
     <span className="muted">Preview: one coarse-alignment round, no movement. ALIGN first restores ARM GOAL Z within 1 mm, then runs both stages with Z fixed. Gripper stays fixed. Target above GOAL: Y−; below: Y+. Up to 33 observations; no cumulative arm travel cap.</span>
+    <span className="muted">Grasp / place: {props.graspZ == null ? 'record the item grasp Z first' : `saved grasp Z ${props.graspZ.toFixed(1)} mm`}. After ALIGN, open, lower to grasp Z, close, lift to starting Z, lower and release, then return to starting Z. X/Y stay fixed.</span>
     <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
     {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
     {error && <span role="alert" className="muted">{error}</span>}
