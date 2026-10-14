@@ -48,6 +48,7 @@ export function App() {
   const [observationPoints, setObservationPoints] = useState<ObservationPoints | null>(null);
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const [pointsSaving, setPointsSaving] = useState(false);
+  const [mapToolbar, setMapToolbar] = useState<HTMLSpanElement | null>(null);
   const [savedSettings, setSavedSettings] = useState<Settings | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Settings['values']>({ auto_align: false, manual_angle_deg: 0, llm_model: 'deepseek/deepseek-v4.1-flash', reasoning_effort: 'off', fast_mode: true });
   const [angleText, setAngleText] = useState('0');
@@ -590,7 +591,7 @@ export function App() {
             item_id: selectedItemId, index_revision: photos?.revision,
           })}>Refine approach</Button>
         </div>}
-        {state?.demo === false && <MapUpdateControls state={state.hardware} connected={connected} goal={goal} command={hardwareCommand}
+        {state?.demo === false && <MapUpdateControls toolbar={mapToolbar} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand}
           points={visiblePoints} revision={observationPoints?.revision ?? 0} saving={pointsSaving}
           selectedId={selectedPointId} onSelect={setSelectedPointId} onSave={saveObservationPoints} />}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
@@ -601,7 +602,7 @@ export function App() {
             }}>Preview</Button>
           </div>
         </details>}
-      </>)}
+      </>, <span ref={setMapToolbar} />)}
       {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Capture front observation" title="Capture front observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
       {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Capture arm observation" title="Capture arm observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
       {panel('operate', <div className="operate-pages"><div className="operate-body" inert={Boolean(photoMode)} aria-hidden={Boolean(photoMode)}>

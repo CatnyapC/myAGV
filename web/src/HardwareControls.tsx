@@ -1,4 +1,5 @@
 import { useState, type PointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from './ui';
 import type { ObservationPoint, Origin, Stations } from './mapGeometry';
 
@@ -91,8 +92,9 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
   </details>;
 }
 
-export function MapUpdateControls({ state, connected, goal, command, points, revision, saving, selectedId, onSelect, onSave }:
+export function MapUpdateControls({ toolbar, state, connected, goal, command, points, revision, saving, selectedId, onSelect, onSave }:
   Pick<Props, 'state' | 'connected' | 'goal' | 'command'> & {
+    toolbar: HTMLElement | null;
     points: ObservationPoint[]; revision: number; saving: boolean; selectedId: string | null;
     onSelect: (id: string | null) => void; onSave: (points: ObservationPoint[], selectedId?: string | null) => Promise<void>;
   }) {
@@ -118,9 +120,9 @@ export function MapUpdateControls({ state, connected, goal, command, points, rev
     finally { setUpdating(false); }
   };
   return <div className="map-updates">
-    <div className="action-line">
-      <Button title="Publish and save the latest LiDAR map" disabled={!connected || updating || (!idle && !paused)} onClick={() => void updateCommand('map_refresh')}>Refresh LiDAR map</Button>
-    </div>
+    {toolbar && createPortal(
+      <Button title="Publish and save the latest LiDAR map" disabled={!connected || updating || (!idle && !paused)} onClick={() => void updateCommand('map_refresh')}>Refresh LiDAR map</Button>,
+      toolbar)}
     <div className="action-line">
       <Button variant="default" title={blockers.join('; ')} disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start item updates</Button>
       <Button disabled={!connected || updating || paused || !update?.active} onClick={() => void updateCommand('update_pause')}>Pause item updates</Button>
