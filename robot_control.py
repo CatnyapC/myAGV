@@ -350,19 +350,15 @@ class Control:
         target, start = validate_angles(angles), self.read_arm()
         if len(target) != len(start):
             raise ValueError('Arm joint counts differ')
-        # M15 only promises jog stop. Bound each absolute command so cancellation
-        # stops issuing targets, even if firmware completes the current waypoint.
-        steps = max(1, math.ceil(max(abs(a-b) for a,b in zip(start,target)) / 2))
-        for index in range(1, steps+1):
-            if self.map_update and self.map_update['active']:
-                self.wait_update()
-            if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
-                raise Stopped('Arm task lease expired')
-            waypoint = [a+(b-a)*index/steps for a,b in zip(start,target)]
-            with arm_deadline(.4):
-                self.arm.set_angles(waypoint, 30)
-            self.angles = wait_arm(self.arm, waypoint, timeout=5)
-            self.arm_stamp = time.monotonic()
+        if self.map_update and self.map_update['active']:
+            self.wait_update()
+        if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+            raise Stopped('Arm task lease expired')
+        # shortcut: M15 may not interrupt absolute travel; verify firmware before relying on Web STOP.
+        with arm_deadline(.4):
+            self.arm.set_angles(target, 30)
+        self.angles = wait_arm(self.arm, target, timeout=30)
+        self.arm_stamp = time.monotonic()
 
     def grip(self, value):
         self.require_arm()

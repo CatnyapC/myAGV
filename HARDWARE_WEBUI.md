@@ -277,10 +277,13 @@ acknowledgement for feedback.
 
 The manufacturer's [P340 protocol](https://docs.elephantrobotics.com/docs/ultraArm-en/3-HowToUseultraArm/2-SoftwareControl/6-SerialPort/6-SerialPort.html)
 documents M15 as jog stop, not a guaranteed emergency stop for homing or queued
-absolute moves. Automatic arm travel therefore sends bounded 2-degree waypoints;
-cancellation prevents subsequent waypoints. The current waypoint or gripper
-command may finish. Homing cancellation is reported unconfirmed and requires
-re-homing. Web STOP is not a substitute for physical power/emergency control.
+absolute moves. Transport, Fetch pose changes and startup-pose restoration send
+one complete joint target at speed 30 for continuous firmware interpolation,
+then require stable measured arrival within 30 seconds. STOP interrupts the
+controller's wait and sends M15; the full absolute move or gripper command may
+still finish if firmware does not interrupt it. Homing cancellation is reported
+unconfirmed and requires re-homing. Web STOP is not a substitute for physical
+power/emergency control.
 Physical stopping distance and firmware behavior need supervised acceptance.
 
 ## Devices and map

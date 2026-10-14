@@ -219,6 +219,50 @@ class ControlTest(unittest.TestCase):
         calls = c.arm.method_calls
         self.assertLess(calls.index(unittest.mock.call.set_mode(0)), calls.index(unittest.mock.call.set_coords([201,0,0],30)))
 
+    def test_transport_sends_one_full_target_and_waits_for_measured_completion(self):
+        c = fake_control()
+        c.config['transport_angles'] = [90, 10, 20]
+        c.arm.get_angles_info.return_value = [0, 0, 0]
+        with patch('robot_control.arm_deadline', return_value=nullcontext()), \
+                patch('robot_control.wait_arm', return_value=[90, 10, 20]) as wait:
+            c.fold()
+        c.arm.set_angles.assert_called_once_with([90, 10, 20], 30)
+        wait.assert_called_once_with(c.arm, [90, 10, 20], timeout=30)
+        self.assertEqual(c.angles, [90, 10, 20])
+
+    def test_full_arm_target_preserves_pre_motion_gates(self):
+        for reason in ('stop', 'lease', 'joint_count', 'map_pause'):
+            with self.subTest(reason=reason):
+                c = fake_control()
+                c.arm.get_angles_info.return_value = [0, 0, 0]
+                target = [90, 10, 20]
+                if reason == 'stop':
+                    c.stop_pending = 'STOP'
+                elif reason == 'lease':
+                    c.deadline = 0
+                elif reason == 'joint_count':
+                    target.append(0)
+                else:
+                    c.map_update = dict(active=True)
+                    c.wait_update = Mock(side_effect=Stopped('Paused task cancelled'))
+                with self.assertRaises((Stopped, ValueError)):
+                    c.move_arm(target)
+                c.arm.set_angles.assert_not_called()
+
+    def test_full_arm_move_propagates_timeout_and_stop_interrupt(self):
+        for timeout in (False, True):
+            with self.subTest(timeout=timeout):
+                c = fake_control()
+                c.executing = True
+                c.arm.get_angles_info.return_value = [0, 0, 0]
+                with patch('robot_control.arm_deadline', return_value=nullcontext()), \
+                        patch('robot_control.wait_arm', side_effect=TimeoutError('Arm timed out') if timeout
+                              else lambda *args, **kwargs: c.interrupt(signal.SIGUSR1, None)), \
+                        self.assertRaises(TimeoutError if timeout else Stopped):
+                    c.move_arm([90, 10, 20])
+                c.arm.set_angles.assert_called_once_with([90, 10, 20], 30)
+                self.assertEqual(c.angles, [0, 0, 0])
+
     def test_retries_lease_and_stop_preempt_pending_command(self):
         c, p = fake_control(), packet()
         self.assertEqual(c.receive(p)['status'], 'accepted')
