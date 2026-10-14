@@ -1,3 +1,4 @@
+import type { LogReporter } from './activityLog';
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Camera } from 'lucide-react';
 import { api } from './api';
@@ -31,7 +32,7 @@ async function normalizedPng(file: File): Promise<Blob> {
 
 export function PhotoEditor(props: {
   photo: Photo | null; index: PhotoIndex; stations: Stations; enabled: boolean; autoDescribe: boolean;
-  goalCaptureReason: string; heightCaptureEnabled: boolean; onCaptureGoal: (itemId: string, revision: number, step: 'height' | 'goal') => Promise<PhotoIndex>;
+  onLog: LogReporter; goalCaptureReason: string; heightCaptureEnabled: boolean; onCaptureGoal: (itemId: string, revision: number, step: 'height' | 'goal') => Promise<PhotoIndex>;
   onClose: () => void; onChange: (index: PhotoIndex, addedId?: string) => void; onBusy: (value: boolean) => void; onStop: () => void;
 }) {
   const currentItem = props.index.items.find(i => i.id === props.photo?.item_id);
@@ -43,6 +44,7 @@ export function PhotoEditor(props: {
   const [station, setStation] = useState(currentItem?.station_link?.name ?? '');
   const [stationConfirmed, setStationConfirmed] = useState(false);
   const [error, setError] = useState('');
+  useEffect(() => { if (error) props.onLog(error, 'error', 'Photo'); }, [error, props.onLog]);
   const [busy, setBusy] = useState(false);
   const [describeRequested, setDescribeRequested] = useState<{ name?: string } | null>(props.autoDescribe ? {} : null);
   useEffect(() => { if (!props.enabled) setDescribeRequested(null); }, [props.enabled]);
@@ -57,6 +59,7 @@ export function PhotoEditor(props: {
       setItemId(id => id || 'new');
       if (!('name' in describeRequested)) setName(value => value.trim() ? value : result.name ?? value);
       setAppearance(result.appearance);
+      props.onLog('Item description generated', 'info', 'Photo');
     }).catch(failure => {
       if (!controller.signal.aborted) setError((failure as Error).message);
     }).finally(() => {
@@ -85,6 +88,7 @@ export function PhotoEditor(props: {
           setItemId(savedItemId);
           const captured = await props.onCaptureGoal(savedItemId, result.revision, record);
           props.onChange(captured); setRevision(captured.revision);
+          props.onLog(record === 'height' ? 'Grasp height saved' : 'Arm calibration GOAL saved', 'info', 'Photo');
         } else props.onClose();
       }
     } catch (failure) { setError((failure as Error).message); }

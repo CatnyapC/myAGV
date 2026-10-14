@@ -118,28 +118,25 @@ export function MapUpdateControls({ state, connected, goal, command, points, rev
     finally { setUpdating(false); }
   };
   return <div className="map-updates">
-    <span role="status" className="muted">{state?.map_save_error ? `Map save failed: ${state.map_save_error}`
-      : state?.saved_map_revision ? `Map saved · revision ${state.saved_map_revision}` : 'Map not saved yet'}</span>
     <div className="action-line">
-      <Button disabled={!connected || updating || (!idle && !paused)} onClick={() => void updateCommand('map_refresh')}>Refresh LiDAR map</Button>
+      <Button title="Publish and save the latest LiDAR map" disabled={!connected || updating || (!idle && !paused)} onClick={() => void updateCommand('map_refresh')}>Refresh LiDAR map</Button>
     </div>
-    <span className="muted">Publish and save the latest LiDAR map. No item photos or position updates.</span>
     <div className="action-line">
-      <Button variant="default" disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start item updates</Button>
+      <Button variant="default" title={blockers.join('; ')} disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start item updates</Button>
       <Button disabled={!connected || updating || paused || !update?.active} onClick={() => void updateCommand('update_pause')}>Pause item updates</Button>
     </div>
-    {!paused && blockers.length > 0 && <span role="status" className="muted">{blockers.join(' · ')}</span>}
     <div className="action-line">
       <Button disabled={!selected || !idle || updating || saving || pointBlockers.length > 0}
-        onClick={() => void updateCommand('survey')}>Update selected point</Button>
+        title={pointBlockers.join('; ')} onClick={() => void updateCommand('survey')}>Update selected point</Button>
       <Button disabled={!selected || !idle || updating || saving}
         onClick={() => void onSave(points.filter(p => p.id !== selectedId), null)}>Remove selected point</Button>
     </div>
-    <span role="status" className="muted">{selected ? `Selected view ${points.indexOf(selected) + 1} · (${selected.x_m.toFixed(2)}, ${selected.y_m.toFixed(2)}) · ${(selected.yaw_rad * 180 / Math.PI).toFixed(0)}°` : 'Click an observation point on the map to select it.'}{saving && ' · Saving…'}</span>
-    {selected && pointBlockers.length > 0 && <span role="status" className="muted">{pointBlockers.join(' · ')}</span>}
-    <details><summary>Item observation points · {points.length} views</summary>
+    <details className="control-details"><summary>Observation points · {points.length}{selected && ` · view ${points.indexOf(selected) + 1} selected`}</summary>
       <span className="muted">Points stay on the map and are saved with it. Update the selected point once, or start updates for all saved points. Use Refresh LiDAR map separately to publish map changes.</span>
+      {blockers.length > 0 && <p className="muted">{blockers.join(' · ')}</p>}
+      {selected && pointBlockers.length > 0 && <p className="muted">{pointBlockers.join(' · ')}</p>}
       <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
+      {update?.active && <span className="muted">{Math.floor(update.remaining_s / 60)}:{String(update.remaining_s % 60).padStart(2, '0')} left</span>}
       <div className="action-line">
         <Button disabled={!idle || updating || saving || !goal || points.length >= 20} onClick={() => {
           if (goal) { const point = { ...goal, id: commandId() }; void onSave([...points, point], point.id); }
@@ -149,6 +146,5 @@ export function MapUpdateControls({ state, connected, goal, command, points, rev
       <div className="action-line">{points.map((p, i) => <Button key={p.id} aria-pressed={p.id === selectedId}
         onClick={() => onSelect(p.id)}>{i + 1}: ({p.x_m.toFixed(2)}, {p.y_m.toFixed(2)}) · {(p.yaw_rad * 180 / Math.PI).toFixed(0)}°</Button>)}</div>
     </details>
-    {update && <span role="status" className="muted">{update.state === 'planned' ? 'Item views planned' : paused ? 'Item updates paused' : update.active ? 'Updating item positions' : 'Item updates interrupted'} · {update.goals.length} views · round {update.round} · {update.completed}/{update.goals.length} · {update.captures} captures{update.active && ` · ${Math.floor(update.remaining_s / 60)}:${String(update.remaining_s % 60).padStart(2, '0')} left`}</span>}
   </div>;
 }

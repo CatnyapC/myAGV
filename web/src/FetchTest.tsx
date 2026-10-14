@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { Button } from './ui';
 import { MeasuredPhoto } from './MeasuredPhoto';
+import type { LogReporter } from './activityLog';
 
 type TurnSize = 's' | 'm' | 'l';
 type TurnFields = Record<`turn_${TurnSize}_${'speed_rad_s' | 'duration_s'}`, number>;
@@ -21,22 +22,22 @@ type Round = {
 export function FetchTest(props: {
   connected: boolean; editable: boolean; turnEnabled: boolean; reasons: string[]; itemId: string; indexRevision?: number;
   holdingItemId?: string | null; graspToggleAvailable?: boolean;
-  itemName?: string; graspZ?: number; metric?: boolean; status?: string; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
+  itemName?: string; graspZ?: number; metric?: boolean; onLog: LogReporter; command: (type: string, values: Record<string, unknown>) => Promise<void>; stop: () => void;
 }) {
   const [settings, setSettings] = useState<FetchSettings | null>(null);
   const [draft, setDraft] = useState<FetchSettings['values'] | null>(null);
   const [rounds, setRounds] = useState<Round[]>([]);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState('');
+  const roundStatus = useRef(new Map<string, string>());
   const logRevision = useRef(-1);
   useEffect(() => {
     if (!props.connected) return;
     const controller = new AbortController();
     void api<FetchSettings>('/api/fetch-settings', { signal: controller.signal }).then(value => {
       if (!controller.signal.aborted) { setSettings(value); setDraft(value.values); }
-    }).catch(failure => { if (!controller.signal.aborted) setError((failure as Error).message); });
+    }).catch(failure => { if (!controller.signal.aborted) props.onLog((failure as Error).message, 'error', 'Calibration'); });
     return () => controller.abort();
-  }, [props.connected]);
+  }, [props.connected, props.onLog]);
   useEffect(() => {
     if (!props.connected) return;
     const controller = new AbortController();
@@ -48,43 +49,56 @@ export function FetchTest(props: {
           logRevision.current = value.revision;
           if (value.rounds) setRounds(value.rounds);
         }
-      } catch (failure) { if (!controller.signal.aborted) setError((failure as Error).message); }
+      } catch (failure) { if (!controller.signal.aborted) props.onLog((failure as Error).message, 'error', 'Calibration'); }
       if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 1000);
     }
     // Reconnect may reach a restarted API with the same revision but no prior logs.
     logRevision.current = -1;
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [props.connected]);
+  }, [props.connected, props.onLog]);
 
   async function save(preview?: boolean, turnSize?: 's' | 'm' | 'l') {
     if (!settings || !draft || pending) return;
-    setPending(true); setError('');
+    setPending(true);
     try {
       const saved = JSON.stringify(draft) === JSON.stringify(settings.values) ? settings : await api<FetchSettings>('/api/fetch-settings', {
         method: 'PUT', body: JSON.stringify({ expected_revision: settings.revision, values: draft }),
       });
       setSettings(saved); setDraft(saved.values);
+      if (preview === undefined && !turnSize) props.onLog('Calibration settings saved', 'info', 'Calibration');
       if (turnSize) await props.command('fetch_turn_test', { size: turnSize, fetch_revision: saved.revision });
       if (preview !== undefined) await props.command('fetch_test', {
         item_id: props.itemId, index_revision: props.indexRevision, fetch_revision: saved.revision, preview,
       });
-    } catch (failure) { setError((failure as Error).message); }
+    } catch (failure) { props.onLog((failure as Error).message, 'error', 'Calibration'); }
     finally { setPending(false); }
   }
   async function graspTest() {
     if (pending) return;
-    setPending(true); setError('');
+    setPending(true);
     try {
       await props.command('grasp_test', { item_id: props.itemId, index_revision: props.indexRevision,
         action: props.holdingItemId ? 'place' : 'grasp' });
-    } catch (failure) { setError((failure as Error).message); }
+    } catch (failure) { props.onLog((failure as Error).message, 'error', 'Calibration'); }
     finally { setPending(false); }
   }
+  useEffect(() => {
+    const next = new Map<string, string>();
+    for (const round of rounds) {
+      const status = `${round.status}:${round.error ?? ''}`;
+      next.set(round.id, status);
+      if (roundStatus.current.get(round.id) !== status) {
+        props.onLog(`Round ${round.round} · ${round.preview ? 'Preview' : round.mode === 'approach' ? 'Approach' : 'Align'} · ${round.status}${round.error ? ` · ${round.error}` : ''}`, round.error ? 'error' : 'info', 'Calibration');
+      }
+    }
+    roundStatus.current = next;
+  }, [rounds, props.onLog]);
   const disabled = pending || !settings || !draft || props.reasons.length > 0;
   return <section className="fetch-test" aria-label="Grasp calibration test">
     <div className="section-divider" /><h3 className="subheading">GRASP TEST</h3>
-    <span className="muted">Item: {props.itemName || 'Select an item above'} · Align accepts J1 75–105° near the object. No map-pose confirmation needed for this local test.</span>
+    {props.itemName && <span className="muted">{props.itemName}</span>}
+    <details className="control-details"><summary>Calibration settings</summary><div className="control-detail-body">
     {draft && <>
       <div className="goal-inputs">
         <label>Arm X/Y step limit (mm; 0 = full correction)<input type="number" min={0} step={0.1} value={draft.max_step_mm}
@@ -106,8 +120,12 @@ export function FetchTest(props: {
         disabled={!props.editable || pending} onChange={event => setDraft({ ...draft, prompt: event.target.value })} /></label>
       <Button disabled={!props.editable || pending || JSON.stringify(draft) === JSON.stringify(settings?.values)} onClick={() => void save()}>Save settings</Button>
     </>}
+    </div></details>
+    <details className="control-details"><summary>Alignment guide</summary><div className="control-detail-body">
+    <span className="muted">Align accepts J1 75–105° near the object. No map-pose confirmation needed for this local test.</span>
     <span className="muted">Shared with Fetch · original-resolution photos. Alignment and rotation tests save edits first.</span>
     <span className="muted">{props.metric ? 'Stage 1: base coarse alignment. Stage 2: reuse the measured scale for this GOAL and height. A new GOAL needs two short X/Y calibration probes. Apply the full remaining X/Y correction in one observation; 0 removes the optional step limit. Physical workspace checks remain active. Model alignment: planar error <1 mm. Controller alignment: full |X| + |Y| <1.25 mm. Missing or ambiguous targets stop.' : 'Stage 1: base coarse alignment. Stage 2: arm X/Y match GOAL using visible bounds: top within 0.5%, horizontal/bottom within 2%, width within 10%, area within 15%. Missing or ambiguous targets stop.'}</span>
+    </div></details>
     <div className="action-line">
       <Button disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(true)}>PREVIEW</Button>
       <Button variant="default" disabled={disabled} title={props.reasons.join('; ')} onClick={() => void save(false)}>ALIGN</Button>
@@ -116,13 +134,12 @@ export function FetchTest(props: {
         onClick={() => void graspTest()}>{props.holdingItemId ? 'PLACE' : 'GRASP'}</Button>
       <Button variant="danger" disabled={!props.connected} onClick={props.stop}>STOP</Button>
     </div>
+    <details className="control-details"><summary>Grasp sequence</summary><div className="control-detail-body">
     <span className="muted">Preview: one coarse-alignment round, no movement. ALIGN first restores ARM GOAL Z within 1 mm, then runs both stages with Z fixed. Gripper stays fixed. Target above GOAL: Y−; below: Y+. Up to 33 observations; no cumulative arm travel cap.</span>
     <span className="muted">{props.graspZ == null ? 'Record the item grasp Z first.' : `Saved grasp Z ${props.graspZ.toFixed(1)} mm.`} First click: lower, clamp, lift and hold. Click PLACE separately to lower, release and raise. X/Y stay fixed.</span>
-    <span className="muted" role="status">{pending ? 'Submitting…' : props.status}</span>
-    {props.reasons.length > 0 && <span className="muted">Test needs: {props.reasons.join('; ')}</span>}
-    {error && <span role="alert" className="muted">{error}</span>}
-    <span className="subheading">ALIGNMENT ROUNDS</span>
-    {!rounds.length && <span className="muted">No requests yet. Latest task only; STOP clears logs.</span>}
+    </div></details>
+    {props.reasons.length > 0 && <details className="control-details"><summary>Test requirements</summary><p className="muted">{props.reasons.join('; ')}</p></details>}
+    <details className="control-details"><summary>Alignment details · {rounds.length} rounds</summary><div className="control-detail-body">
     {rounds.map(round => {
       const parts = round.messages?.[1].content ?? [];
       return <article className="fetch-round" key={round.id}>
@@ -137,7 +154,7 @@ export function FetchTest(props: {
         {round.correction && <span>Suggestion: arm X {round.correction.X} mm · Y {round.correction.Y ?? 0} mm · base {round.correction.turn_deg}° (positive = clockwise)</span>}
         {round.base_command && <span>Base suggestion: forward {(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
         {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}
-        <span className="muted">Request log; movement completion appears in TASK. History labels show previously executed commands.</span>
+        <span className="muted">Request history · movement completion appears in LOG.</span>
         {round.error && <span role="alert" className="muted">{round.error}</span>}
         <div className="fetch-log-images">{round.measured_images?.map(view => <figure key={view.label}>
           <MeasuredPhoto src={view.image} alt={view.label} bounds={view.bounds} /><figcaption>{view.label}{view.bounds && ` · ${view.bounds.join(', ')}`}</figcaption>
@@ -148,5 +165,6 @@ export function FetchTest(props: {
         {round.messages && <details><summary>Sent prompt & item</summary><pre>{round.messages[0].content}</pre><pre>{parts[0]?.text}</pre></details>}
       </article>;
     })}
+    </div></details>
   </section>;
 }

@@ -11,6 +11,8 @@ import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
 import { HardwareControls, MapUpdateControls, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { FetchTest } from './FetchTest';
+import { LogPanel } from './LogPanel';
+import { appendLog, type LogEntry, type LogReporter } from './activityLog';
 import { loadPhotoSelection, savePhotoSelection } from './photoSelection';
 import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight, type Divider, type Tile } from './layout';
 
@@ -53,6 +55,11 @@ export function App() {
   const [saveError, setSaveError] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const log: LogReporter = useCallback((message, level = 'info', source = 'System') => {
+    setLogs(entries => appendLog(entries, message, level, source));
+  }, []);
+  const reportError = useCallback((message: string) => { setError(message); log(message, 'error'); }, [log]);
   const [drawing, setDrawing] = useState(false);
   const [draft, setDraft] = useState<Point[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -108,6 +115,8 @@ export function App() {
   const costmapReady = navigation?.costmap.ready && navigation.costmap.applied_zone_revision === zones?.revision;
   const selectedPhoto = photos?.photos.find(p => p.id === selectedPhotoId) ?? null;
   const locationPhotos = photos?.photos.filter(p => p.kind === 'observation' && p.map_id === packet?.info.map_id && p.current !== false) ?? [];
+  const locationStatus = locationPhotos.some(p => p.location_analysis?.status === 'running' || p.location_analysis?.status === 'queued') ? 'Estimating item positions…'
+    : locationPhotos.some(p => p.location_analysis?.status === 'error') ? 'Position estimation failed; retry in Map actions.' : '';
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
   const selectedLocation = photos?.locations?.find(location => location.item_id === selectedItemId);
   const approachReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)),
@@ -125,6 +134,20 @@ export function App() {
     ...(selectedItem?.calibration_z_mm !== undefined && selectedItem.grasp_z_mm !== undefined && selectedItem.calibration_z_mm <= selectedItem.grasp_z_mm + 1 ? ['Calibration GOAL must be above grasp height'] : []),
     ...(!state?.hardware?.map_fetch_available ? ['Restart robot controller to enable map-guided Fetch'] : []),
     ...(!state?.cameras?.arm ? ['Arm camera unavailable'] : [])];
+
+  useEffect(() => {
+    if (connected && navigation?.status) log(navigation.status, state?.phase === 'fault' ? 'error' : 'info', 'Task');
+  }, [connected, navigation?.status, state?.phase, log]);
+  useEffect(() => { if (locationStatus) log(locationStatus, locationStatus.includes('failed') ? 'error' : 'info', 'Map'); }, [locationStatus, log]);
+  useEffect(() => {
+    if (state?.hardware?.map_save_error) log(`Map save failed: ${state.hardware.map_save_error}`, 'error', 'Map');
+    else if (state?.hardware?.saved_map_revision) log(`Map saved · revision ${state.hardware.saved_map_revision}`, 'info', 'Map');
+  }, [state?.hardware?.map_save_error, state?.hardware?.saved_map_revision, log]);
+  const update = state?.hardware?.map_update;
+  const updateStatus = update ? `${update.state === 'planned' ? 'Item views planned' : state?.phase === 'update_paused' ? 'Item updates paused' : update.active ? 'Updating item positions' : 'Item updates interrupted'} · round ${update.round} · ${update.completed}/${update.goals.length} views · ${update.captures} captures` : '';
+  useEffect(() => { if (updateStatus) log(updateStatus, 'info', 'Map'); }, [updateStatus, log]);
+  useEffect(() => { if (saveError) log(saveError, 'error', 'Settings'); }, [saveError, log]);
+  useEffect(() => { if (layoutError) log(layoutError, 'error', 'Layout'); }, [layoutError, log]);
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
@@ -182,7 +205,7 @@ export function App() {
         await reload();
         if (disposed) return;
         socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/events`);
-        socket.onopen = () => setConnected(true);
+        socket.onopen = () => { setConnected(true); log('Connected', 'info', 'Connection'); };
         socket.onmessage = event => {
           const message = JSON.parse(event.data) as { type: string; state?: State; session_id?: string; nonce?: string };
           if (message.type === 'lease') {
@@ -193,20 +216,20 @@ export function App() {
           if (message.type === 'lease_ack') { ++leaseAck.current; return; }
           if (message.type === 'telemetry' && message.state) {
             setState(message.state);
-          } else void reload().catch(failure => { setError(failure.message); });
+          } else void reload().catch(failure => { reportError(failure.message); });
         };
         socket.onclose = () => {
           session.current = ''; held.current = null; ++actionEpoch.current;
-          if (!disposed) { resolutionRequest.current?.abort(); setResolution(null); setConnected(false); setDrawing(false); setDraft([]); timer = setTimeout(connect, 1500); }
+          if (!disposed) { resolutionRequest.current?.abort(); setResolution(null); setConnected(false); setDrawing(false); setDraft([]); log('Disconnected; reconnecting…', 'error', 'Connection'); timer = setTimeout(connect, 1500); }
         };
         socket.onerror = () => socket?.close();
       } catch (failure) {
-        if (!disposed) { setConnected(false); setError((failure as Error).message); timer = setTimeout(connect, 1500); }
+        if (!disposed) { setConnected(false); reportError((failure as Error).message); timer = setTimeout(connect, 1500); }
       }
     };
     void connect();
     return () => { disposed = true; clearTimeout(timer); socket?.close(); ++generation.current; };
-  }, [reload]);
+  }, [reload, log, reportError]);
 
   useEffect(() => {
     const release = () => {
@@ -278,12 +301,13 @@ export function App() {
         const response = await api<Settings>('/api/settings', { method: 'PUT',
           body: JSON.stringify({ expected_revision: savedSettings.revision, values: settingsDraft }) });
         setSavedSettings(response);
+        log('Settings saved', 'info', 'Settings');
         await reload();
       } catch (failure) { setSaveError((failure as Error).message); }
       finally { setSettingsSaving(false); }
     }, 400);
     return () => clearTimeout(timer);
-  }, [settingsDirty, savedSettings, settingsDraft, canEdit, settingsSaving, saveError, angleValid, reload]);
+  }, [settingsDirty, savedSettings, settingsDraft, canEdit, settingsSaving, saveError, angleValid, reload, log]);
   async function controlReady(timeoutMs = 5000) {
     if (hardwareMode.current) await waitForControlLease(() => ({ ack: leaseAck.current, epoch: actionEpoch.current, visible: !document.hidden }), timeoutMs);
   }
@@ -296,7 +320,8 @@ export function App() {
         body: JSON.stringify({ id: commandId(), type, session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision,
           ...(type === 'zone_add' ? { corners: rectangleCorners(draft[0], draft[1], packet.info.display.origin) } : { zone_id: selected }) }) });
       setZones(result.zones); setDraft([]); setDrawing(false); setSelected(null);
-    } catch (failure) { setError((failure as Error).message); await reload().catch(() => {}); }
+      log(type === 'zone_add' ? 'No-go zone saved' : 'No-go zone deleted', 'info', 'Map');
+    } catch (failure) { reportError((failure as Error).message); await reload().catch(() => {}); }
     finally { setBusy(false); }
   }
   async function hardwareCommand(type: string, values: Record<string, unknown> = {}) {
@@ -307,11 +332,14 @@ export function App() {
       if (type === 'manual' && !held.current) return;
       await api('/api/commands', { method: 'POST', body: JSON.stringify({ ...values,
         type, id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision }) });
+      if (type !== 'manual') log(`Accepted · ${type.replaceAll('_', ' ')}`, 'info', 'Action');
       if (type === 'teach' || type === 'transport_record' || type === 'reset_map') await reload();
     } catch (failure) {
       // Releasing a manual button aborts its pending start; a newer hold may already exist.
       if (type === 'manual' && session.current && failure instanceof DOMException && failure.name === 'AbortError') return;
-      held.current = null; setError((failure as Error).message); if (type === 'reset_map' || type === 'fetch_test' || type === 'fetch_turn_test' || type === 'grasp_test') throw failure;
+      held.current = null;
+      if (type === 'fetch_test' || type === 'fetch_turn_test' || type === 'grasp_test') throw failure;
+      reportError((failure as Error).message); if (type === 'reset_map') throw failure;
     }
   }
   async function saveObservationPoints(points: ObservationPoint[], selectId: string | null = selectedPointId) {
@@ -323,8 +351,9 @@ export function App() {
       }) });
       if (previousMap.current.startsWith(`${saved.map_id}:`)) {
         setObservationPoints(saved); setSelectedPointId(selectId);
+        log(`Observation points saved · ${saved.points.length} views`, 'info', 'Map');
       }
-    } catch (failure) { setError((failure as Error).message); void reload().catch(() => {}); }
+    } catch (failure) { reportError((failure as Error).message); void reload().catch(() => {}); }
     finally { setPointsSaving(false); }
   }
   async function stop() {
@@ -332,8 +361,9 @@ export function App() {
     held.current = null;
     resolutionRequest.current?.abort(); setResolution(null);
     setDrawing(false); setDraft([]); setLayoutEditing(false);
+    log('STOP requested', 'info', 'Action');
     try { await api('/api/stop', { method: 'POST' }); await reload(); }
-    catch (failure) { setError((failure as Error).message); }
+    catch (failure) { reportError((failure as Error).message); }
   }
   async function simulationCommand(type: 'navigate' | 'cancel' | 'demo_reset') {
     if (!zones || !packet || !connected || (type !== 'cancel' && !canEdit)) return;
@@ -343,8 +373,9 @@ export function App() {
       await api('/api/commands', { method: 'POST',
         body: JSON.stringify({ id: commandId(), type, session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id,
           frame: packet.info.frame, expected_revision: zones.revision, ...(type === 'navigate' ? { goal } : {}) }) });
+      log(type === 'navigate' ? 'Navigation accepted' : type === 'cancel' ? 'Cancel accepted' : 'Demo pose reset', 'info', 'Action');
       if (type === 'demo_reset') { setGoalText(['', '', '0']); setFocusRobotVersion(v => v + 1); }
-    } catch (failure) { setError((failure as Error).message); }
+    } catch (failure) { reportError((failure as Error).message); }
     finally { await reload().catch(() => {}); setBusy(false); }
   }
   function previewGoal(point: Point) {
@@ -372,7 +403,7 @@ export function App() {
           expected_revision: photos.revision, zone_revision: zones.revision }) });
       if (epoch !== actionEpoch.current || !previousMap.current.startsWith(`${result.map_id}:`)) return;
       setGoalText([result.goal.x_m.toFixed(3), result.goal.y_m.toFixed(3), (result.goal.yaw_rad * 180 / Math.PI).toFixed(1)]);
-    } catch (failure) { setError((failure as Error).message); }
+    } catch (failure) { reportError((failure as Error).message); }
     finally { setBusy(false); }
   }
   async function estimatePositions() {
@@ -382,7 +413,8 @@ export function App() {
       const index = await api<PhotoIndex>('/api/item-locations/estimate', { method: 'POST',
         body: JSON.stringify({ map_id: packet.info.map_id, expected_revision: photos.revision }) });
       setPhotos(index);
-    } catch (failure) { setError((failure as Error).message); }
+      log('Position estimation requested', 'info', 'Map');
+    } catch (failure) { reportError((failure as Error).message); }
     finally { setBusy(false); }
   }
   function updateRequest(text: string) { setRequestText(text); setResolution(null); setGoalText(['', '', '0']); }
@@ -395,10 +427,11 @@ export function App() {
         body: JSON.stringify({ text: requestText.trim(), map_id: packet.info.map_id, expected_revision: photos.revision }) });
       if (controller.signal.aborted || `${result.map_id}:${result.index_revision}:${result.settings_revision}` !== resolutionContext.current) return;
       setResolution(result); setSelected(null);
+      log(result.status === 'not_found' ? 'No matching item' : result.status === 'ambiguous' ? 'Choose a matching item in OPERATE' : result.blocked_reason ?? (result.target_source === 'estimated' ? 'Estimated approach selected; use Go' : 'Target selected'), 'info', 'Request');
       const id = result.status === 'matched' ? result.item_ids[0] : '';
       setSelectedItemId(id); setSelectedPhotoId(result.photo_id ?? photos.photos.find(p => p.item_id === id)?.id ?? null);
       if (result.goal) setGoalText([String(result.goal.x_m), String(result.goal.y_m), String(result.goal.yaw_rad * 180 / Math.PI)]);
-    } catch (failure) { if (!controller.signal.aborted) setError((failure as Error).message); }
+    } catch (failure) { if (!controller.signal.aborted) reportError((failure as Error).message); }
     finally { if (resolutionRequest.current === controller) { resolutionRequest.current = null; setBusy(false); } }
   }
   useEffect(() => {
@@ -416,6 +449,7 @@ export function App() {
 
   function photoChanged(index: PhotoIndex, addedId?: string) {
     setPhotos(index);
+    log(addedId ? 'Photo added' : 'Item photos updated', 'info', 'Photo');
     const id = addedId ?? selectedPhotoId;
     setSelectedPhotoId(id);
     setSelectedItemId(index.photos.find(p => p.id === id)?.item_id ?? '');
@@ -429,7 +463,7 @@ export function App() {
       const result = await api<PhotoIndex & { added_id: string }>('/api/photos/capture', { method: 'POST',
         body: JSON.stringify({ id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, camera_id, map_id: packet.info.map_id, expected_revision: photos.revision, zone_revision: zones?.revision }) });
       photoChanged(result, result.added_id);
-    } catch (failure) { setError((failure as Error).message); await reload().catch(() => {}); }
+    } catch (failure) { reportError((failure as Error).message); await reload().catch(() => {}); }
     finally { setBusy(false); }
   }
   function storedCamera(camera: 'front' | 'arm') {
@@ -512,10 +546,10 @@ export function App() {
       <BatteryStatus />
       <Button variant="danger" onClick={() => void stop()} className="stop">STOP</Button>
     </header>
-    {error && <div role="alert" className="error-bar"><span>{error}</span></div>}
     <div className="workspace" ref={workspaceHost}>
     <main className={`grid-stack ${layoutEditing ? 'layout-editing' : ''}`} ref={gridHost}>
       {panel('map', <>
+        <LogPanel entries={logs} onClear={() => setLogs([])} />
         <div className="map-tools">
           {state?.demo === false && <label className="muted obstacle-filter"><span>Filter small obstacles · {Math.round((obstacleSize ?? state.hardware?.small_obstacle_m ?? .15)*100)} cm</span>
             <input aria-label="Filter small obstacles" type="range" min="0" max="0.5" step="0.01"
@@ -524,7 +558,7 @@ export function App() {
               onPointerUp={e => { void hardwareCommand('obstacle_filter', { minimum_m: Number(e.currentTarget.value) }); }}
               onKeyUp={e => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) void hardwareCommand('obstacle_filter', { minimum_m: Number(e.currentTarget.value) }); }} />
           </label>}
-          {(drawing || !state?.hardware?.mapping_mode) && <span className="muted">{drawing ? draft.length < 2 ? 'Select two corners' : 'Preview' : state?.demo === false ? 'Saved ROS map' : 'Demo map'}</span>}
+          {drawing && <span className="muted">{draft.length < 2 ? 'Select two corners' : 'Preview'}</span>}
           <div className="toolbar-actions">
             {state?.demo === false && <Button disabled={!canEdit || busy} onClick={() => setResetMapOpen(true)}><RotateCcw size={14} /> Reset map</Button>}
             {drawing && <><Button variant="default" disabled={draft.length !== 2 || busy || !canEdit} onClick={() => void command('zone_add')}>Save</Button>
@@ -550,12 +584,8 @@ export function App() {
           observationPoints={visiblePoints} selectedPointId={selectedPointId} onPoint={setSelectedPointId}
           locations={photos?.locations ?? []} onLocation={location => void selectLocation(location)}
           onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
-        {locationPhotos.some(p => p.location_analysis?.status === 'running' || p.location_analysis?.status === 'queued') &&
-          <span className="muted location-status" role="status">Estimating item positions…</span>}
-        {locationPhotos.some(p => p.location_analysis?.status === 'error') &&
-          <span className="muted location-status" role="status">Position estimation failed; retry in Map actions.</span>}
         {state?.demo === false && selectedLocation && <div className="action-line location-status">
-          <span className="muted">{selectedLocation.name} · Go to the observation point, then refine · max 16 rounds.</span>
+          <span className="muted">{selectedLocation.name}</span>
           <Button disabled={approachReasons.length > 0} title={approachReasons.join('; ')} onClick={() => void hardwareCommand('approach_item', {
             item_id: selectedItemId, index_revision: photos?.revision,
           })}>Refine approach</Button>
@@ -585,9 +615,9 @@ export function App() {
             onClick={() => updateRequest(REQUEST_EXAMPLES[Math.floor(Math.random() * REQUEST_EXAMPLES.length)])}><Dice5 size={16} /></Button>
         </form>
         {state?.llm?.status !== 'configured' && <span className="muted">LLM {state?.llm?.status === 'unavailable' ? 'unavailable' : 'not configured'}</span>}
-        {resolution && <div role="status" className="resolution-result">
-          <span className="muted">{resolution.status === 'not_found' ? 'No matching item' : resolution.status === 'ambiguous' ? 'Choose item' : resolution.blocked_reason ?? (resolution.target_source === 'estimated' ? 'Estimated approach selected; use Go' : 'Target selected')}</span>
-          {resolution.status === 'ambiguous' && <div className="candidate-list">{resolution.item_ids.map(id => <Button key={id} disabled={!canEdit || busy} onClick={() => selectItem(id)}>{photos?.items.find(i => i.id === id)?.name}</Button>)}</div>}
+        {resolution?.status === 'ambiguous' && <div className="resolution-result">
+          <span className="muted">Choose item</span>
+          <div className="candidate-list">{resolution.item_ids.map(id => <Button key={id} disabled={!canEdit || busy} onClick={() => selectItem(id)}>{photos?.items.find(i => i.id === id)?.name}</Button>)}</div>
         </div>}
         <label className="subheading" htmlFor="item-select">ITEM</label>
         <div className="request-row">
@@ -626,10 +656,10 @@ export function App() {
             onClick={() => void hardwareCommand('fetch', { item_id: selectedItemId, index_revision: photos?.revision })}><Hand size={16} /> Fetch</Button>
           </>}
           <Button disabled={!connected || state?.phase === 'idle'} onClick={() => void simulationCommand('cancel')}>Cancel</Button></div>
-        {state?.demo === false && <div className="muted" role="status">
-          {goReasons.length > 0 && <p>Go needs: {goReasons.join('; ')}.</p>}
-          {fetchReasons.length > 0 && <p>Fetch needs: {fetchReasons.join('; ')}.</p>}
-        </div>}
+        {state?.demo === false && (goReasons.length > 0 || fetchReasons.length > 0) && <details className="control-details"><summary>Motion requirements</summary><div className="muted">
+          {goReasons.length > 0 && <p>Go: {goReasons.join('; ')}.</p>}
+          {fetchReasons.length > 0 && <p>Fetch: {fetchReasons.join('; ')}.</p>}
+        </div></details>}
         <div className="section-divider" />
         <span className="subheading">NO-GO ZONES</span>
         <div className="zone-list">{zones?.zones.length ? zones.zones.map((zone, i) => <button key={zone.id}
@@ -638,10 +668,9 @@ export function App() {
         </button>) : <span className="muted">None</span>}</div>
         <span className="muted enforcement">{state?.demo === false ? costmapReady ? 'ROS global + local no-go applied' : 'ROS no-go enforcement pending' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
         {state?.demo === false && <HardwareControls stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
-        <div className="section-divider" /><span className="subheading">TASK</span><span className="muted" role="status">{connected ? navigation?.status ?? 'Loading…' : 'Offline'}</span>
         <FetchTest metric={state?.llm?.model.startsWith('codex-local/')} connected={connected} editable={canEdit && !busy} turnEnabled={state?.demo === false && Boolean(state?.hardware?.localized)} itemId={selectedItemId} itemName={selectedItem?.name}
           indexRevision={photos?.revision} graspZ={selectedItem?.grasp_z_mm} holdingItemId={state?.hardware?.grasp_test_item_id}
-          graspToggleAvailable={state?.hardware?.grasp_test_toggle_available} command={hardwareCommand} stop={() => void stop()} status={navigation?.status}
+          graspToggleAvailable={state?.hardware?.grasp_test_toggle_available} command={hardwareCommand} stop={() => void stop()} onLog={log}
           reasons={[
             ...(!connected ? ['Reconnect to the robot'] : state?.phase !== 'idle' ? [`Robot busy (${state?.phase}); wait for completion`] : busy ? ['Wait for the current operation'] : []),
             ...(state?.demo !== false ? ['Live hardware required'] : []),
@@ -659,7 +688,7 @@ export function App() {
           : state?.phase === 'fault' ? 'In OPERATE, verify stopped hardware and clear the fault, then confirm Already homed.'
           : state?.phase !== 'idle' ? 'Finish or stop the current action before recording.'
           : !state?.hardware?.arm_available ? 'P340 feedback unavailable; reconnect the arm.' : ''}
-        onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}</div>)}
+        onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} onLog={log} />}</div>)}
     </main>
     <div className="panel-dividers">
       {!maximized && dividers(layout).map(seam => {
