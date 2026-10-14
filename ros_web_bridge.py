@@ -37,19 +37,23 @@ def main():
 
     def capture(camera_id, persist=True, update_key=None, vision=False, grasp_goal=False, teleop_observation=False):
         if (camera_id not in ('front', 'arm') or not robot.grid
-                or (not control.localized and not (vision and update_key is None))):
+                or (not control.localized and not grasp_goal and not (vision and update_key is None))):
             raise ValueError('Camera and confirmed localization required')
         robot.nav.wait_stopped()
         if teleop_observation and control.phase != 'teleop':
             raise RuntimeError('TELEOP camera session changed')
-        # TELEOP owns the serial port; observation capture must never open or command it.
-        before = wait_arm(control.arm, timeout=3) if camera_id == 'arm' and control.arm and not teleop_observation else None
+        # TELEOP owns serial; its main loop supplies feedback while motion keys are paused.
+        teleop_before = control.teleop_feedback() if camera_id == 'arm' and teleop_observation else None
+        before = teleop_before['angles'] if teleop_before else wait_arm(control.arm, timeout=3) if camera_id == 'arm' and control.arm else None
         if camera_id == 'arm' and before is None and not teleop_observation:
             raise RuntimeError('Arm feedback required for acquisition')
         goal_z = None
-        if camera_id == 'arm' and grasp_goal and not teleop_observation:
-            with arm_deadline(.4):
-                coords = control.arm.get_coords_info()
+        if camera_id == 'arm' and grasp_goal:
+            if teleop_before:
+                coords = teleop_before['coords']
+            else:
+                with arm_deadline(.4):
+                    coords = control.arm.get_coords_info()
             if not coords or len(coords) < 3:
                 raise RuntimeError('Arm coordinate feedback unavailable')
             goal_z = number(coords[2], LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Calibration GOAL Z')
@@ -67,13 +71,17 @@ def main():
         if not robot.stopped() or metadata['map_id'] != robot.grid['map_id']:
             raise RuntimeError('Robot or map changed during acquisition')
         if before is not None:
-            after = control.read_arm()
+            teleop_after = control.teleop_feedback(after_s=metadata['captured_at_s']) if teleop_before else None
+            after = teleop_after['angles'] if teleop_after else control.read_arm()
             if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
                 raise RuntimeError('Arm moved during acquisition')
             metadata = dict(metadata, arm_angles_deg=after)
         if goal_z is not None:
-            with arm_deadline(.4):
-                coords = control.arm.get_coords_info()
+            if teleop_before:
+                coords = teleop_after['coords']
+            else:
+                with arm_deadline(.4):
+                    coords = control.arm.get_coords_info()
             if not coords or len(coords) < 3:
                 raise RuntimeError('Arm coordinate feedback unavailable')
             after_z = number(coords[2], LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Arm Z feedback')

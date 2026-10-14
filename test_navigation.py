@@ -398,7 +398,7 @@ class FetchTest(unittest.TestCase):
                 fetch_demo.parse_args(["cup", "--p340-port", "unused"] + extra)
 
     def test_side_pickup_or_invalid_transport_refused_before_motion(self):
-        for station, transport in ((dict(STATION, arm_angles_deg=[75, 20, 30]), [0, 10, 10]),
+        for station, transport in ((dict(STATION, arm_angles_deg=[74, 20, 30]), [0, 10, 10]),
                                    (STATION, [200, 10, 10])):
             nav, arm = Mock(), Mock()
             with self.assertRaisesRegex(ValueError, "J1"):

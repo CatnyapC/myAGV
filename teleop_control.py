@@ -15,7 +15,9 @@ import tty
 import uuid
 
 from P340 import keyboard_control as arm_keys
-from navigation import Navigation, STATIONS, arm_deadline, save_station, wait_arm
+from navigation import Navigation, STATIONS, arm_deadline, save_station, validate_angles, wait_arm
+from robot_safety import number
+from web_backend.storage import atomic_json
 
 
 HELP = """
@@ -34,7 +36,7 @@ Ctrl-C: quit. Hold/repeat motion keys; inactivity stops motion.
 
 
 class Controller:
-    def __init__(self, publisher, arm, bindings, args):
+    def __init__(self, publisher, arm, bindings, args, observation_directory=None):
         self.publisher, self.arm, self.bindings = publisher, arm, bindings
         self.args = args
         self.mode = "BASE"
@@ -44,6 +46,54 @@ class Controller:
         self.last_poll = 0.0
         self.base_moving = False
         self.record = None
+        self.observation_directory = observation_directory
+        self.observation_id, self.last_observation = None, 0
+        self.observation_error = None
+
+    def observe(self):
+        if self.observation_directory is None:
+            return False
+        try:
+            request = json.loads((self.observation_directory / 'teleop_capture_request.json').read_text())
+        except (OSError, ValueError):
+            return False
+        if (not isinstance(request, dict) or request.get('pid') != os.getpid()
+                or not isinstance(request.get('id'), str)
+                or type(request.get('expires_at_s')) not in (int, float)
+                or not 0 < request['expires_at_s'] - time.time() <= 12):
+            return False
+        new = self.observation_id != request['id']
+        if new:
+            self.stop()
+            self.observation_id = request['id']
+            self.observation_error = None
+            print('WebUI recording: motion paused until capture finishes', flush=True)
+        if not new and time.monotonic() - self.last_observation < .2:
+            return True
+        feedback = dict(id=request['id'], pid=os.getpid())
+        try:
+            if self.observation_error:
+                raise RuntimeError(self.observation_error)
+            if not self.arm_homed:
+                raise ValueError('Home arm in TELEOP before recording, or start with --arm-homed if already homed')
+            angles = wait_arm(self.arm, timeout=3) if new else None
+            with arm_deadline(self.args.arm_timeout):
+                if angles is None:
+                    angles = validate_angles(self.arm.get_angles_info())
+                coords = self.arm.get_coords_info()
+            if not coords or len(coords) < 3:
+                raise RuntimeError('Arm coordinate feedback unavailable')
+            coords = [number(v, *arm_keys.LIMITS[a], 'Arm coordinate feedback') for a, v in zip('XYZ', coords[:3])]
+            feedback.update(angles=angles, coords=coords, arm_homed=True)
+        except Exception as exc:
+            feedback['error'] = self.observation_error = str(exc)
+        feedback['stamp_s'] = time.time()
+        try:
+            atomic_json(self.observation_directory / 'teleop_capture_feedback.json', feedback)
+        except OSError:
+            pass  # The request expires; missing feedback fails the recording, not terminal control.
+        self.last_observation = time.monotonic()
+        return True
 
     def stop(self):
         self.publisher.update(0, 0, 0, 0, 0, 0)
@@ -184,8 +234,9 @@ def keyboard_loop(controller, read_key, is_shutdown):
         while not is_shutdown():
             key = read_key(0.05)
             now = time.monotonic()
+            observing = controller.observe()
             if key is not None:
-                if key == "" or not controller.handle(key, now):
+                if key in ("", "\x03") or (not observing and not controller.handle(key, now)):
                     break
             controller.tick(time.monotonic())
     finally:
@@ -239,7 +290,7 @@ def parse_args(argv=None):
     return args
 
 
-def web_handoff(active):
+def web_handoff(active, arm_homed=False):
     path = Path(os.environ.get('MYAGV_HARDWARE_DIR', Path(__file__).parent / 'web_runtime' / 'ros')) / 'control.sock'
     if not path.exists():
         return False
@@ -256,14 +307,14 @@ def web_handoff(active):
         return reply
 
     command_id = str(uuid.uuid4())
-    reply = rpc(dict(op='teleop', active=active, pid=os.getpid(), id=command_id))
+    reply = rpc(dict(op='teleop', active=active, pid=os.getpid(), id=command_id, arm_homed=arm_homed))
     end = time.monotonic() + 10
     while reply['status'] in ('accepted', 'pending') and time.monotonic() < end:
         time.sleep(.05)
         reply = rpc(dict(op='result', id=command_id))
     if reply['status'] != 'completed':
         raise RuntimeError(reply.get('error', 'WebUI hardware handoff timed out'))
-    print('WebUI hardware ' + ('released to TELEOP' if active else 'returned; verify stopped in WebUI'))
+    print('WebUI hardware ' + ('released to TELEOP' if active else 'returned; stopped feedback verified'))
     return True
 
 
@@ -298,7 +349,8 @@ def main():
         with arm_deadline():
             arm = arm_keys.ultraArmP340(args.p340_port, 115200)
             arm._serial_port.exclusive = True
-        controller = Controller(publisher, arm, upstream.moveBindings, args)
+        observation_directory = Path(os.environ.get('MYAGV_HARDWARE_DIR', Path(__file__).parent / 'web_runtime' / 'ros')) if handed_off else None
+        controller = Controller(publisher, arm, upstream.moveBindings, args, observation_directory)
         nav = None
 
         def ask_name():
@@ -338,7 +390,7 @@ def main():
                 if arm is not None:
                     arm.close()
                 if handed_off:
-                    web_handoff(False)
+                    web_handoff(False, arm_homed=controller.arm_homed if controller is not None else False)
             finally:
                 termios.tcsetattr(sys.stdin, termios.TCSADRAIN, settings)
 

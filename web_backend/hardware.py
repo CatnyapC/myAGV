@@ -98,7 +98,7 @@ class Hardware:
         if not self.control or not self.fresh(self.control.get('stamp_s'), 1):
             raise RuntimeError('Hardware controller unavailable')
         manual = data.get('type') == 'manual'
-        observation = self.control['phase'] == 'teleop' and data.get('type') == 'capture_grasp_goal'
+        observation = self.control['phase'] == 'teleop' and data.get('type') in ('capture_grasp_goal', 'capture_grasp_height')
         if not 0 <= time.monotonic() - state.get('ack', 0) <= (.3 if manual else 5):
             raise ValueError('Control heartbeat missing or stale; keep this page visible and retry')
         if not observation and self.control['phase'] not in ('idle', 'fault') and self.owner != data.get('session_id'):

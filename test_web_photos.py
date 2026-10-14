@@ -171,11 +171,6 @@ class PhotoAPITest(unittest.IsolatedAsyncioTestCase):
                 hardware.control['phase'] = 'teleop'
                 response = await client.post('/api/items/grasp-goal', json=dict(item_id=item_id,
                     map_id=grid['map_id'], expected_revision=height['revision'], zone_revision=app[EDITOR].zones['revision']))
-                self.assertEqual(response.status, 400)
-                self.assertIn('Exit TELEOP', await response.text())
-                hardware.control['phase'] = 'idle'
-                response = await client.post('/api/items/grasp-goal', json=dict(item_id=item_id,
-                    map_id=grid['map_id'], expected_revision=height['revision'], zone_revision=app[EDITOR].zones['revision']))
                 self.assertEqual(response.status, 200, await response.text())
                 result = await response.json()
                 item = result['items'][0]

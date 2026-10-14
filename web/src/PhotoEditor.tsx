@@ -110,7 +110,7 @@ export function PhotoEditor(props: {
   const stationNeedsConfirmation = Boolean(station) && (editingItem?.station_link?.name !== station || editingItem?.station_status !== 'ready');
   const recordReason = props.goalCaptureReason || (!props.enabled ? 'Photo editing is unavailable.' : busy ? 'Wait for the current request.'
     : !name.trim() ? 'Enter the item name.' : stationNeedsConfirmation && !stationConfirmed ? 'Confirm the station association above.' : '');
-  const goalReason = recordReason || (!props.heightCaptureEnabled ? 'Exit TELEOP; GOAL recording needs an idle, homed arm with Z feedback.'
+  const goalReason = recordReason || (!props.heightCaptureEnabled ? 'GOAL recording needs a homed arm with Z feedback.'
     : editingItem?.grasp_z_mm == null ? 'Save the current grasp Z first.' : '');
   return <section className="photo-page" aria-label={photo ? 'Edit item' : 'Import item photo'}>
       <header className="photo-page-header">
@@ -142,8 +142,8 @@ export function PhotoEditor(props: {
               <label className="setting-row">Confirm station<input type="checkbox" checked={stationConfirmed} disabled={!props.enabled || busy} onChange={e => setStationConfirmed(e.target.checked)} /></label></>}
             {editingItem && !['ready', 'none'].includes(editingItem.station_status) && <span className="muted">Station link {editingItem.station_status}</span>}
             <div className="section-divider" /><span className="subheading">1. GRASP HEIGHT</span>
-            <span className="muted">Manually grasp this item, then record the current arm Z coordinate.</span>
-            <Button disabled={Boolean(recordReason) || !props.heightCaptureEnabled} title={recordReason || (!props.heightCaptureEnabled ? 'Height recording needs WebUI arm feedback.' : '')}
+            <span className="muted">Use TELEOP or WebUI to grasp this item, then record its arm Z. TELEOP stays open; recording briefly pauses motion keys.</span>
+            <Button disabled={Boolean(recordReason) || !props.heightCaptureEnabled} title={recordReason || (!props.heightCaptureEnabled ? 'Height recording needs a homed arm.' : '')}
               onClick={() => void mutate(false, 'height')}>Save current grasp Z</Button>
             <span className="muted">{editingItem?.grasp_z_mm != null ? `Grasp Z saved: ${editingItem.grasp_z_mm.toFixed(1)} mm` : 'Grasp height not recorded yet.'}</span>
             <span className="muted">Release the item and raise the arm above grasp height. Save GOAL at this calibration height. ALIGN and Fetch first restore its saved Z, then align the front view and arm X/Y.</span>

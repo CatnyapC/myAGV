@@ -49,14 +49,23 @@ When the WebUI bridge is running, TELEOP automatically requests exclusive
 hardware ownership before opening the arm or publishing chassis commands.
 Stop active WebUI tasks first. The bridge keeps camera/map monitoring but pauses
 arm access and chassis output until TELEOP exits. Browser blur/disconnect does
-not interrupt TELEOP; explicit WebUI STOP terminates it. After exit, verify
-stopped hardware and reconfirm homing/localization before using WebUI motion.
+not interrupt TELEOP; explicit WebUI STOP terminates it. Normal exit automatically
+verifies stationary chassis and arm feedback before returning WebUI to idle, and
+transfers TELEOP's homing state. Failed verification still requires stop recovery.
+Reconfirm localization before WebUI navigation.
 Only one process may control the P340 port. Close myBlockly and other arm scripts.
 Stop other teleop/navigation velocity publishers before using this controller;
 do not run the old direct-serial chassis `move` commands alongside the ROS driver.
 
 The program starts in BASE mode without moving or homing the arm. It waits for
 a `cmd_vel` subscriber. Use `cmd_vel:=/your/topic` if the chassis topic differs.
+
+WebUI item editing can record grasp Z and both GOAL cameras while TELEOP remains
+open. Home in TELEOP first, or pass `--arm-homed` only when already homed. Recording
+briefly stops motion and pauses movement keys while TELEOP supplies measured arm
+feedback. Ctrl-C still exits. Motion keys resume after recording; the pause expires
+after 12 seconds if the WebUI request is interrupted. Recording needs the current
+map and fresh stationary camera/base feedback, without map-pose confirmation.
 
 ## Keys
 

@@ -622,13 +622,12 @@ export function App() {
       </div>{photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId}
         photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
         index={photos} stations={stations} enabled={canEditPhotos}
-        heightCaptureEnabled={state?.phase === 'idle' && Boolean(state?.hardware?.arm_homed)}
+        heightCaptureEnabled={state?.phase === 'teleop' || (state?.phase === 'idle' && Boolean(state?.hardware?.arm_homed))}
         goalCaptureReason={!connected ? 'Reconnect to the robot.'
-          : state?.phase === 'teleop' ? state.hardware?.localized ? '' : 'Confirm the robot map pose.'
+          : state?.phase === 'teleop' ? ''
           : state?.phase === 'fault' ? 'In OPERATE, verify stopped hardware and clear the fault, then confirm Already homed.'
           : state?.phase !== 'idle' ? 'Finish or stop the current action before recording.'
-          : !state?.hardware?.arm_available ? 'P340 feedback unavailable; reconnect the arm.'
-          : !state.hardware.localized ? 'Confirm the robot map pose in OPERATE.' : ''}
+          : !state?.hardware?.arm_available ? 'P340 feedback unavailable; reconnect the arm.' : ''}
         onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} />}</div>)}
     </main>
     <div className="panel-dividers">

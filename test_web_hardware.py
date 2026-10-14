@@ -22,10 +22,13 @@ class HardwareTest(unittest.IsolatedAsyncioTestCase):
             hardware.owner = 'previous-tab'
             hardware.rpc = AsyncMock(side_effect=[dict(status='accepted'), dict(status='completed', captures={})])
             hardware.stop = AsyncMock()
-            await hardware.command(dict(id='photo', type='capture_grasp_goal', session_id='photo-tab'), wait=True)
-            self.assertEqual(hardware.rpc.call_args_list[0].args[0]['op'], 'observe_goal')
-            self.assertEqual(hardware.owner, 'previous-tab')
-            hardware.stop.assert_not_called()
+            for kind in ('capture_grasp_goal', 'capture_grasp_height'):
+                hardware.rpc.side_effect = [dict(status='accepted'), dict(status='completed')]
+                hardware.rpc.reset_mock()
+                await hardware.command(dict(id='photo', type=kind, session_id='photo-tab'), wait=True)
+                self.assertEqual(hardware.rpc.call_args_list[0].args[0]['op'], 'observe_goal')
+                self.assertEqual(hardware.owner, 'previous-tab')
+                hardware.stop.assert_not_called()
 
     async def test_battery_endpoint_rejects_stale_or_invalid_feedback(self):
         with tempfile.TemporaryDirectory() as directory:

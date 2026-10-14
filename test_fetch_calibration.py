@@ -85,7 +85,9 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         exec(compile(ast.Module(body=[capture], type_ignores=[]), 'ros_web_bridge.py', 'exec'), namespace)
         with self.assertRaisesRegex(RuntimeError, 'standstill check'):
             namespace['capture']('arm', vision=True)
-        for kwargs in ({}, dict(grasp_goal=True), dict(vision=True, update_key='map-update')):
+        with self.assertRaisesRegex(RuntimeError, 'standstill check'):
+            namespace['capture']('arm', grasp_goal=True)
+        for kwargs in ({}, dict(vision=True, update_key='map-update')):
             with self.assertRaisesRegex(ValueError, 'localization'):
                 namespace['capture']('arm', **kwargs)
 
@@ -93,8 +95,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         source = ast.parse(Path('ros_web_bridge.py').read_text())
         main = next(n for n in source.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
         capture = next(n for n in main.body if isinstance(n, ast.FunctionDef) and n.name == 'capture')
-        for after_z in (40.2, 41, float('nan'), None):
-            with self.subTest(after_z=after_z):
+        for teleop, after_z in [(t, z) for t in (False, True) for z in (40.2, 41, float('nan'), None)]:
+            with self.subTest(teleop=teleop, after_z=after_z):
                 arm = Mock()
                 arm.get_coords_info.side_effect = [[0,150,40], [0,150,after_z] if after_z is not None else None]
                 saved = Mock()
@@ -107,15 +109,23 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                     cv2=Mock(), vision_image=Mock(return_value='data:image/jpeg;base64,AQ=='),
                     base64=base64, uuid=uuid, directory=Path('unused'), atomic_bytes=Mock(), atomic_json=saved)
                 namespace['cv2'].imencode.return_value = (True, Mock(tobytes=lambda: b'png'))
+                if teleop:
+                    namespace['control'] = SimpleNamespace(localized=False, phase='teleop', arm=None, read_arm=Mock(),
+                        teleop_feedback=Mock(side_effect=[dict(angles=[90,30,40], coords=[0,150,40]),
+                            dict(angles=[90,30,40], coords=[0,150,after_z] if after_z is not None else None)]))
                 exec(compile(ast.Module(body=[capture], type_ignores=[]), 'ros_web_bridge.py', 'exec'), namespace)
                 if after_z == 40.2:
-                    namespace['capture']('arm', grasp_goal=True)
+                    namespace['capture']('arm', grasp_goal=True, teleop_observation=teleop)
                     self.assertEqual(saved.call_args.args[1]['arm_z_mm'], 40.2)
                     self.assertEqual(saved.call_args.args[1]['arm_angles_deg'], [90,30,40])
                 else:
                     with self.assertRaises((ValueError, RuntimeError)):
-                        namespace['capture']('arm', grasp_goal=True)
+                        namespace['capture']('arm', grasp_goal=True, teleop_observation=teleop)
                     saved.assert_not_called()
+                if teleop:
+                    arm.get_coords_info.assert_not_called()
+                    namespace['control'].read_arm.assert_not_called()
+                    namespace['wait_arm'].assert_not_called()
 
     def test_visual_labels_convert_to_bounded_moves(self):
         for size, step, arm_step in (('large', 2, 10), ('medium', 1, 5), ('small', .5, 1)):

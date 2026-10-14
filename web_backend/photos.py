@@ -332,7 +332,7 @@ class PhotoIndex:
             if not self.image_path(photo_id).is_file() or not self.image_path(photo_id).with_suffix('.jpg').is_file():
                 raise ValueError('Grasp goal images unavailable')
             if camera == 'arm' and 'arm_z_mm' not in photo:
-                raise ValueError('GOAL Z unavailable; exit TELEOP and recapture GOAL with WebUI arm feedback')
+                raise ValueError('GOAL Z unavailable; recapture GOAL with measured arm feedback')
             photo.update(item_id=item_id, association_source='manual')
         item['grasp_goal'] = dict(cameras)
         item.pop('blue_cap_goal', None)

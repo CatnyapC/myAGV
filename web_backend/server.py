@@ -359,8 +359,6 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 raise ValueError('Save the item before recording its grasp goal')
             if not height_only and 'grasp_z_mm' not in item:
                 raise ValueError('Record the grasp height before saving alignment camera views')
-            if not height_only and editor.hardware.control.get('phase') == 'teleop':
-                raise ValueError('Exit TELEOP before recording GOAL Z and camera views')
             if not height_only and len(photos.value['photos']) > 998:
                 raise ValueError('Photo index needs space for both grasp goal images')
             command = {**data, 'type': 'capture_grasp_height' if height_only else 'capture_grasp_goal', 'expected_revision': data['zone_revision']}

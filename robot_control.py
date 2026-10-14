@@ -145,7 +145,8 @@ class Control:
             if active:
                 os.kill(pid, 0)
             self.queue.put_nowait(dict(id=command_id, op='teleop', pid=pid,
-                                       type='teleop_acquire' if active else 'teleop_release', stop_epoch=self.stop_epoch))
+                                       type='teleop_acquire' if active else 'teleop_release', stop_epoch=self.stop_epoch,
+                                       arm_homed=packet.get('arm_homed') is True))
             return dict(status='accepted', id=command_id)
         if packet.get('boot_id') != self.boot_id or not lease_valid(packet.get('deadline'), time.monotonic()):
             raise ValueError('Expired controller session; reconnect and retry explicitly')
@@ -166,15 +167,24 @@ class Control:
             raise ValueError('Stop state changed; refresh and issue a new action')
         command = packet.get('type')
         if kind == 'observe_goal':
-            if command != 'capture_grasp_goal' or self.phase != 'teleop' or self.observing:
+            if command not in ('capture_grasp_goal', 'capture_grasp_height') or self.phase != 'teleop' or self.observing:
                 raise RuntimeError('TELEOP camera capture unavailable or already running')
-            if packet.get('map_id') != (self.robot.grid or {}).get('map_id') or not self.localized:
-                raise ValueError('Current map and localization required')
+            if packet.get('map_id') != (self.robot.grid or {}).get('map_id'):
+                raise ValueError('Current map required')
             self.requests[command_id] = fingerprint
             self.observing = True
 
             def observe():
+                request_path = self.directory / 'teleop_capture_request.json'
                 try:
+                    atomic_json(request_path, dict(id=command_id, pid=self.teleop_pid, expires_at_s=time.time() + 12))
+                    feedback = self.teleop_feedback()
+                    self.robot.nav.wait_stopped()
+                    if self.phase != 'teleop' or self.stop_epoch != packet['stop_epoch']:
+                        raise RuntimeError('TELEOP changed during recording')
+                    if command == 'capture_grasp_height':
+                        self.finish(packet, dict(status='completed', grasp_z_mm=feedback['coords'][2]))
+                        return
                     captures = {}
                     for camera in ('front', 'arm'):
                         if self.phase != 'teleop' or self.stop_epoch != packet['stop_epoch']:
@@ -186,6 +196,7 @@ class Control:
                 except Exception as exc:
                     self.finish(packet, dict(status='failed', error=str(exc)))
                 finally:
+                    request_path.unlink(missing_ok=True)
                     self.observing = False
 
             threading.Thread(target=observe, daemon=True).start()
@@ -301,6 +312,34 @@ class Control:
             self.angles = validate_angles(self.arm.get_angles_info())
         self.arm_stamp = time.monotonic()
         return self.angles
+
+    def teleop_feedback(self, after_s=0):
+        end = time.monotonic() + 4
+        while time.monotonic() < end:
+            if self.phase != 'teleop' or self.teleop_pid is None or self.stop_pending:
+                raise RuntimeError('TELEOP changed during recording')
+            try:
+                request = json.loads((self.directory / 'teleop_capture_request.json').read_text())
+                feedback = json.loads((self.directory / 'teleop_capture_feedback.json').read_text())
+            except (OSError, ValueError):
+                feedback, request = {}, {}
+            expires = request.get('expires_at_s')
+            if (request.get('pid') == self.teleop_pid and type(expires) in (int, float)
+                    and math.isfinite(expires) and 0 < expires - time.time() <= 12
+                    and feedback.get('id') == request.get('id') and feedback.get('pid') == self.teleop_pid
+                    and fresh(feedback.get('stamp_s'), time.time(), 1) and feedback['stamp_s'] >= after_s):
+                if feedback.get('error'):
+                    raise RuntimeError(feedback['error'])
+                if feedback.get('arm_homed') is not True:
+                    raise ValueError('Homed TELEOP arm required for recording')
+                feedback['angles'] = validate_angles(feedback.get('angles'))
+                coords = feedback.get('coords')
+                if not isinstance(coords, list) or len(coords) != 3:
+                    raise ValueError('Measured TELEOP arm coordinates required')
+                feedback['coords'] = [number(v, *LIMITS[a], 'TELEOP arm coordinates') for a, v in zip('XYZ', coords)]
+                return feedback
+            time.sleep(.02)
+        raise TimeoutError('TELEOP feedback unavailable; restart TELEOP with the updated code')
 
     def connect_arm(self):
         from pymycobot.ultraArmP340 import ultraArmP340
@@ -578,7 +617,16 @@ class Control:
             self.arm_error = ''
         elif kind == 'teleop_release':
             self.teleop_pid = None
-            self.phase, self.status = 'fault', 'TELEOP finished; verify stopped hardware before resuming WebUI'
+            self.robot.zero()
+            self.robot.nav.wait_stopped()
+            self.connect_arm()
+            with arm_deadline(.4):
+                self.arm.set_jog_stop()
+            self.angles = wait_arm(self.arm, timeout=3)
+            self.arm_stamp = time.monotonic()
+            self.arm_homed = packet.get('arm_homed') is True
+            self.home_cancelled = False
+            self.phase, self.status = 'idle', 'TELEOP finished; stopped'
         elif kind == 'recover_stop':
             if packet.get('confirmed') is not True:
                 raise ValueError('Physically verify stopped hardware before clearing the fault')

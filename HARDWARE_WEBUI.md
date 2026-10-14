@@ -175,9 +175,13 @@ Save current grasp Z to record only the measured arm Z coordinate, in millimeter
 as `grasp_z_mm` on the item. Then release the item in place, return to OPERATE and
 raise the arm above that height to the alignment position before saving both
 camera views. The item editor explains this clearance step between the buttons.
-New goal capture requires a recorded grasp height. Both recordings need an idle,
-localized robot and homed arm. Exit TELEOP first so WebUI can read arm coordinates
-without sharing its serial port. ARM GOAL stores measured `arm_z_mm` alongside the
+New goal capture requires a recorded grasp height. Both recordings work while
+TELEOP stays open, or with an idle, homed WebUI arm. Map-pose confirmation is not
+required for these recordings. Clicking either recording button asks TELEOP to
+stop motion and pause movement keys for the acquisition. TELEOP's main loop reads
+the arm and supplies fresh, request-specific feedback; WebUI never shares its
+serial port. Keys resume when acquisition finishes (or its 12-second hold expires).
+ARM GOAL stores measured `arm_z_mm` alongside the
 image, with joint and Z stability checks around acquisition. The item exposes that
 photo's height as `calibration_z_mm`. ALIGN and vision-guided Fetch restore this Z
 before any alignment observations or X/Y corrections, preserving current X/Y.
@@ -278,8 +282,11 @@ pauses its chassis output while continuing camera/map monitoring. Active WebUI
 tasks must be stopped first. The terminal owns the hardware until TELEOP exits;
 browser blur or disconnect does not stop terminal control. An explicit WebUI
 STOP terminates TELEOP and leaves motion locked pending measured stop recovery.
-After TELEOP exits, verify stopped hardware in WebUI and reconfirm homing and
-localization. TELEOP also opens the arm with exclusive serial access.
+Normal TELEOP exit returns the serial port, verifies stopped chassis and measured
+arm feedback, then restores idle WebUI control. TELEOP's homing state transfers
+only after that verification. Failed return or unexpected disconnect still locks
+motion for stop recovery. Reconfirm localization before navigation. TELEOP also
+opens the arm with exclusive serial access.
 
 The server sends control challenges every 150 ms. Automatic tasks (Go, Fetch,
 map updates and other commands) accept replies within 5 seconds and have a

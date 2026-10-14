@@ -19,6 +19,7 @@ from install_driver_watchdog import patch as patch_driver
 from robot_control import Control, Stopped
 from robot_ros import RobotROS
 from robot_safety import footprint_clear, lease_valid, manual_vector, zones_visible
+from teleop_control import Controller, parse_args
 from web_backend.hardware import Hardware
 from web_backend.photos import PhotoIndex, demo_frame
 from web_backend.storage import atomic_json
@@ -86,40 +87,48 @@ class ControlTest(unittest.TestCase):
                 self.assertEqual(c.arm_homed, isinstance(feedback, list))
                 self.assertEqual(c.phase, 'idle' if c.arm_homed else 'fault')
 
-    def test_teleop_goal_capture_preserves_control_and_never_uses_arm(self):
+    def test_teleop_recordings_use_owner_feedback_without_claiming_control(self):
         c = fake_control()
         c.phase, c.arm, c.arm_homed, c.deadline = 'teleop', None, False, 0
+        c.localized, c.teleop_pid = False, os.getpid()
         c.capture.return_value = dict(capture_id='frame')
         c.request_stop = Mock()
-        p = packet()
-        p.update(op='observe_goal', type='capture_grasp_goal')
-        self.assertEqual(c.receive(p)['status'], 'accepted')
-        end = time.monotonic()+1
-        while c.observing and time.monotonic()<end:
-            time.sleep(.01)
-        self.assertEqual(c.results[p['id']]['status'], 'completed')
-        self.assertEqual((c.phase, c.owner, c.deadline, c.task_id), ('teleop', None, 0, None))
-        self.assertTrue(c.queue.empty())
-        self.assertEqual(c.capture.call_count, 2)
-        for invocation in c.capture.call_args_list:
-            self.assertEqual(invocation.kwargs, dict(grasp_goal=True, teleop_observation=True))
-        c.capture.side_effect = RuntimeError('Camera missing')
-        p['id'] = str(uuid.uuid4())
-        c.receive(p)
-        end = time.monotonic()+1
-        while c.observing and time.monotonic()<end:
-            time.sleep(.01)
-        self.assertEqual(c.results[p['id']]['status'], 'failed')
-        self.assertEqual(c.phase, 'teleop')
+        with tempfile.TemporaryDirectory() as folder, patch('teleop_control.wait_arm', return_value=[90,30,40]):
+            c.directory = Path(folder)
+            arm = Mock()
+            arm.get_angles_info.return_value = [90,30,40]
+            arm.get_coords_info.return_value = [0,150,42.5]
+            owner = Controller(Mock(), arm, {}, parse_args(['--p340-port','unused','--arm-homed']), c.directory)
+            for kind, error in [('capture_grasp_height', None), ('capture_grasp_goal', None),
+                                ('capture_grasp_goal', RuntimeError('Camera missing'))]:
+                c.capture.side_effect = error
+                p = dict(packet(), op='observe_goal', type=kind)
+                self.assertEqual(c.receive(p)['status'], 'accepted')
+                end = time.monotonic()+2
+                while c.observing and time.monotonic()<end:
+                    owner.observe()
+                    time.sleep(.01)
+                result = c.results[p['id']]
+                self.assertEqual(result['status'], 'failed' if error else 'completed')
+                if kind == 'capture_grasp_height':
+                    self.assertEqual(result['grasp_z_mm'], 42.5)
+                    c.capture.assert_not_called()
+                self.assertFalse((c.directory / 'teleop_capture_request.json').exists())
+                self.assertEqual((c.phase, c.owner, c.deadline, c.task_id), ('teleop', None, 0, None))
+                self.assertTrue(c.queue.empty())
+            for invocation in c.capture.call_args_list:
+                self.assertEqual(invocation.kwargs, dict(grasp_goal=True, teleop_observation=True))
         c.request_stop.assert_not_called()
 
     def test_teleop_handoff_releases_hardware_and_keeps_web_control_locked(self):
         c = fake_control()
         arm = c.arm
         acquire = dict(op='teleop', active=True, pid=os.getpid(), id=str(uuid.uuid4()))
-        release = dict(acquire, active=False, id=str(uuid.uuid4()))
+        release = dict(acquire, active=False, id=str(uuid.uuid4()), arm_homed=True)
         c.receive(acquire)
-        c.connect_arm, c.server = Mock(), Mock()
+        def reconnect():
+            c.arm = arm
+        c.connect_arm, c.server = Mock(side_effect=reconnect), Mock()
         def shutdown():
             if release['id'] in c.results:
                 return True
@@ -141,13 +150,47 @@ class ControlTest(unittest.TestCase):
                 c.receive(release)
             return False
         c.robot.ros = SimpleNamespace(is_shutdown=shutdown)
-        c.run()
-        arm.close.assert_called_once()
+        with patch('robot_control.wait_arm', return_value=[90,30,40]):
+            c.run()
+        self.assertEqual(arm.close.call_count, 2)
         self.assertEqual(c.results[acquire['id']]['status'], 'completed')
         self.assertEqual(c.results[release['id']]['status'], 'completed')
-        self.assertEqual(c.phase, 'fault')
+        self.assertEqual(c.phase, 'idle')
         self.assertIsNone(c.teleop_pid)
+        self.assertTrue(c.arm_homed)
+
+    def test_teleop_return_requires_measured_standstill_and_arm_feedback(self):
+        c = fake_control()
+        c.teleop_pid, c.home_cancelled = 1234, True
+        with patch('robot_control.wait_arm', return_value=[90,30,40]):
+            c.execute(dict(type='teleop_release', arm_homed=False))
+        self.assertEqual(c.phase, 'idle')
         self.assertFalse(c.arm_homed)
+        self.assertFalse(c.home_cancelled)
+        c.robot.nav.wait_stopped.side_effect = RuntimeError('base moving')
+        with self.assertRaisesRegex(RuntimeError, 'base moving'):
+            c.execute(dict(type='teleop_release', arm_homed=True))
+
+    def test_teleop_feedback_rejects_old_requests_and_stale_coordinates(self):
+        c = fake_control()
+        c.phase, c.teleop_pid = 'teleop', os.getpid()
+        with tempfile.TemporaryDirectory() as folder:
+            c.directory = Path(folder)
+            request = dict(id='new', pid=c.teleop_pid, expires_at_s=time.time()+10)
+            atomic_json(c.directory / 'teleop_capture_request.json', request)
+            feedback = dict(id='new', pid=c.teleop_pid, stamp_s=time.time(), arm_homed=True,
+                angles=[90,30,40], coords=[0,150,42.5])
+            atomic_json(c.directory / 'teleop_capture_feedback.json', feedback)
+            self.assertEqual(c.teleop_feedback()['coords'][2], 42.5)
+            for change in (dict(id='old'), dict(pid=c.teleop_pid+1), dict(stamp_s=time.time()-2)):
+                atomic_json(c.directory / 'teleop_capture_feedback.json', {**feedback, **change})
+                with patch('robot_control.time.monotonic', side_effect=[0,0,5]), patch('robot_control.time.sleep'):
+                    with self.assertRaises(TimeoutError):
+                        c.teleop_feedback()
+            for change in (dict(coords=[0,150,float('nan')]), dict(arm_homed=False)):
+                (c.directory / 'teleop_capture_feedback.json').write_text(json.dumps({**feedback, **change}))
+                with self.assertRaises(ValueError):
+                    c.teleop_feedback()
 
     def test_explicit_web_stop_terminates_teleop_and_busy_handoff_is_refused(self):
         c = fake_control()

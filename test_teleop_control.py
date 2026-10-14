@@ -1,6 +1,7 @@
 import time
 import json
 import tempfile
+import os
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -51,6 +52,42 @@ class TeleopTest(unittest.TestCase):
         self.assertEqual(self.events[-2:], [("base", (0, 0, 0, 0, 0, 0)), ("grip", (0, 500))])
         c.handle("r", 3)
         self.arm.set_gripper_state.assert_called_with(100, 500)
+
+    def test_recording_holds_motion_keys_and_provides_measured_feedback(self):
+        c = self.controller
+        self.arm.get_angles_info.return_value = [90,30,40]
+        with tempfile.TemporaryDirectory() as folder, patch('teleop_control.wait_arm', return_value=[90,30,40]):
+            c.observation_directory = Path(folder)
+            request_path = Path(folder) / 'teleop_capture_request.json'
+            request_path.write_text(json.dumps(dict(id='capture', pid=os.getpid(), expires_at_s=time.time()+10)))
+            c.handle('i', time.monotonic())
+            self.assertTrue(c.observe())
+            self.assertFalse(c.base_moving)
+            feedback = json.loads((Path(folder) / 'teleop_capture_feedback.json').read_text())
+            self.assertEqual(feedback['coords'], [180,0,80])
+            self.assertEqual(feedback['angles'], [90,30,40])
+            c.handle = Mock()
+            keys = iter(['i','g','\x03'])
+            keyboard_loop(c, lambda _: next(keys), lambda: False)
+            c.handle.assert_not_called()
+            self.arm.set_gripper_state.assert_not_called()
+            request_path.unlink()
+            self.assertFalse(c.observe())
+            for change in (dict(pid=os.getpid()+1), dict(expires_at_s=time.time()-1)):
+                request_path.write_text(json.dumps({'id':'stale','pid':os.getpid(),'expires_at_s':time.time()+10, **change}))
+                self.assertFalse(c.observe())
+
+    def test_recording_errors_do_not_stop_teleop(self):
+        c = self.controller
+        with tempfile.TemporaryDirectory() as folder:
+            c.observation_directory = Path(folder)
+            request = Path(folder) / 'teleop_capture_request.json'
+            request.write_text(json.dumps(dict(id='capture', pid=os.getpid(), expires_at_s=time.time()+10)))
+            c.arm_homed = False
+            self.assertTrue(c.observe())
+            feedback = json.loads((Path(folder) / 'teleop_capture_feedback.json').read_text())
+            self.assertIn('Home arm', feedback['error'])
+            self.arm.get_coords_info.assert_not_called()
 
     def test_mode_switch_and_arm_timeout(self):
         c = self.controller
