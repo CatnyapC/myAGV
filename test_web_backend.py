@@ -54,6 +54,8 @@ class EditorAPITest(unittest.IsolatedAsyncioTestCase):
                 state = await (await client.get('/api/state')).json()
                 self.assertFalse(state['motion_available'])
                 metadata = await (await client.get('/api/map')).json()
+                self.assertFalse((await (await client.get('/api/settings')).json())['values']['auto_align'])
+                self.assertEqual(metadata['display']['origin']['yaw_rad'], 0)
                 self.assertEqual((await client.get(metadata['png_url'])).status, 200)
                 grid = demo_map()
                 corners = [local_to_world(p, grid['origin']) for p in [[1, 1], [2, 1], [2, 2], [1, 2]]]

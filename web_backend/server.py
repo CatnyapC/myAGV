@@ -26,7 +26,7 @@ from .codex_bridge import MODEL as CODEX_MODEL, load_token
 from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, refine_approach
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SETTINGS = dict(auto_align=True, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off', fast_mode=True)
+DEFAULT_SETTINGS = dict(auto_align=False, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off', fast_mode=True)
 DISPLAY_FIELDS = ('auto_align', 'manual_angle_deg')
 
 

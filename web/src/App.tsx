@@ -44,7 +44,7 @@ export function App() {
   const [packet, setPacket] = useState<{ info: MapInfo; image: string } | null>(null);
   const [zones, setZones] = useState<Zones | null>(null);
   const [savedSettings, setSavedSettings] = useState<Settings | null>(null);
-  const [settingsDraft, setSettingsDraft] = useState<Settings['values']>({ auto_align: true, manual_angle_deg: 0, llm_model: 'deepseek/deepseek-v4.1-flash', reasoning_effort: 'off', fast_mode: true });
+  const [settingsDraft, setSettingsDraft] = useState<Settings['values']>({ auto_align: false, manual_angle_deg: 0, llm_model: 'deepseek/deepseek-v4.1-flash', reasoning_effort: 'off', fast_mode: true });
   const [angleText, setAngleText] = useState('0');
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
