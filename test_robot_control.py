@@ -219,6 +219,63 @@ class ControlTest(unittest.TestCase):
         calls = c.arm.method_calls
         self.assertLess(calls.index(unittest.mock.call.set_mode(0)), calls.index(unittest.mock.call.set_coords([201,0,0],30)))
 
+    def test_pickup_correction_sends_one_complete_coordinate_target(self):
+        for axis, direction, distance, target in [('X', 1, 10, [0, 210, 0]),
+                ('Y', -1, 10, [10, 200, 0]), ('X', -1, 2.5, [0, 197.5, 0])]:
+            with self.subTest(axis=axis, distance=distance):
+                c = fake_control()
+                c.arm.get_coords_info.side_effect = [[0, 200, 0], target]
+                c.arm.get_angles_info.return_value = [90, 0, 0]
+                with patch('robot_control.arm_deadline', return_value=nullcontext()):
+                    c.arm_step(axis, direction, pickup=True, distance=distance)
+                c.arm.set_coords.assert_called_once_with(target, 30)
+                self.assertEqual(c.angles, [90, 0, 0])
+
+    def test_pickup_correction_waits_for_full_travel_and_checks_stop(self):
+        for stop in (False, True):
+            with self.subTest(stop=stop):
+                c = fake_control()
+                clock = [time.monotonic()]
+                c.deadline = clock[0] + 60
+                c.arm.get_coords_info.side_effect = [[0, 200, 0], [0, 205, 0], [0, 210, 0]]
+                c.arm.get_angles_info.return_value = [90, 0, 0]
+                def advance(_seconds):
+                    clock[0] += 4
+                    if stop:
+                        c.stop_pending = 'STOP'
+                with patch('robot_control.arm_deadline', return_value=nullcontext()), \
+                        patch('robot_control.time.monotonic', side_effect=lambda: clock[0]), \
+                        patch('robot_control.time.sleep', side_effect=advance):
+                    if stop:
+                        with self.assertRaises(Stopped):
+                            c.arm_step('X', 1, pickup=True, distance=10)
+                    else:
+                        c.arm_step('X', 1, pickup=True, distance=10)
+                c.arm.set_coords.assert_called_once_with([0, 210, 0], 30)
+
+    def test_pickup_correction_keeps_limits_and_pre_motion_stop(self):
+        for reason in ('distance', 'workspace', 'heading', 'stop', 'lease', 'manual'):
+            with self.subTest(reason=reason):
+                c = fake_control()
+                c.arm.get_coords_info.return_value = [0, 200, 0]
+                axis, distance = 'X', 10
+                if reason == 'distance':
+                    distance = 10.1
+                elif reason == 'workspace':
+                    c.arm.get_coords_info.return_value = [0, 359, 0]
+                elif reason == 'heading':
+                    c.arm.get_coords_info.return_value = [50, 190, 0]
+                    axis = 'Y'
+                elif reason == 'stop':
+                    c.stop_pending = 'STOP'
+                elif reason == 'lease':
+                    c.deadline = 0
+                with patch('robot_control.arm_deadline', return_value=nullcontext()), \
+                        self.assertRaises((ValueError, Stopped)):
+                    c.arm_step(axis, -1 if reason == 'heading' else 1,
+                               pickup=reason != 'manual', distance=distance)
+                c.arm.set_coords.assert_not_called()
+
     def test_transport_sends_one_full_target_and_waits_for_measured_completion(self):
         c = fake_control()
         c.config['transport_angles'] = [90, 10, 20]

@@ -224,15 +224,19 @@ physically re-taught at J1=90 and their photo associations reconfirmed.
 
 ```json
 "fetch_calibration": {
-  "max_step_mm": 2,
-  "max_total_mm": 20
+  "max_step_mm": 2
 }
 ```
 
-Defaults permit at most eight corrections and 20 mm combined travel. A ninth
-observation verifies the final correction without moving again. Each
-correction is divided into absolute waypoints no larger than 1 mm, with measured
-feedback. Grasp and possession still require the existing operator confirmations.
+Alignment permits up to 33 observations across both stages and at most 32
+corrections, without a cumulative arm travel cap. Each nonzero X/Y axis correction
+sends one complete absolute coordinate target at speed 30, capped by
+`max_step_mm` (up to 10 mm). X and Y run in order with measured arrival before the
+next axis and fresh photos before the next round. The arrival timeout is 3 seconds
+per millimeter, with a 3-second minimum. Manual adjustments still default to 1 mm.
+Grasp and possession still require the existing operator confirmations. Web STOP
+sends M15 but may not interrupt an absolute move; physical stopping remains a
+supervised acceptance check.
 
 **Map updates** repeatedly refresh observations in the current reachable area.
 Use **Preview update points**, then **Start updating**. **Pause updating** retains

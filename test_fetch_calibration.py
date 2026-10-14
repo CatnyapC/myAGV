@@ -241,7 +241,9 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(requests[2]['history'], [])
             self.assertEqual(c.capture.call_args_list, [call('front', vision=True)] * 2 + [call('arm', vision=True)] * 3)
             c.turn_fetch.assert_called_once_with(1, calibration_config(None), local_alignment=False)
-            self.assertEqual(c.arm_step.call_args_list, [call('X', 1, pickup=True, distance=1)] * 10 + [call('Y', -1, pickup=True, distance=1)] * 10 + [call('X', 1, pickup=True, distance=1), call('Y', -1, pickup=True, distance=1)])
+            self.assertEqual(c.arm_step.call_args_list, [call('X', 1, pickup=True, distance=10),
+                call('Y', -1, pickup=True, distance=10), call('X', 1, pickup=True, distance=1),
+                call('Y', -1, pickup=True, distance=1)])
             self.assertFalse(list(c.directory.iterdir()))
             results = iter([dict(x_mm=1, turn_deg=0)])
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):

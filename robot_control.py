@@ -371,7 +371,7 @@ class Control:
         self.require_arm()
         if axis not in LIMITS or direction not in (-1, 1):
             raise ValueError('Invalid arm step')
-        number(distance, .001, 1, 'Arm step distance')
+        number(distance, .001, 10 if pickup else 1, 'Arm step distance')
         with arm_deadline(.4):
             coords = self.arm.get_coords_info()
         if not coords or len(coords) < 3 or not all(type(v) in (float, int) and math.isfinite(v) for v in coords[:3]):
@@ -384,12 +384,14 @@ class Control:
         coords = [value + step for value, step in zip(coords, delta)]
         if any(not LIMITS[a][0] + 5 <= coords[i] <= LIMITS[a][1] - 5 for i, a in enumerate('XYZ')) or (pickup and coords[1] <= 5):
             raise ValueError('Arm workspace limit')
+        if pickup and abs(math.degrees(math.atan2(coords[1], coords[0])) - 90) > 15:
+            raise ValueError('Pickup target must face forward near J1=90')
         if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
             raise Stopped('Arm step cancelled or lease expired')
         with arm_deadline(.4):
             self.arm.set_mode(0)
             self.arm.set_coords(coords, 30)
-        end = time.monotonic() + 3
+        end = time.monotonic() + 3 * max(1, distance)
         while time.monotonic() < end:
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
                 raise Stopped('Arm step cancelled or lease expired')
@@ -1008,12 +1010,9 @@ class Control:
                     self.turn_fetch(moves['turn_deg'], config, local_alignment=packet.get('type') == 'fetch_test')
                     moves['X'] = 0  # Rotation changes the arm view; recapture before advancing.
                 for axis, delta in [('X', moves['X']), ('Y', moves.get('Y', 0))]:
-                    remaining = abs(delta)
-                    while remaining >= .001:
+                    if delta:
                         current()
-                        step = min(1, remaining)
-                        self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=step)
-                        remaining -= step
+                        self.arm_step(axis, 1 if delta > 0 else -1, pickup=True, distance=abs(delta))
                 history = (history + [dict(images=images, commanded=moves)])[-(5 if stage == 'base' else 2):]
             raise RuntimeError('Fetch alignment did not finish both stages')
         finally:
