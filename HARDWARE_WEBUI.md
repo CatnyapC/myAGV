@@ -308,11 +308,14 @@ visible; horizontal centering and heading are not completion gates. ALIGN handle
 the final angle and fine positioning.
 Vertical cropping is retained; horizontally clipped targets cannot confirm range.
 The coarse map stand-off distance is only a staging position, not this endpoint.
-Each round permits at most 0.25 m forward and +/-15 degrees of turning, enforced
+Each round permits at most 0.25 m forward or backward and +/-15 degrees of turning, enforced
 by the prompt, response schema, result validation and chassis executor. Forward
-requests above 0.25 m are clamped rather than rejected by runtime validation.
+requests beyond +/-0.25 m are clamped rather than rejected by runtime validation.
 travel must also stay within half the estimated remaining GOAL distance derived
 from the target width ratio. At GOAL width or larger, no forward travel is allowed.
+An overshoot remains recoverable: a zero/forward suggestion requests another
+stopped observation, while a negative `forward_m` retreats toward GOAL distance.
+Retreat checks the swept rear path and retains STOP, sensor and lease guards.
 The base stops for a fresh photo after each adjustment. It executes at slow speed
 against measured odometry and stops when it reaches or passes the target, including small
 targets that move_base's arrival tolerance would otherwise skip. STOP, leases,

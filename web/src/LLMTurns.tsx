@@ -70,7 +70,7 @@ export function LLMTurns(props: { connected: boolean; onLog: LogReporter }) {
         {round.residual_mm && <span>Remaining error: X {round.residual_mm.x_mm.toFixed(2)} mm · Y {round.residual_mm.y_mm.toFixed(2)} mm · total {(Math.abs(round.residual_mm.x_mm) + Math.abs(round.residual_mm.y_mm)).toFixed(2)} mm</span>}
         {round.codex && <span className="muted">Codex {round.codex.service_tier} · thread {round.codex.thread_id.slice(-8)}{round.usage?.inputTokens ? ` · cache ${Math.round(100 * (round.usage.cachedInputTokens ?? 0) / round.usage.inputTokens)}%` : ''}</span>}
         {round.correction && <span>Suggestion: arm X {round.correction.X} mm · Y {round.correction.Y ?? 0} mm · base {round.correction.turn_deg}° (positive = clockwise)</span>}
-        {round.base_command && <span>Base suggestion: forward {(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
+        {round.base_command && <span>Base suggestion: {round.base_command.forward_m < 0 ? 'backward' : 'forward'} {Math.abs(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
         {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}
         {round.outcome === 'arrived' && <span>Saved final GOAL front view matched; base approach complete.</span>}
         <span className="muted">Request history · movement completion appears in LOG.</span>

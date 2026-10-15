@@ -1026,7 +1026,7 @@ class Control:
                 after = self.robot.nav.get_pose()
                 after = dict(after, yaw_rad=math.radians(after['yaw_deg']))
                 history.append(dict(images=dict(front=capture['image']), base_pose=pose, after_pose=after,
-                                    commanded=dict(forward_m=math.hypot(goal['x_m']-pose['x_m'], goal['y_m']-pose['y_m']),
+                                    commanded=dict(forward_m=(goal['x_m']-pose['x_m'])*math.cos(goal['yaw_rad']) + (goal['y_m']-pose['y_m'])*math.sin(goal['yaw_rad']),
                                         turn_deg=math.degrees(math.atan2(math.sin(goal['yaw_rad']-pose['yaw_rad']), math.cos(goal['yaw_rad']-pose['yaw_rad'])))), estimate=corrected))
         finally:
             self.base_enabled = False
@@ -1043,13 +1043,14 @@ class Control:
         self.robot.nav.wait_stopped()
         start = self.robot.nav.get_odom_pose()
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
-        forward = math.hypot(goal['x_m']-source['x_m'], goal['y_m']-source['y_m'])
+        forward = (goal['x_m']-source['x_m'])*math.cos(goal['yaw_rad']) + (goal['y_m']-source['y_m'])*math.sin(goal['yaw_rad'])
         turn = math.atan2(math.sin(goal['yaw_rad']-source['yaw_rad']), math.cos(goal['yaw_rad']-source['yaw_rad']))
         if not math.isfinite(forward) or not math.isfinite(turn) or abs(turn) > math.radians(15) + 1e-9:
             raise ValueError('Item approach step exceeds bounds')
         yaw = math.radians(start['yaw_deg']) + turn
         target = (start['x_m'] + forward*math.cos(yaw), start['y_m'] + forward*math.sin(yaw))
-        deadline = time.monotonic() + abs(turn)/.1 + forward/.03 + 5
+        direction = -1 if forward < 0 else 1
+        deadline = time.monotonic() + abs(turn)/.1 + abs(forward)/.03 + 5
         turning = abs(turn) > 1e-9
         print(json.dumps(dict(event='approach_motion_target', time_s=time.time(), goal=goal, forward_m=forward, turn_deg=math.degrees(turn), start_odom=start)), flush=True)
         try:
@@ -1061,22 +1062,22 @@ class Control:
                 measured = self.robot.nav.get_odom_pose()
                 error = math.atan2(math.sin(yaw-math.radians(measured['yaw_deg'])), math.cos(yaw-math.radians(measured['yaw_deg'])))
                 dx, dy = target[0]-measured['x_m'], target[1]-measured['y_m']
-                remaining = math.hypot(dx, dy) if forward else 0
+                remaining = direction*(dx*math.cos(yaw) + dy*math.sin(yaw)) if forward else 0
                 if turning and abs(error) <= math.radians(.3):
                     turning = False
-                if not turning and (remaining <= .003 or dx*math.cos(yaw) + dy*math.sin(yaw) <= .003):
+                if not turning and remaining <= .003:
                     print(json.dumps(dict(event='approach_motion_completed', time_s=time.time(), actual_odom=measured, remaining_m=remaining)), flush=True)
                     return
                 if time.monotonic() >= deadline:
                     raise RuntimeError('Measured approach movement timed out')
                 actual_yaw = math.radians(actual['yaw_deg'])
-                travel = max(0, dx*math.cos(yaw) + dy*math.sin(yaw))
-                path_goal = goal if turning else dict(x_m=actual['x_m'] + travel*math.cos(actual_yaw),
-                    y_m=actual['y_m'] + travel*math.sin(actual_yaw), yaw_rad=actual_yaw)
+                travel = max(0, remaining)
+                path_goal = goal if turning else dict(x_m=actual['x_m'] + direction*travel*math.cos(actual_yaw),
+                    y_m=actual['y_m'] + direction*travel*math.sin(actual_yaw), yaw_rad=actual_yaw)
                 validate_approach_path(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
                     dict(actual, yaw_rad=actual_yaw), path_goal, self.config['clearance_m'])
                 self.base_enabled = True
-                speed = 0 if turning else min(.03, max(.005, travel))
+                speed = 0 if turning else direction*min(.03, max(.005, travel))
                 angular = math.copysign(min(.1, max(.015, abs(error))), error) if turning else 0
                 self.robot.velocity, self.robot.velocity_at = (speed, 0, angular), time.monotonic()
                 time.sleep(.05)

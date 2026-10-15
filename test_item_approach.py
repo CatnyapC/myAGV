@@ -52,15 +52,14 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                                            grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0]['x_m'], 2.005)
         self.assertAlmostEqual(approach_step({**near, 'forward_m': .005}, dict(base_pose=POSE),
                                            grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0]['x_m'], 2.005)
-        with self.assertRaisesRegex(ValueError, 'already at'):
-            approach_step({**near, 'forward_m': .001, 'current': near['goal']}, dict(base_pose=POSE),
-                          grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+        self.assertIsNone(approach_step({**near, 'forward_m': .001, 'current': near['goal']}, dict(base_pose=POSE),
+                                       grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
         matched = {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 60,
                    'current': [20, 0, 420, 1000]}
         self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
 
     def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
-        for action in ('forward', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
+        for action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
             with self.subTest(action=action):
                 c = fake_control()
                 c.robot.grid, c.robot.zones = open_map(), dict(revision=2, zones=[])
@@ -91,12 +90,13 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     if action == 'sensors': c.robot.sensors_ready = lambda: False
                     if action == 'zones': c.robot.zones['revision'] += 1
                     if action in ('obstacle', 'drift_obstacle'): c.robot.grid['cells'][30*80+21] = 100
-                distance = .63 if action == 'clamp' else .25 if action.startswith('drift') else .006
+                    if action == 'reverse_obstacle': c.robot.grid['cells'][30*80+19] = 100
+                distance = -.63 if action == 'reverse_clamp' else -.1 if action == 'reverse_obstacle' else -.006 if action == 'reverse' else .63 if action == 'clamp' else .25 if action.startswith('drift') else .006
                 turn = math.radians(-4 if action.startswith('drift') else 4.5 if action == 'turn' else 0)
                 goal = dict(x_m=2 if action == 'turn' else 2+distance*math.cos(turn),
                             y_m=3 if action == 'turn' else 3+distance*math.sin(turn), yaw_rad=turn)
                 with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
-                    if action in ('forward', 'turn', 'clamp', 'drift', 'heading_drift', 'overshoot'):
+                    if action in ('forward', 'reverse', 'reverse_clamp', 'turn', 'clamp', 'drift', 'heading_drift', 'overshoot'):
                         c.move_approach(goal, POSE)
                     else:
                         with self.assertRaises((Stopped, RuntimeError, ValueError)):
@@ -105,6 +105,9 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 if action == 'forward': self.assertGreaterEqual(measured['x_m'], 2.003)
                 if action == 'turn': self.assertLess(abs(measured['yaw_deg']-4.5), .31)
                 if action == 'clamp': self.assertAlmostEqual(measured['x_m'], 2.25, delta=.0031)
+                if action.startswith('reverse') and action != 'reverse_obstacle':
+                    self.assertAlmostEqual(measured['x_m'], 2+max(distance, -.25), delta=.0031)
+                    self.assertTrue(any(v[0] < 0 for v in commands))
                 if action == 'drift':
                     remaining = (goal['x_m']-measured['x_m'])*math.cos(turn) + (goal['y_m']-measured['y_m'])*math.sin(turn)
                     self.assertLess(remaining, .0031)
@@ -112,7 +115,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertTrue(any(v[0] > 0 for v in commands))
                 if action in ('forward', 'clamp', 'heading_drift'):
                     self.assertTrue(all(v[2] == 0 for v in commands))
-                self.assertTrue(all(v[2] == 0 for v in commands if v[0] > 0))
+                self.assertTrue(all(v[2] == 0 for v in commands if v[0] != 0))
                 if action == 'overshoot': self.assertEqual(len(commands), 1)
                 self.assertEqual(c.robot.velocity, (0, 0, 0))
                 self.assertFalse(c.base_enabled)
@@ -139,12 +142,26 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)[0])
         for change, error in ((dict(forward_m=0), 'no useful progress'),
                               (dict(arrived=True, forward_m=0), 'saved front GOAL'),
-                              (dict(current=[240, 0, 760, 1000], forward_m=0), 'closer than'),
                               (dict(arrived=True, forward_m=0, current=[300, 200, 700, 1000]), 'saved front GOAL'),
                               (dict(goal=None), 'bounds'), (dict(seen=False), 'lost'),
                               (dict(confidence=.69), 'confidence')):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
                 approach_step({**close, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+
+    def test_too_close_can_reobserve_then_retreat_with_rear_clearance(self):
+        grid = open_map()
+        close = {**result(), 'distance_m': .2, 'current': [240, 0, 760, 1000]}
+        for forward in (0, .2):
+            goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+            self.assertEqual(goal, POSE)
+        for forward in (-.1, -.5):
+            goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+            self.assertAlmostEqual(goal['x_m'], 1.97)
+            self.assertEqual(goal['yaw_rad'], 0)
+        blocked = deepcopy(grid)
+        blocked['cells'][30*80+19] = 100
+        with self.assertRaises(ValueError):
+            approach_step({**close, 'forward_m': -.03}, dict(base_pose=POSE), blocked, [], grid, ITEM, .2, DEFAULT_CONFIG)
 
     def test_missing_front_goal_is_refused_before_capture_or_motion(self):
         c = fake_control()
@@ -395,6 +412,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     fields = bodies[0]['response_format']['json_schema']['schema']['properties']
                     self.assertEqual(len(fields), 6)
                     self.assertEqual(fields['forward_m']['maximum'], .25)
+                    self.assertEqual(fields['forward_m']['minimum'], -.25)
                     self.assertEqual(fields['turn_deg']['minimum'], -15)
                     self.assertEqual(fields['turn_deg']['maximum'], 15)
                     prompt = bodies[0]['messages'][0]['content']
