@@ -303,13 +303,17 @@ Select a confident item estimate to enable **SLOW APPROACH TEST**, subject to th
 existing localization, sensor, no-go and stopped-controller checks.
 Save the item's final GOAL front-camera photo before approaching. Each stopped
 round compares that saved image with CURRENT. Rough arrival accepts target width
-at 80–125% of GOAL and visible top/bottom within 150/1000. The item must remain
+at 90–110% of GOAL and visible top/bottom within 150/1000. The item must remain
 visible; horizontal centering and heading are not completion gates. ALIGN handles
 the final angle and fine positioning.
 Vertical cropping is retained; horizontally clipped targets cannot confirm range.
 The coarse map stand-off distance is only a staging position, not this endpoint.
-Request each complete useful correction without a per-round distance/angle cap.
-The base executes it at slow speed against measured odometry, including small
+Each round permits at most 0.25 m forward and +/-15 degrees of turning, enforced
+by the prompt, response schema, result validation and chassis executor. Forward
+travel must also stay within half the estimated remaining GOAL distance derived
+from the target width ratio. At GOAL width or larger, no forward travel is allowed.
+The base stops for a fresh photo after each adjustment. It executes at slow speed
+against measured odometry and stops when it reaches or passes the target, including small
 targets that move_base's arrival tolerance would otherwise skip. STOP, leases,
 fresh sensors and the full swept footprint/no-go checks stay active during travel.
 Codex keeps one session for the approach. The first turn sends identity and GOAL;

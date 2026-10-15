@@ -34,18 +34,29 @@ def result(**values):
 
 
 class ApproachTest(unittest.IsolatedAsyncioTestCase):
-    def test_full_corrections_are_allowed_and_visible_off_center_item_can_finish(self):
+    def test_bounded_corrections_and_visible_off_center_item_can_finish(self):
         grid = open_map()
-        goal, _ = approach_step({**result(), 'forward_m': .5, 'turn_deg': 40, 'bearing_deg': 40},
+        goal, _ = approach_step({**result(), 'forward_m': .25, 'turn_deg': 15, 'bearing_deg': 40},
                                 dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
-        self.assertAlmostEqual(goal['x_m'], 2 + .5*math.cos(math.radians(40)))
-        self.assertAlmostEqual(goal['yaw_rad'], math.radians(40))
+        self.assertAlmostEqual(goal['x_m'], 2 + .25*math.cos(math.radians(15)))
+        self.assertAlmostEqual(goal['yaw_rad'], math.radians(15))
+        for change in (dict(forward_m=.25001), dict(forward_m=.5, turn_deg=24), dict(turn_deg=15.01), dict(turn_deg=-15.01)):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'exceeds bounds'):
+                approach_step({**result(), **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+        near = {**result(), 'distance_m': .2, 'current': [310, 0, 690, 1000]}
+        with self.assertRaisesRegex(ValueError, 'overshoot'):
+            approach_step({**near, 'forward_m': .01}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+        self.assertAlmostEqual(approach_step({**near, 'forward_m': .005}, dict(base_pose=POSE),
+                                           grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0]['x_m'], 2.005)
+        with self.assertRaisesRegex(ValueError, 'already at'):
+            approach_step({**near, 'forward_m': .001, 'current': near['goal']}, dict(base_pose=POSE),
+                          grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
         matched = {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 60,
                    'current': [20, 0, 420, 1000]}
         self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
 
     def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
-        for action in ('forward', 'turn', 'drift', 'drift_obstacle', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
+        for action in ('forward', 'turn', 'drift', 'drift_obstacle', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
             with self.subTest(action=action):
                 c = fake_control()
                 c.robot.grid, c.robot.zones = open_map(), dict(revision=2, zones=[])
@@ -64,6 +75,8 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     commands.append(velocity)
                     if action.startswith('drift') and len(commands) == 1:
                         measured['y_m'] += .03
+                    if action == 'overshoot' and len(commands) == 1:
+                        measured['x_m'] += .01
                     if action != 'timeout':
                         measured['yaw_deg'] += math.degrees(velocity[2]*seconds)
                         measured['x_m'] += velocity[0]*seconds*math.cos(math.radians(measured['yaw_deg']))
@@ -72,12 +85,12 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     if action == 'sensors': c.robot.sensors_ready = lambda: False
                     if action == 'zones': c.robot.zones['revision'] += 1
                     if action in ('obstacle', 'drift_obstacle'): c.robot.grid['cells'][30*80+21] = 100
-                distance = .63 if action.startswith('drift') else .006
+                distance = .25 if action.startswith('drift') else .006
                 turn = math.radians(-4 if action.startswith('drift') else 4.5 if action == 'turn' else 0)
                 goal = dict(x_m=2 if action == 'turn' else 2+distance*math.cos(turn),
                             y_m=3 if action == 'turn' else 3+distance*math.sin(turn), yaw_rad=turn)
                 with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
-                    if action in ('forward', 'turn', 'drift'):
+                    if action in ('forward', 'turn', 'drift', 'overshoot'):
                         c.move_approach(goal, POSE)
                     else:
                         with self.assertRaises((Stopped, RuntimeError, ValueError)):
@@ -88,11 +101,22 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 if action == 'drift':
                     self.assertLess(math.hypot(measured['x_m']-goal['x_m'], measured['y_m']-goal['y_m']), .0031)
                     self.assertTrue(any(v[0] > 0 for v in commands))
+                if action == 'overshoot': self.assertEqual(len(commands), 1)
                 self.assertEqual(c.robot.velocity, (0, 0, 0))
                 self.assertFalse(c.base_enabled)
                 c.robot.nav.go_to.assert_not_called()
                 c.arm.set_coords.assert_not_called()
                 c.arm.set_gripper_value.assert_not_called()
+
+    def test_executor_rejects_unbounded_targets_without_velocity(self):
+        for forward, turn in ((.25001, 0), (.5, 24), (0, 15.01), (0, -15.01)):
+            with self.subTest(forward=forward, turn=turn):
+                c = fake_control()
+                c.robot.velocity = (0, 0, 0)
+                goal = dict(x_m=2+forward, y_m=3, yaw_rad=math.radians(turn))
+                with self.assertRaisesRegex(ValueError, 'exceeds bounds'):
+                    c.move_approach(goal, POSE)
+                self.assertEqual(c.robot.velocity, (0, 0, 0))
 
     def test_saved_goal_scale_controls_arrival_instead_of_coarse_stand_off(self):
         grid = open_map()
@@ -358,8 +382,12 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     close_session.assert_not_awaited()
                     fields = bodies[0]['response_format']['json_schema']['schema']['properties']
                     self.assertEqual(len(fields), 6)
-                    self.assertNotIn('maximum', fields['forward_m'])
-                    self.assertNotIn('maximum', fields['turn_deg'])
+                    self.assertEqual(fields['forward_m']['maximum'], .25)
+                    self.assertEqual(fields['turn_deg']['minimum'], -15)
+                    self.assertEqual(fields['turn_deg']['maximum'], 15)
+                    prompt = bodies[0]['messages'][0]['content']
+                    self.assertIn('0..0.25 meters', prompt)
+                    self.assertNotIn('full remaining forward distance', prompt)
                     log = await (await client.get('/api/fetch-log')).json()
                     self.assertEqual([r['mode'] for r in log['rounds']], ['approach', 'approach'])
                     self.assertNotIn('private-key', json.dumps(log))

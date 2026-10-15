@@ -1041,6 +1041,8 @@ class Control:
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         forward = math.hypot(goal['x_m']-source['x_m'], goal['y_m']-source['y_m'])
         turn = math.atan2(math.sin(goal['yaw_rad']-source['yaw_rad']), math.cos(goal['yaw_rad']-source['yaw_rad']))
+        if not math.isfinite(forward) or not math.isfinite(turn) or forward > .25 + 1e-9 or abs(turn) > math.radians(15) + 1e-9:
+            raise ValueError('Item approach step exceeds bounds')
         yaw = math.radians(start['yaw_deg']) + turn
         target = (start['x_m'] + forward*math.cos(yaw), start['y_m'] + forward*math.sin(yaw))
         deadline = time.monotonic() + abs(turn)/.1 + forward/.03 + 5
@@ -1060,7 +1062,7 @@ class Control:
                 remaining = math.hypot(dx, dy) if forward else 0
                 if turning and abs(error) <= math.radians(.3):
                     turning = False
-                if not turning and remaining <= .003:
+                if not turning and (remaining <= .003 or dx*math.cos(yaw) + dy*math.sin(yaw) <= .003):
                     print(json.dumps(dict(event='approach_motion_completed', time_s=time.time(), actual_odom=measured, remaining_m=remaining)), flush=True)
                     return
                 if time.monotonic() >= deadline:
