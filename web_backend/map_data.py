@@ -82,6 +82,7 @@ def render_map(grid, settings, view_revision, detected_angle, colors=None):
     ox, oy = rotate(low_x, low_y, angle)
     origin = dict(x_m=ox, y_m=oy, yaw_rad=angle)
     rows = bytearray()
+    min_col, min_row, max_col, max_row = width, height, 0, 0
     alpha = colors is not None
     colors = colors or {-1: b'\x1b\x1b\x1d', 0: b'\x34\x34\x38', 100: b'\xb4\xb4\xb8'}
     # PNG is top-down; OccupancyGrid is bottom-up. Reverse Y here, exactly once.
@@ -92,10 +93,17 @@ def render_map(grid, settings, view_revision, detected_angle, colors=None):
             u, v = world_to_local(p, source)
             x, y = math.floor(u / r), math.floor(v / r)
             value = grid['cells'][y * grid['width'] + x] if 0 <= x < grid['width'] and 0 <= y < grid['height'] else -1
+            if value >= 0:
+                min_col, min_row = min(min_col, col), min(min_row, row)
+                max_col, max_row = max(max_col, col + 1), max(max_row, row + 1)
             rows.extend(colors[value])
+    # Fit explored cells without cropping the raster or changing map coordinates.
+    content_bounds = ([[min_row * r, min_col * r], [max_row * r, max_col * r]]
+                      if max_col else [[0, 0], [height * r, width * r]])
     metadata = {k: v for k, v in grid.items() if k != 'cells'}
     metadata['display'] = dict(width_m=width * r, height_m=height * r, origin=origin,
-                               view_revision=view_revision, alignment_available=detected_angle is not None)
+                               view_revision=view_revision, alignment_available=detected_angle is not None,
+                               content_bounds=content_bounds)
     metadata['png_url'] = f'/api/map.png?view_revision={view_revision}'
     return metadata, png_rgb(width, height, rows, alpha=alpha)
 

@@ -1,5 +1,6 @@
 """Necessary local checks only: coordinates, map raster, API edits and persistence."""
 import json
+from io import BytesIO
 import math
 import os
 from pathlib import Path
@@ -9,12 +10,40 @@ from unittest.mock import patch
 
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
+from PIL import Image
 from web_backend.map_data import demo_map, dominant_angle, local_to_world, render_map, world_to_local
 from web_backend.server import DEFAULT_SETTINGS, boundary, create_app
 from web_backend.resolve import MODEL_OPTIONS
 
 
 class MapGeometryTest(unittest.TestCase):
+    def test_fit_bounds_follow_explored_cells_at_top_of_grid(self):
+        grid = dict(map_id='sparse', revision=1, frame='map', width=20, height=16,
+                    resolution_m=.1, origin=dict(x_m=-3, y_m=2, yaw_rad=.2),
+                    cells=[-1] * 320)
+        for y in range(12, 15):
+            for x in range(8, 12):
+                grid['cells'][y * grid['width'] + x] = 100 if y == 14 else 0
+        original = list(grid['cells'])
+        for auto_align, manual_angle in ((False, 0), (False, -26), (True, 0)):
+            with self.subTest(auto_align=auto_align, manual_angle=manual_angle):
+                metadata, png = render_map(grid, dict(auto_align=auto_align, manual_angle_deg=manual_angle), 1, .3)
+                image = Image.open(BytesIO(png))
+                known = [(x, image.height - 1 - y) for y in range(image.height)
+                         for x in range(image.width) if image.getpixel((x, y)) != (27, 27, 29)]
+                xs, ys = zip(*known)
+                expected = [[min(ys) * .1, min(xs) * .1], [(max(ys) + 1) * .1, (max(xs) + 1) * .1]]
+                self.assertEqual(metadata['display']['content_bounds'], expected)
+                self.assertLess(expected[1][0] - expected[0][0], metadata['display']['height_m'] / 2)
+        self.assertEqual(grid['cells'], original)
+
+    def test_fit_bounds_fall_back_to_full_grid_when_unknown(self):
+        grid = dict(map_id='empty', revision=1, frame='map', width=4, height=3,
+                    resolution_m=.1, origin=dict(x_m=0, y_m=0, yaw_rad=0), cells=[-1] * 12)
+        metadata, _ = render_map(grid, dict(auto_align=False, manual_angle_deg=0), 1, None)
+        display = metadata['display']
+        self.assertEqual(display['content_bounds'], [[0, 0], [display['height_m'], display['width_m']]])
+
     def test_rotation_round_trip_and_wall_alignment(self):
         grid = demo_map()
         angle = dominant_angle(grid)

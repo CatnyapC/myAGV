@@ -44,7 +44,7 @@ export function MapView(props: {
     path.current = L.polyline([], { color: 'var(--cyan-9)', weight: 2, opacity: .85, interactive: false }).addTo(instance);
     robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 3, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
     target.current = L.polygon([], { color: 'var(--orange-9)', weight: 2, fill: false, interactive: false }).addTo(instance);
-    const observer = new ResizeObserver(() => instance.invalidateSize({ pan: false }));
+    const observer = new ResizeObserver(() => instance.invalidateSize({ animate: false }));
     observer.observe(host.current);
     instance.on('click', (event: L.LeafletMouseEvent) => {
       const current = latest.current;
@@ -73,9 +73,10 @@ export function MapView(props: {
     const display = props.info.display;
     const nextBounds = L.latLngBounds([0, 0], [display.height_m, display.width_m]);
     const image = L.imageOverlay(props.image, nextBounds, { className: 'occupancy-raster', interactive: false }).addTo(instance);
-    bounds.current = nextBounds;
+    const fitBounds = display.content_bounds ? L.latLngBounds(display.content_bounds) : nextBounds;
+    bounds.current = fitBounds;
     instance.setMaxBounds(nextBounds.pad(.4));
-    instance.fitBounds(nextBounds, { padding: [12, 12], animate: false });
+    instance.fitBounds(fitBounds, { padding: [12, 12], animate: false });
     return () => { image.remove(); };
   }, [props.info, props.image]);
 

@@ -5,7 +5,7 @@ export type ObservationPoints = { map_id: string; revision: number; points: Obse
 export type MapInfo = {
   map_id: string; revision: number; frame: string; width: number; height: number;
   resolution_m: number; origin: Origin; png_url: string;
-  display: { width_m: number; height_m: number; origin: Origin; view_revision: number; alignment_available: boolean };
+  display: { width_m: number; height_m: number; origin: Origin; view_revision: number; alignment_available: boolean; content_bounds?: [Point, Point] };
 };
 export type Zone = { id: string; corners: Point[] };
 export type Zones = { map_id: string; revision: number; zones: Zone[] };
