@@ -264,15 +264,17 @@ class RobotROS:
                    for name in ('global', 'local'))
 
     def sensors_ready(self):
+        # Snapshot before reading the clock; callbacks can replace samples mid-check.
+        scan, odom = self.scan, self.nav.odom
         now = time.monotonic()
-        for sample, limit in ((self.scan, .5), (self.nav.odom, .5)):
+        for sample, limit in ((scan, .5), (odom, .5)):
             if not sample or not fresh(sample[0], now, limit):
                 return False
             age = (self.ros.Time.now() - sample[1].header.stamp).to_sec()
             if not -.1 <= age <= limit:
                 return False
-        return any(math.isfinite(r) and self.scan[1].range_min <= r <= self.scan[1].range_max
-                   for r in self.scan[1].ranges)
+        return any(math.isfinite(r) and scan[1].range_min <= r <= scan[1].range_max
+                   for r in scan[1].ranges)
 
     def validate_goal(self, pose, radius):
         if not self.zones_ready():
