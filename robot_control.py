@@ -1050,16 +1050,14 @@ class Control:
         yaw = math.radians(start['yaw_deg']) + turn
         target = (start['x_m'] + forward*math.cos(yaw), start['y_m'] + forward*math.sin(yaw))
         deadline = time.monotonic() + abs(turn)/.1 + forward/.03 + 5
-        turning = True
-        print(json.dumps(dict(event='approach_motion_target', time_s=time.time(), goal=goal, forward_m=forward, turn_deg=math.degrees(turn))), flush=True)
+        turning = abs(turn) > 1e-9
+        print(json.dumps(dict(event='approach_motion_target', time_s=time.time(), goal=goal, forward_m=forward, turn_deg=math.degrees(turn), start_odom=start)), flush=True)
         try:
             while True:
                 if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision or self.robot.ros.is_shutdown():
                     raise Stopped('Map, no-go zones or ROS changed during approach movement')
                 self.travel_guard(goal)
                 actual = self.robot.nav.get_pose()
-                validate_approach_path(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
-                    dict(actual, yaw_rad=math.radians(actual['yaw_deg'])), goal, self.config['clearance_m'])
                 measured = self.robot.nav.get_odom_pose()
                 error = math.atan2(math.sin(yaw-math.radians(measured['yaw_deg'])), math.cos(yaw-math.radians(measured['yaw_deg'])))
                 dx, dy = target[0]-measured['x_m'], target[1]-measured['y_m']
@@ -1071,13 +1069,15 @@ class Control:
                     return
                 if time.monotonic() >= deadline:
                     raise RuntimeError('Measured approach movement timed out')
-                if not turning and forward:
-                    # Correct wheel drift toward the same target; live path validation guards clearance.
-                    heading = math.atan2(dy, dx)
-                    error = math.atan2(math.sin(heading-math.radians(measured['yaw_deg'])), math.cos(heading-math.radians(measured['yaw_deg'])))
+                actual_yaw = math.radians(actual['yaw_deg'])
+                travel = max(0, dx*math.cos(yaw) + dy*math.sin(yaw))
+                path_goal = goal if turning else dict(x_m=actual['x_m'] + travel*math.cos(actual_yaw),
+                    y_m=actual['y_m'] + travel*math.sin(actual_yaw), yaw_rad=actual_yaw)
+                validate_approach_path(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
+                    dict(actual, yaw_rad=actual_yaw), path_goal, self.config['clearance_m'])
                 self.base_enabled = True
-                speed = 0 if turning or abs(error) > math.radians(10) else min(.03, max(.005, remaining))
-                angular = math.copysign(min(.1, max(.015, abs(error))), error) if abs(error) > math.radians(.3) else 0
+                speed = 0 if turning else min(.03, max(.005, travel))
+                angular = math.copysign(min(.1, max(.015, abs(error))), error) if turning else 0
                 self.robot.velocity, self.robot.velocity_at = (speed, 0, angular), time.monotonic()
                 time.sleep(.05)
         finally:

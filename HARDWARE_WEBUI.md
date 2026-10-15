@@ -317,6 +317,8 @@ The base stops for a fresh photo after each adjustment. It executes at slow spee
 against measured odometry and stops when it reaches or passes the target, including small
 targets that move_base's arrival tolerance would otherwise skip. STOP, leases,
 fresh sensors and the full swept footprint/no-go checks stay active during travel.
+Only an explicit LLM turn produces angular velocity. Forward travel never adds
+endpoint steering or heading corrections; its current forward path is checked live.
 Codex keeps one session for the approach. The first turn sends identity and GOAL;
 later turns send only CURRENT and actual movement feedback. Its compact six-field
 JSON omits repeated confidence, uncertainty and arrival flags. Location estimates
