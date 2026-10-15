@@ -294,7 +294,11 @@ class Control:
         elif not self.robot.driver_watchdog or not self.robot.exclusive:
             reason = 'Driver watchdog unavailable or competing chassis publisher'
         elif not self.robot.sensors_ready() and not (self.phase in ('refreshing_map', 'recovering_stop') and not self.base_enabled):
-            reason = 'LiDAR or odometry stale'
+            if self.phase == 'approaching_item':
+                self.base_enabled = False
+                self.robot.zero()
+            else:
+                reason = 'LiDAR or odometry stale'
         elif self.base_enabled and self.phase != 'manual' and not self.robot.zones_ready():
             reason = 'ROS no-go enforcement unavailable'
         if reason:
@@ -361,6 +365,35 @@ class Control:
         self.read_arm()
         self.arm_error = ''
 
+    def wait_approach_sensors(self):
+        if self.robot.sensors_ready():
+            return 0
+        started, previous = time.monotonic(), self.status
+        map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
+        self.base_enabled = False
+        self.robot.zero()
+        self.status = 'Item approach paused: waiting for fresh LiDAR and odometry'
+        print(json.dumps(dict(event='approach_sensors_paused', time_s=time.time(), task_id=self.task_id)), flush=True)
+        while True:
+            if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+                raise Stopped('Item approach cancelled or lease expired')
+            if not self.robot.driver_watchdog or not self.robot.exclusive or self.robot.ros.is_shutdown():
+                raise Stopped('Driver watchdog, exclusive output or ROS unavailable')
+            if not self.robot.grid or self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
+                raise Stopped('Map or no-go zones changed while approach paused')
+            if self.robot.sensors_ready():
+                try:
+                    self.robot.nav.wait_stopped(timeout=1)
+                except TimeoutError:
+                    continue
+                if self.robot.sensors_ready():
+                    break
+            time.sleep(.05)
+        self.status = previous
+        paused = time.monotonic() - started
+        print(json.dumps(dict(event='approach_sensors_resumed', time_s=time.time(), task_id=self.task_id, paused_s=paused)), flush=True)
+        return paused
+
     def travel_guard(self, pose, local_alignment=False):
         if getattr(self.robot, 'map_save_error', ''):
             raise RuntimeError('Map storage failed: ' + self.robot.map_save_error)
@@ -379,12 +412,16 @@ class Control:
                 raise UpdatePaused()
         if not self.localized and not local_alignment:
             raise RuntimeError('Set and confirm localization first')
-        if not self.robot.driver_watchdog or not self.robot.exclusive or not self.robot.sensors_ready():
+        if not self.robot.driver_watchdog or not self.robot.exclusive:
+            raise RuntimeError('Chassis watchdog, exclusive output and fresh sensors required')
+        paused = self.wait_approach_sensors() if self.phase == 'approaching_item' else 0
+        if self.phase != 'approaching_item' and not self.robot.sensors_ready():
             raise RuntimeError('Chassis watchdog, exclusive output and fresh sensors required')
         self.robot.nav.get_pose(timeout=.1)
         if not self.robot.clearance_ready(self.config['clearance_m']):
             raise RuntimeError('Planner footprint does not match measured clearance')
         self.robot.validate_goal(pose, self.config['clearance_m'])
+        return paused
 
     def fold(self):
         self.require_arm()
@@ -969,11 +1006,14 @@ class Control:
         response_path = self.directory / 'fetch_vision_response.json'
         history = []
 
+        self.phase = 'approaching_item'
+
         def current():
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
                 raise Stopped('Item approach cancelled or lease expired')
             if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
                 raise ValueError('Map or no-go zones changed during item approach')
+            self.wait_approach_sensors()
             self.travel_guard(self.robot.nav.get_pose())
 
         try:
@@ -1010,7 +1050,11 @@ class Control:
                 feedback = dict(feedback, yaw_rad=math.radians(feedback['yaw_deg']))
                 yaw_error = math.atan2(math.sin(feedback['yaw_rad'] - pose['yaw_rad']), math.cos(feedback['yaw_rad'] - pose['yaw_rad']))
                 if math.hypot(feedback['x_m'] - pose['x_m'], feedback['y_m'] - pose['y_m']) > .03 or abs(yaw_error) > math.radians(5):
-                    raise RuntimeError('Base pose changed after approach photo')
+                    self.status = 'Base pose changed: taking a fresh approach photo'
+                    print(json.dumps(dict(event='approach_photo_pose_changed', time_s=time.time(), task_id=self.task_id, photo_pose=pose, actual=feedback)), flush=True)
+                    history.append(dict(images=dict(front=capture['image']), base_pose=pose, after_pose=feedback,
+                                        commanded=dict(forward_m=0, turn_deg=0), estimate=estimate))
+                    continue
                 costmap = self.robot.costmaps['global'][3]
                 goal, corrected = approach_step(response['result'], dict(base_pose=pose), self.robot.grid,
                     self.robot.zones['zones'], costmap, item, self.config['clearance_m'], config)
@@ -1028,6 +1072,7 @@ class Control:
                 history.append(dict(images=dict(front=capture['image']), base_pose=pose, after_pose=after,
                                     commanded=dict(forward_m=(goal['x_m']-pose['x_m'])*math.cos(goal['yaw_rad']) + (goal['y_m']-pose['y_m'])*math.sin(goal['yaw_rad']),
                                         turn_deg=math.degrees(math.atan2(math.sin(goal['yaw_rad']-pose['yaw_rad']), math.cos(goal['yaw_rad']-pose['yaw_rad'])))), estimate=corrected))
+            raise RuntimeError('Item approach did not converge after 16 rounds')
         finally:
             self.base_enabled = False
             self.robot.zero()
@@ -1057,7 +1102,7 @@ class Control:
             while True:
                 if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision or self.robot.ros.is_shutdown():
                     raise Stopped('Map, no-go zones or ROS changed during approach movement')
-                self.travel_guard(goal)
+                deadline += self.travel_guard(goal) or 0
                 actual = self.robot.nav.get_pose()
                 measured = self.robot.nav.get_odom_pose()
                 error = math.atan2(math.sin(yaw-math.radians(measured['yaw_deg'])), math.cos(yaw-math.radians(measured['yaw_deg'])))

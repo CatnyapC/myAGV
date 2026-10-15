@@ -322,6 +322,11 @@ targets that move_base's arrival tolerance would otherwise skip. STOP, leases,
 fresh sensors and the full swept footprint/no-go checks stay active during travel.
 Only an explicit LLM turn produces angular velocity. Forward travel never adds
 endpoint steering or heading corrections; its current forward path is checked live.
+During approach, stale LiDAR/odometry pauses with zero velocity while keeping the
+task and Codex session. Fresh sensors and measured standstill allow resumption;
+paused time does not consume the chassis movement timeout. STOP, lease loss,
+map/no-go changes and driver faults still cancel. A changed base pose after a
+photo discards that adjustment and takes a fresh photo for the next round.
 Codex keeps one session for the approach. The first turn sends identity and GOAL;
 later turns send only CURRENT and actual movement feedback. Its compact six-field
 JSON omits repeated confidence, uncertainty and arrival flags. Location estimates

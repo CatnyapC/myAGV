@@ -34,6 +34,27 @@ def result(**values):
 
 
 class ApproachTest(unittest.IsolatedAsyncioTestCase):
+    def test_stale_approach_sensors_pause_without_cancelling_task(self):
+        c = fake_control()
+        c.phase, c.base_enabled, c.task_id = 'approaching_item', True, 'same-task'
+        c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
+        ready = [False]
+        c.robot.sensors_ready = lambda: ready[0]
+        c.watchdog()
+        self.assertFalse(c.base_enabled)
+        self.assertIsNone(c.stop_pending)
+        self.assertEqual(c.stop_epoch, 0)
+        with patch('robot_control.time.sleep', side_effect=lambda _: ready.__setitem__(0, True)):
+            c.travel_guard(POSE)
+        self.assertEqual(c.task_id, 'same-task')
+        self.assertEqual(c.phase, 'approaching_item')
+        self.assertEqual(c.stop_epoch, 0)
+        c.robot.nav.wait_stopped.assert_called_with(timeout=1)
+        ready[0] = False
+        with patch('robot_control.time.sleep', side_effect=lambda _: setattr(c, 'stop_pending', 'STOP')):
+            with self.assertRaises(Stopped):
+                c.wait_approach_sensors()
+
     def test_bounded_corrections_and_visible_off_center_item_can_finish(self):
         grid = open_map()
         goal, _ = approach_step({**result(), 'forward_m': .25, 'turn_deg': 15, 'bearing_deg': 40},
@@ -59,12 +80,13 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
 
     def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
-        for action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
+        for action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
             with self.subTest(action=action):
                 c = fake_control()
                 c.robot.grid, c.robot.zones = open_map(), dict(revision=2, zones=[])
                 c.robot.costmaps = {'global': (0, 2, True, c.robot.grid)}
                 c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
+                if action == 'sensor_pause': c.phase = 'approaching_item'
                 c.robot.velocity = (0, 0, 0)
                 c.deadline = .45
                 measured, now, commands = dict(x_m=2, y_m=3, yaw_deg=0), [0.], []
@@ -88,6 +110,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                         measured['y_m'] += velocity[0]*seconds*math.sin(math.radians(measured['yaw_deg']))
                     if action == 'stop': c.stop_pending = 'STOP'
                     if action == 'sensors': c.robot.sensors_ready = lambda: False
+                    if action == 'sensor_pause': c.robot.sensors_ready = lambda: now[0] >= 10
                     if action == 'zones': c.robot.zones['revision'] += 1
                     if action in ('obstacle', 'drift_obstacle'): c.robot.grid['cells'][30*80+21] = 100
                     if action == 'reverse_obstacle': c.robot.grid['cells'][30*80+19] = 100
@@ -96,7 +119,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 goal = dict(x_m=2 if action == 'turn' else 2+distance*math.cos(turn),
                             y_m=3 if action == 'turn' else 3+distance*math.sin(turn), yaw_rad=turn)
                 with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
-                    if action in ('forward', 'reverse', 'reverse_clamp', 'turn', 'clamp', 'drift', 'heading_drift', 'overshoot'):
+                    if action in ('forward', 'reverse', 'reverse_clamp', 'turn', 'clamp', 'drift', 'heading_drift', 'sensor_pause', 'overshoot'):
                         c.move_approach(goal, POSE)
                     else:
                         with self.assertRaises((Stopped, RuntimeError, ValueError)):
@@ -277,21 +300,29 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 c.approach_item(packet)
             c.deadline = time.monotonic() + 60
             c.robot.sensors_ready = lambda: False
-            with self.assertRaisesRegex(RuntimeError, 'fresh sensors'):
-                c.approach_item(packet)
+            c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
+            with patch('robot_control.time.sleep', side_effect=lambda _: setattr(c, 'stop_pending', 'STOP')):
+                with self.assertRaises(Stopped):
+                    c.approach_item(packet)
+            c.stop_pending = None
             c.robot.sensors_ready = lambda: True
             answers = iter([{**result(), 'seen': False}])
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'lost'):
                 c.approach_item(packet)
             c.move_approach.assert_not_called()
-            answers = iter([result()])
+            answers = iter([result(), {**result(), 'forward_m': 0, 'current': result()['goal']}])
+            requests.clear()
 
             def changed_pose(path, value):
                 respond(path, value)
-                pose['x_m'] += .04
+                if len(requests) == 1:
+                    pose['x_m'] += .04
 
-            with patch('robot_control.atomic_json', side_effect=changed_pose), self.assertRaisesRegex(RuntimeError, 'pose changed'):
-                c.approach_item(packet)
+            with patch('robot_control.atomic_json', side_effect=changed_pose):
+                self.assertEqual(c.approach_item(packet)['outcome'], 'arrived')
+            self.assertEqual(len(requests), 2)
+            self.assertAlmostEqual(requests[1]['base_pose']['x_m'], requests[0]['base_pose']['x_m']+.04)
+            self.assertEqual(requests[1]['history'][-1]['commanded']['forward_m'], 0)
             c.move_approach.assert_not_called()
             answers = iter([result()])
 
