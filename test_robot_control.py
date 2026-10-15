@@ -243,12 +243,14 @@ class ControlTest(unittest.TestCase):
                 c.config['transport_angles'] = None
                 c.deadline = time.monotonic() + .45
                 c.fold = Mock(side_effect=AssertionError('Go must not move the arm'))
+                c.robot.path = [[-1, -1]]
                 self.assertTrue(c.snapshot()['navigation_ready'])
                 c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=math.pi / 2)))
                 c.fold.assert_not_called()
                 c.robot.nav.go_to.assert_called_once_with(dict(x_m=1, y_m=2, yaw_deg=90),
                                                          position_tolerance=.10, yaw_tolerance=10)
                 c.robot.zero.assert_called_once()
+                self.assertEqual(c.robot.path, [])
                 self.assertFalse(c.base_enabled)
                 c.localized = False
                 self.assertFalse(c.snapshot()['navigation_ready'])

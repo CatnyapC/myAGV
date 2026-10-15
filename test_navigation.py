@@ -22,32 +22,48 @@ STATION = {"base": POSE, "arm_angles_deg": [90, 20, 30]}
 
 
 class NavigationTurnPatchTest(unittest.TestCase):
-    def test_only_rotation_score_changes_and_install_is_idempotent(self):
+    scoring = ('      //the point is legal... add it to the trajectory\n'
+               'cost = path_distance_bias_ * path_dist + goal_dist * goal_distance_bias_ + occdist_scale_ * occ_cost;\n'
+               'if(best_traj->cost_ == -1.0)\n      best_traj->cost_ = 1.0;\n')
+
+    def test_heading_and_collision_patch_is_scoped_and_idempotent(self):
         score = 'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;'
-        source = ('//next we want to generate trajectories for rotating in place\n'
+        source = self.scoring + ('//next we want to generate trajectories for rotating in place\n'
                   + score + '\n//do we have a legal trajectory\n' + score)
         updated = patch_navigation_turn(source)
         self.assertIn('headingDiff(cell_x, cell_y, x_r, y_r, th_r)', updated)
         self.assertEqual(updated.count(score), 1)
         self.assertTrue(updated.endswith(score))
         self.assertEqual(patch_navigation_turn(updated), updated)
-        for invalid in ('', source.replace(score, ''), source.replace(score, score * 2)):
+        self.assertIn('i == num_steps - 1', updated)
+        self.assertIn('if (heading_diff == DBL_MAX) { traj.cost_ = -2.0; return; }', updated)
+        self.assertIn('occ_cost + 0.3 * heading_diff;', updated)
+        self.assertIn('MYAGV_COLLISION_STOP', updated)
+        self.assertNotIn('best_traj->cost_ = 1.0;', updated)
+        heading_only = source.replace(score, 'double ahead_gdist = headingDiff(cell_x, cell_y, x_r, y_r, th_r); // MYAGV_SHORTEST_TURN', 1)
+        self.assertEqual(patch_navigation_turn(heading_only), updated)
+        for invalid in ('', source.replace(score, ''), source.replace(score, score * 2),
+                        source.replace(self.scoring, ''), source + self.scoring,
+                        source.replace('best_traj->cost_ = 1.0;', '')):
             with self.subTest(source=invalid), self.assertRaises(ValueError):
                 patch_navigation_turn(invalid)
 
     def test_installer_preserves_backup_and_refuses_overwriting_it(self):
-        source = ('//next we want to generate trajectories for rotating in place\n'
+        source = self.scoring + ('//next we want to generate trajectories for rotating in place\n'
                   'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;\n'
                   '//do we have a legal trajectory\n')
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'trajectory_planner.cpp'
             path.write_text(source)
+            old_backup = path.with_suffix('.cpp.before-shortest-turn')
+            old_backup.write_text('original upstream source')
             command = [sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')), str(path)]
             for _ in range(2):
                 subprocess.run(command, check=True, capture_output=True, text=True)
             self.assertEqual(path.read_text(), patch_navigation_turn(source))
-            backup = path.with_suffix('.cpp.before-shortest-turn')
+            backup = path.with_suffix('.cpp.before-shortest-turn-v2')
             self.assertEqual(backup.read_text(), source)
+            self.assertEqual(old_backup.read_text(), 'original upstream source')
             path.write_text(source)
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
@@ -305,6 +321,26 @@ class NavigationTest(unittest.TestCase):
         self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + .11)
         with self.assertRaisesRegex(RuntimeError, 'tolerance'):
             self.nav.go_to(POSE, position_tolerance=.10, yaw_tolerance=10)
+
+    def test_web_planner_preserves_arrival_latch_and_turn_limits(self):
+        launch = ET.parse(Path(__file__).with_name('web_hardware.launch')).getroot()
+        node = launch.find("node[@name='move_base']")
+        params = dict(line.strip().split(': ', 1) for line in node.findall('rosparam')[-1].text.splitlines()
+                      if ': ' in line and not line.lstrip().startswith('#'))
+        # move_base still replans when local control fails; a timer must not reset the XY latch.
+        self.assertEqual(float(params['planner_frequency']), 0)
+        self.assertEqual(params['latch_xy_goal_tolerance'], 'true')
+        turn_max = float(params['max_rotational_vel'])
+        self.assertEqual(turn_max, .1)
+        self.assertEqual(float(params['max_vel_theta']), turn_max)
+        self.assertEqual(float(params['min_vel_theta']), -turn_max)
+        self.assertLess(float(params['min_in_place_vel_theta']) / float(params['controller_frequency']),
+                        2 * float(params['yaw_goal_tolerance']))
+        self.assertEqual(float(params['max_vel_x']), .1)
+        self.assertLess(float(params['xy_goal_tolerance']), .10)
+        self.assertLess(float(params['yaw_goal_tolerance']), math.radians(10))
+        self.assertEqual(params['recovery_behavior_enabled'], 'false')
+        self.assertEqual(params['clearing_rotation_allowed'], 'false')
 
     def test_timeout_cancels_and_waits_for_ack(self):
         self.nav.client.get_state.return_value = 1

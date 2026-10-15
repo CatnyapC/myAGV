@@ -1,4 +1,4 @@
-"""Remove TrajectoryPlanner's clockwise sampling bias during in-place turns."""
+"""Score path-directed turns and preserve TrajectoryPlanner collision failures."""
 from pathlib import Path
 import sys
 
@@ -12,11 +12,29 @@ def patch(source):
     old = 'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;'
     new = ('double ahead_gdist = headingDiff(cell_x, cell_y, x_r, y_r, th_r);'
            ' // MYAGV_SHORTEST_TURN')
-    if rotation.count(new) == 1 and old not in rotation:
+    if rotation.count(new) != 1 or old in rotation:
+        if rotation.count(old) != 1:
+            raise ValueError('Unexpected rotation score; refused partial patch')
+        source = source[:start] + rotation.replace(old, new) + source[end:]
+    anchor = '      //the point is legal... add it to the trajectory'
+    heading = ('      // MYAGV_ENDPOINT_HEADING: score forward arcs without dense time sampling.\n'
+               '      if (!heading_scoring_ && i == num_steps - 1) {\n'
+               '        heading_diff = headingDiff(cell_x, cell_y, x_i, y_i, theta_i);\n'
+               '        if (heading_diff == DBL_MAX) { traj.cost_ = -2.0; return; }\n'
+               '      }\n\n')
+    cost = 'cost = path_distance_bias_ * path_dist + goal_dist * goal_distance_bias_ + occdist_scale_ * occ_cost;'
+    scored = cost[:-1] + ' + 0.3 * heading_diff;'
+    if not (source.count(heading + anchor) == 1 and source.count(scored) == 1 and cost not in source):
+        if source.count(anchor) != 1 or source.count(cost) != 1 or 'MYAGV_ENDPOINT_HEADING' in source:
+            raise ValueError('Unexpected trajectory score; refused partial patch')
+        source = source.replace(anchor, heading + anchor).replace(cost, scored)
+    unsafe = 'if(best_traj->cost_ == -1.0)\n      best_traj->cost_ = 1.0;'
+    safe = '// MYAGV_COLLISION_STOP: keep failed collision checks invalid.'
+    if source.count(safe) == 1 and unsafe not in source:
         return source
-    if rotation.count(old) != 1:
-        raise ValueError('Unexpected rotation score; refused partial patch')
-    return source[:start] + rotation.replace(old, new) + source[end:]
+    if source.count(unsafe) != 1:
+        raise ValueError('Unexpected escape collision check; refused partial patch')
+    return source.replace(unsafe, safe)
 
 
 if __name__ == '__main__':
@@ -24,7 +42,7 @@ if __name__ == '__main__':
     original = path.read_text()
     updated = patch(original)
     if updated != original:
-        backup = path.with_suffix(path.suffix + '.before-shortest-turn')
+        backup = path.with_suffix(path.suffix + '.before-shortest-turn-v2')
         if backup.exists():
             raise SystemExit('Backup exists; inspect previous installation first')
         backup.write_text(original)

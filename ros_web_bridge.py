@@ -199,7 +199,7 @@ def main():
                 atomic_json(directory / 'state.json', dict(stamp_s=time.time(), pose=pose, pose_stamp_s=stamp,
                             battery=robot.battery,
                             frame=grid.get('frame'), map_id=grid.get('map_id'),
-                            path=robot.path if fresh(robot.path_at, time.monotonic(), 2) and control.base_enabled else []))
+                            path=robot.path if control.phase == 'navigating' and control.base_enabled else []))
                 atomic_json(directory / 'control.json', control.snapshot())
                 if robot.zones:
                     atomic_json(directory / 'zones.json', robot.zones)
