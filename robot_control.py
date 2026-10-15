@@ -951,12 +951,12 @@ class Control:
                 update['captures'] += 1
                 update['completed'] += 1
                 if update['completed'] == len(update['goals']):
-                    update['pause_requested'], update['pause_reason'] = True, 'View queue completed; item observations captured'
-                    self.wait_update()
-                    update['completed'] = 0
-                    update['round'] += 1
+                    update['state'] = 'complete'
+                    return dict(captures=update['captures'])
         finally:
-            update['active'], update['state'] = False, 'interrupted'
+            update['active'] = False
+            if update['state'] != 'complete':
+                update['state'] = 'interrupted'
 
     def approach_item(self, packet):
         config = location_config(packet['location_config'])

@@ -1,19 +1,23 @@
 """Visual estimate boundaries, reachable previews and asynchronous API lifecycle."""
 import asyncio
+import base64
 from copy import deepcopy
 import json
 import math
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
-from unittest.mock import patch
+import uuid
+from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 from web_backend.item_locations import DEFAULT_CONFIG, approach_goal, estimate_items, project_estimates
 from web_backend.map_data import local_to_world
 from web_backend.photos import PhotoIndex, demo_frame
-from web_backend.server import create_app
+from web_backend.server import EDITOR, create_app
+from web_backend.storage import atomic_json
 from web_backend.simulation import global_costmap, navigation_grid, plan_path
 
 
@@ -81,11 +85,116 @@ class LocationGeometryTest(unittest.TestCase):
 
 
 class LocationAPITest(unittest.IsolatedAsyncioTestCase):
+    async def test_multiview_payload_omits_raw_grid_and_projects_each_chosen_pose(self):
+        from fetch_calibration import FETCH_VISION_TIMEOUT_S
+        from web_backend.codex_bridge import MODEL, inputs
+        photo = dict(id='last', base_pose=dict(x_m=4, y_m=4, yaw_rad=math.pi / 2))
+        views = [dict(id='first', base_pose=dict(x_m=1.5, y_m=3, yaw_rad=0),
+                      image='data:image/png;base64,' + base64.b64encode(demo_frame('front')).decode())]
+        items = [dict(id=name, name=name, appearance=name) for name in ('cup', 'tea')]
+        grid = {**open_map(), 'raw_cells': [0] * 400000}
+        trace = {}
+        invalid_view = None
+
+        async def provider(body, key, timeout, **kwargs):
+            self.assertEqual(timeout, FETCH_VISION_TIMEOUT_S)
+            inputs(body)  # The previous raw_cells payload exceeded this boundary.
+            context = json.loads(body['messages'][1]['content'][0]['text'])
+            self.assertNotIn('raw_cells', context['map'])
+            self.assertNotIn('cells', context['map'])
+            self.assertEqual(len([p for p in body['messages'][1]['content'] if p['type'] == 'image_url']), 3)
+            return dict(estimates=[dict(item_id=name, view_index=invalid_view if invalid_view is not None else i, bearing_deg=0, distance_m=1,
+                                       uncertainty_m=.4, confidence=.9) for i, name in enumerate(('cup', 'tea'))])
+
+        with patch('web_backend.resolve.request_json', provider):
+            result = await estimate_items(demo_frame('front'), demo_frame('front'), grid, photo, items,
+                                          'fake', DEFAULT_CONFIG, model=MODEL, views=views, trace=trace)
+        self.assertEqual([e['photo_id'] for e in result], ['first', 'last'])
+        self.assertAlmostEqual(result[0]['x_m'], 2.5)
+        self.assertAlmostEqual(result[1]['y_m'], 5)
+        self.assertIn('view_index', trace['result_json'])
+        from aiohttp import web
+        for invalid_view in (-1, 2, True):
+            with self.subTest(view_index=invalid_view), patch('web_backend.resolve.request_json', provider):
+                with self.assertRaises(web.HTTPBadGateway):
+                    await estimate_items(demo_frame('front'), demo_frame('front'), grid, photo, items,
+                                         'fake', DEFAULT_CONFIG, model=MODEL, views=views)
+
+    async def test_waypoint_captures_automatically_start_one_multiview_turn_and_enable_approach(self):
+        from web_backend.codex_bridge import MODEL, inputs
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ui, bridge = root / 'ui', root / 'ros'
+            grid = open_map()
+            atomic_json(bridge / 'map.json', grid)
+            atomic_json(ui / 'settings.json', dict(revision=0, values=dict(auto_align=False,
+                        manual_angle_deg=0, llm_model=MODEL, reasoning_effort='low', fast_mode=True)))
+            store = PhotoIndex(ui, root / 'stations.json')
+            ref = store.add(demo_frame('front'), dict(kind='reference', source='phone'), 0)
+            store.edit(ref['id'], dict(expected_revision=1, item_id='new', name='Cup', appearance='Red', confirmed=True), grid['map_id'])
+            item_id = store.value['items'][0]['id']
+            poses = [dict(x_m=1.5, y_m=3, yaw_rad=0), dict(x_m=2, y_m=3, yaw_rad=0)]
+            captures = [str(uuid.uuid4()), str(uuid.uuid4())]
+
+            def capture(i):
+                pose = poses[i]
+                path = bridge / 'captures' / captures[i]
+                atomic_json(path.with_suffix('.json'), dict(kind='observation', source='ros', camera_id='front',
+                            capture_id=captures[i], captured_at_s=time.time(), map_id=grid['map_id'], map_revision=1,
+                            frame='map', base_pose=pose, current=True,
+                            update_key='%.2f:%.2f:%.2f' % (pose['x_m'], pose['y_m'], pose['yaw_rad'])))
+                path.with_suffix('.png').write_bytes(demo_frame('front'))
+
+            calls = []
+            async def provider(body, key, timeout, trace=None, **kwargs):
+                calls.append(body)
+                inputs(body)
+                self.assertEqual(len([p for p in body['messages'][1]['content'] if p['type'] == 'image_url']), 3)
+                trace['codex'] = dict(thread_id='item-session', turn_id='turn', service_tier='priority')
+                return dict(estimates=[dict(item_id=item_id, view_index=0, bearing_deg=0,
+                                           distance_m=3, uncertainty_m=.4, confidence=.9)])
+
+            with patch('web_backend.server.load_token', return_value=('configured', 'fake')), \
+                 patch('web_backend.resolve.request_json', provider):
+                app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
+                hardware = app[EDITOR].hardware
+                hardware.refresh, hardware.stop = Mock(), AsyncMock()
+                hardware.costmap = Mock(return_value=grid)
+                hardware.control = dict(phase='navigating', navigation_ready=True, zones_ready=True,
+                                        map_update=dict(active=True, completed=1, goals=poses))
+                async with TestClient(TestServer(app)) as client:
+                    capture(0)
+                    await asyncio.sleep(.65)
+                    self.assertEqual(calls, [])
+                    hardware.control.update(phase='idle', map_update=dict(active=False, state='complete', completed=2, goals=poses))
+                    await asyncio.sleep(.55)
+                    self.assertEqual(calls, [])  # Second acquisition has not been imported yet.
+                    capture(1)
+                    for _ in range(100):
+                        index = await (await client.get('/api/items')).json()
+                        if index['locations']:
+                            break
+                        await asyncio.sleep(.05)
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(index['locations'][0]['x_m'], 4.5)
+                    self.assertEqual(index['locations'][0]['base_pose'], poses[0])
+                    self.assertTrue(all(p['location_analysis']['status'] == 'complete' for p in index['photos'] if p['kind'] == 'observation'))
+                    log = await (await client.get('/api/fetch-log')).json()
+                    self.assertEqual(log['rounds'][0]['mode'], 'locations')
+                    self.assertEqual(log['rounds'][0]['codex']['thread_id'], 'item-session')
+                    hardware.control['stamp_s'] = time.time()
+                    hardware.snapshot = dict(stamp_s=time.time(), pose_stamp_s=time.time(), frame='map',
+                                             map_id=grid['map_id'], pose=poses[1])
+                    location = index['locations'][0]
+                    response = await client.post('/api/item-locations/approach', json=dict(map_id=grid['map_id'],
+                        expected_revision=index['revision'], zone_revision=0, item_id=item_id, photo_id=location['photo_id']))
+                    self.assertEqual(response.status, 200, await response.text())
+
     async def test_model_receives_both_images_and_only_validated_measurements_survive(self):
         from aiohttp import web
         photo = dict(base_pose=dict(x_m=1.5, y_m=3, yaw_rad=0))
         items = [dict(id='cup', name='Cup', appearance='Red')]
-        async def provider(body, key, timeout, fast_mode=True):
+        async def provider(body, key, timeout, fast_mode=True, trace=None):
             self.assertEqual(len([e for e in body['messages'][1]['content'] if e['type'] == 'image_url']), 2)
             context = json.loads(body['messages'][1]['content'][0]['text'])
             self.assertEqual(context['captured_base_pose'], photo['base_pose'])
@@ -94,7 +203,7 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
         with patch('web_backend.resolve.request_json', provider):
             result = await estimate_items(demo_frame('front'), demo_frame('front'), open_map(), photo, items, 'fake', DEFAULT_CONFIG)
             self.assertEqual(result[0]['x_m'], 2.5)
-        async def malicious(body, key, timeout, fast_mode=True):
+        async def malicious(body, key, timeout, fast_mode=True, trace=None):
             return dict(estimates=[dict(item_id='cup', bearing_deg=0, distance_m=1, uncertainty_m=.4, confidence=.9, command='go')])
         with patch('web_backend.resolve.request_json', malicious):
             with self.assertRaises(web.HTTPBadGateway):
@@ -112,7 +221,7 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
                         base_pose=dict(x_m=1.5, y_m=3, yaw_rad=0)), 2)
             mode, entered, release = 'ok', asyncio.Event(), asyncio.Event()
 
-            async def infer(image, map_image, map_info, observation, items, key, config, model=None, fast_mode=True):
+            async def infer(image, map_image, map_info, observation, items, key, config, model=None, fast_mode=True, views=(), trace=None):
                 self.assertTrue(image.startswith(b'\x89PNG'))
                 self.assertTrue(map_image.startswith(b'\x89PNG'))
                 self.assertEqual(observation['base_pose']['x_m'], 1.5)

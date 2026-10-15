@@ -5,7 +5,7 @@ import type { LogReporter } from './activityLog';
 
 type Part = { type: string; text?: string; image_url?: { url: string } };
 type Round = {
-  id: string; round: number; mode?: 'grasp' | 'approach'; stage?: 'base' | 'arm'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
+  id: string; round: number; mode?: 'grasp' | 'approach' | 'locations'; stage?: 'base' | 'arm'; preview: boolean; status: string; elapsed_s?: number; started_at_s: number;
   model?: string; messages?: [{ content: string }, { content: Part[] }];
   result_json?: string; correction?: { X: number; Y?: number; turn_deg: number }; error?: string;
   measurement?: { goal: number[]; current: number[] };
@@ -44,17 +44,17 @@ export function LLMTurns(props: { connected: boolean; onLog: LogReporter }) {
       const status = `${round.status}:${round.error ?? ''}`;
       next.set(round.id, status);
       if (roundStatus.current.get(round.id) !== status) {
-        props.onLog(`Round ${round.round} · ${round.preview ? 'Preview' : round.mode === 'approach' ? 'Approach' : 'Align'} · ${round.status}${round.error ? ` · ${round.error}` : ''}`, round.error ? 'error' : 'info', 'Calibration');
+        props.onLog(`Round ${round.round} · ${round.mode === 'locations' ? 'Item positions' : round.preview ? 'Preview' : round.mode === 'approach' ? 'Approach' : 'Align'} · ${round.status}${round.error ? ` · ${round.error}` : ''}`, round.error ? 'error' : 'info', 'Calibration');
       }
     }
     roundStatus.current = next;
   }, [rounds, props.onLog]);
   return <div className="llm-turns">
-    <span className="muted" role="status">{rounds.length ? `${rounds.length} turns` : 'No LLM turns yet. Run PREVIEW, ALIGN or FETCH.'}</span>
+    <span className="muted" role="status">{rounds.length ? `${rounds.length} turns` : 'No LLM turns yet. Update item positions, or run PREVIEW, ALIGN or FETCH.'}</span>
     {rounds.map(round => {
       const parts = round.messages?.[1].content ?? [];
       return <article className="fetch-round" key={round.id}>
-        <header><strong>Round {round.round}</strong><span>{round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.stage || round.mode} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
+        <header><strong>Round {round.round}</strong><span>{round.mode === 'locations' ? 'Item positions' : round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.stage || round.mode} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
         <span className="muted">{new Date(round.started_at_s * 1000).toLocaleTimeString()} · {round.model}</span>
         {round.result_json && <pre>Output: {round.result_json}</pre>}
         <div className="fetch-log-images">{round.measured_images?.map(view => <figure key={view.label}>

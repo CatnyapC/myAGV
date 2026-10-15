@@ -761,37 +761,67 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     continue
                 if editor.hardware and editor.hardware.control.get('phase') not in ('idle', 'update_paused', 'updating_map', 'navigating'):
                     continue
+                update = (editor.hardware.control.get('map_update') or {}) if editor.hardware else {}
+                if update.get('active') and update.get('completed', 0) < len(update.get('goals', [])):
+                    continue
                 signature = catalog_signature(photos.value['items'])
-                photo = next((p for p in photos.value['photos']
+                candidates = [p for p in photos.value['photos']
                               if p.get('map_id') == editor.grid['map_id'] and p.get('camera_id') == 'front'
                               and p.get('frame') == editor.grid['frame']
                               and (p.get('source') == 'ros' or p.get('location_analysis', {}).get('status') in ('queued', 'running'))
-                              and p.get('current', True) and photos.image_path(p['id']).is_file()
-                              and (p.get('location_analysis', {}).get('catalog_signature') != signature
+                              and p.get('current', True) and photos.image_path(p['id']).is_file()]
+                candidates.sort(key=lambda p: p['captured_at_s'])
+                photo = next((p for p in reversed(candidates)
+                              if (p.get('location_analysis', {}).get('catalog_signature') != signature
                                    or p.get('location_analysis', {}).get('status') in ('queued', 'running'))), None)
                 if not photo:
                     continue
+                keys = {'%.2f:%.2f:%.2f' % (p['x_m'], p['y_m'], p['yaw_rad']) for p in update.get('goals', [])}
+                if (update.get('completed', 0) >= len(keys) and photo.get('update_key') in keys
+                        and not keys <= {p.get('update_key') for p in candidates}):
+                    continue  # Wait until every captured waypoint has been imported.
+                # shortcut: six earlier views plus current and map fit the bridge's eight-image limit.
+                earlier = [p for p in candidates if p['id'] != photo['id'] and p.get('update_key')
+                           and (not keys or p['update_key'] in keys)][-6:] if photo.get('update_key') else []
+                batch = earlier + [photo]
                 grid, map_info, map_png, generation = editor.grid, editor.metadata, editor.png, editor.generation
                 items = [dict(i) for i in photos.value['items']]
                 async with photo_lock:
-                    photos.set_locations(photo['id'], dict(status='running', catalog_signature=signature, estimates=[]), photos.value['revision'])
+                    for view in batch:
+                        photos.set_locations(view['id'], dict(status='running', catalog_signature=signature, estimates=[]), photos.value['revision'])
+                entry = dict(id=str(uuid.uuid4()), round=len(fetch_log['rounds']) + 1, mode='locations',
+                             preview=False, status='requesting', started_at_s=time.time())
+                fetch_log['rounds'] = (fetch_log['rounds'] + [entry])[-33:]
+                fetch_log['revision'] += 1
+                started = time.monotonic()
                 await editor.emit('photos')
                 try:
                     image = await asyncio.to_thread(photos.image_path(photo['id']).read_bytes)
+                    views = [dict(id=p['id'], base_pose=p['base_pose'], image=await asyncio.to_thread(photos.reference_image, p['id'])) for p in earlier]
                     model = editor.settings['values']['llm_model']
-                    estimates = await estimate_items(image, map_png, map_info, photo, items, model_key(model), location_calibration, model=model, fast_mode=editor.settings['values']['fast_mode'])
+                    async with resolve_lock:
+                        estimates = await estimate_items(image, map_png, map_info, photo, items, model_key(model), location_calibration,
+                                                         model=model, fast_mode=editor.settings['values']['fast_mode'], views=views, trace=entry)
                     analysis = dict(status='complete', catalog_signature=signature, estimates=estimates)
                 except (web.HTTPException, OSError, ValueError, RuntimeError) as exc:
-                    analysis = dict(status='error', catalog_signature=signature, estimates=[], error=str(exc)[:300])
+                    error = exc.text if isinstance(exc, web.HTTPException) else str(exc)
+                    analysis = dict(status='error', catalog_signature=signature, estimates=[], error=error[:300])
                 async with photo_lock:
-                    current = next((p for p in photos.value['photos'] if p['id'] == photo['id']), None)
-                    if not current or not current.get('current', True):
-                        continue
-                    if grid['map_id'] != editor.grid['map_id'] or generation != editor.generation:
+                    current = {p['id'] for p in photos.value['photos'] if p.get('current', True)}
+                    if (grid['map_id'] != editor.grid['map_id'] or generation != editor.generation
+                            or not all(p['id'] in current for p in batch)):
                         analysis = dict(status='cancelled', catalog_signature=signature, estimates=[])
                     elif catalog_signature(photos.value['items']) != signature:
-                        continue
-                    photos.set_locations(photo['id'], analysis, photos.value['revision'])
+                        analysis = dict(status='cancelled', catalog_signature=signature, estimates=[])
+                    for view in batch:
+                        if view['id'] in current:
+                            measured = [{k: v for k, v in e.items() if k != 'photo_id'} for e in analysis['estimates']
+                                        if e.get('photo_id', photo['id']) == view['id']]
+                            photos.set_locations(view['id'], {**analysis, 'estimates': measured}, photos.value['revision'])
+                entry.update(status=analysis['status'], elapsed_s=round(time.monotonic() - started, 2))
+                if analysis.get('error'):
+                    entry['error'] = analysis['error']
+                fetch_log['revision'] += 1
                 await editor.emit('photos')
 
         async def fetch_vision():

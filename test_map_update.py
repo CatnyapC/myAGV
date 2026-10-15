@@ -100,7 +100,7 @@ class MapUpdateTest(unittest.TestCase):
         c.robot.nav.wait_stopped.assert_called_once()
         c.robot.commit_map_update.assert_not_called()
 
-    def test_pause_retries_current_view_and_updates_repeat_until_cancelled(self):
+    def test_pause_retries_current_view_then_finishes_all_captures(self):
         c = fake_control()
         c.robot.grid['revision'] = 1
         c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
@@ -116,8 +116,6 @@ class MapUpdateTest(unittest.TestCase):
             if len(dispatched) == 1:
                 c.receive({**packet(), 'type': 'update_pause', 'task_id': c.task_id})
                 c.travel_guard(pose)
-            if len(dispatched) == 5:
-                raise Stopped('STOP')
         c.go = go
         pauses = []
         def resume(_seconds):
@@ -126,16 +124,17 @@ class MapUpdateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             c.directory = Path(directory)
             with patch('robot_control.wait_arm', return_value=[0, 10, 20]), patch('robot_control.time.sleep', side_effect=resume):
-                with self.assertRaises(Stopped):
-                    c.run_update(dict(limit_s=60))
+                self.assertEqual(c.run_update(dict(limit_s=60)), dict(captures=2))
         self.assertEqual(dispatched[0], dispatched[1])
-        self.assertEqual(pauses, [(0, 0), (2, 2)])
-        self.assertEqual(dispatched[1], dispatched[3])
+        self.assertEqual(pauses, [(0, 0)])
+        self.assertEqual(len(dispatched), 3)
+        self.assertEqual(dispatched[2]['x_m'], poses[1]['x_m'])
         captures = [call for call in c.capture.call_args_list if 'update_key' in call.kwargs]
-        self.assertEqual(len(captures), 3)
-        self.assertEqual(captures[0].kwargs['update_key'], captures[2].kwargs['update_key'])
+        self.assertEqual(len(captures), 2)
+        self.assertNotEqual(captures[0].kwargs['update_key'], captures[1].kwargs['update_key'])
         self.assertFalse(c.map_update['active'])
-        self.assertEqual(c.map_update['state'], 'interrupted')
+        self.assertEqual(c.map_update['state'], 'complete')
+        self.assertEqual(c.map_update['completed'], 2)
         c.fold.assert_not_called()
 
     def test_navigation_guard_enforces_window_even_without_ros_timer(self):

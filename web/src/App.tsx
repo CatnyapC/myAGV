@@ -146,7 +146,7 @@ export function App() {
     else if (state?.hardware?.saved_map_revision) log(`Map saved · revision ${state.hardware.saved_map_revision}`, 'info', 'Map');
   }, [state?.hardware?.map_save_error, state?.hardware?.saved_map_revision, log]);
   const update = state?.hardware?.map_update;
-  const updateStatus = update ? `${update.state === 'planned' ? 'Item views planned' : state?.phase === 'update_paused' ? 'Item updates paused' : update.active ? 'Updating item positions' : 'Item updates interrupted'} · round ${update.round} · ${update.completed}/${update.goals.length} views · ${update.captures} captures` : '';
+  const updateStatus = update ? `${update.state === 'planned' ? 'Item views planned' : state?.phase === 'update_paused' ? 'Item updates paused' : update.active ? 'Updating item positions' : update.state === 'complete' ? 'Item views captured' : 'Item updates interrupted'} · round ${update.round} · ${update.completed}/${update.goals.length} views · ${update.captures} captures` : '';
   useEffect(() => { if (updateStatus) log(updateStatus, 'info', 'Map'); }, [updateStatus, log]);
   useEffect(() => { if (saveError) log(saveError, 'error', 'Settings'); }, [saveError, log]);
   useEffect(() => { if (layoutError) log(layoutError, 'error', 'Layout'); }, [layoutError, log]);

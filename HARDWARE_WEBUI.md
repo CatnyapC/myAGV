@@ -267,21 +267,23 @@ Grasp and possession still require the existing operator confirmations. Web STOP
 sends M15 but may not interrupt an absolute move; physical stopping remains a
 supervised acceptance check.
 
-**Item position updates** repeatedly capture observations and update item coordinates in the current reachable area.
-Use **Preview update points**, then **Start updating**. **Pause updating** retains
+**Item position updates** capture each selected viewing pose once.
+Use **Preview update points**, then **Start item update**. **Pause item updates** retains
 the current view and all map/photo records. The default window is 10 minutes (1–60 minutes);
 expiry pauses updating. Starting again after expiry opens a new window. Operator
 pauses count toward the same wall-clock window. STOP/disconnect cancel motion;
 reconnection never starts updating automatically.
 
-Automatic points use the robot's connected free global-costmap region, measured
-clearance and no-go enforcement. Unknown/disconnected/blocked space is excluded.
-Default viewing spacing is 1 m (0.5–3 m), with four stopped headings at each site
-and at most 200 views spread across the region. Square clearance is conservative.
-Points are viewing samples, not guaranteed visual coverage. A new map revision
-refreshes the automatic points on the next round. Up to 20 manually
-selected views can instead be repeated. Preview markers show headings; move_base
-still computes the actual travel paths. Every goal is revalidated before travel.
+Select up to 20 saved viewing poses. Preview markers show headings; move_base
+computes the actual travel paths. Every goal is revalidated before travel.
+After the last capture the controller returns to idle. The configured LLM
+automatically assesses the current photo and up to six earlier views together,
+using each acquisition's measured base pose and the occupancy-map image. Raw
+occupancy arrays are excluded from the prompt. Estimates are projected from the
+model's chosen source view, including items visible only in an earlier view.
+LLM ROUNDS shows this assessment's inputs, output, errors and Codex thread.
+Select a confident item estimate to enable **SLOW APPROACH TEST**, subject to the
+existing localization, sensor, no-go and stopped-controller checks.
 
 Each revisit replaces its latest unlabelled photo. Confirmed old photos stay as
 historical evidence; new images never inherit a moving object's old identity.
