@@ -1122,7 +1122,7 @@ class Control:
                 validate_approach_path(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
                     dict(actual, yaw_rad=actual_yaw), path_goal, self.config['clearance_m'])
                 self.base_enabled = True
-                speed = 0 if turning else direction*min(.03, max(.005, travel))
+                speed = 0 if turning else direction*min(.03, max(.01, travel))
                 angular = math.copysign(min(.1, max(.015, abs(error))), error) if turning else 0
                 self.robot.velocity, self.robot.velocity_at = (speed, 0, angular), time.monotonic()
                 time.sleep(.05)

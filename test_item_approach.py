@@ -69,15 +69,24 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'exceeds bounds'):
                 approach_step({**result(), **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
         near = {**result(), 'distance_m': .2, 'current': [310, 0, 690, 1000]}
-        self.assertAlmostEqual(approach_step({**near, 'forward_m': .5}, dict(base_pose=POSE),
-                                           grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0]['x_m'], 2.005)
-        self.assertAlmostEqual(approach_step({**near, 'forward_m': .005}, dict(base_pose=POSE),
-                                           grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0]['x_m'], 2.005)
+        self.assertIsNone(approach_step({**near, 'forward_m': .5}, dict(base_pose=POSE),
+                                       grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+        self.assertIsNone(approach_step({**near, 'forward_m': .005}, dict(base_pose=POSE),
+                                       grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
         self.assertIsNone(approach_step({**near, 'forward_m': .001, 'current': near['goal']}, dict(base_pose=POSE),
                                        grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
         matched = {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 60,
                    'current': [20, 0, 420, 1000]}
         self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+
+    def test_visual_match_skips_tiny_final_move_but_small_suggestion_alone_does_not(self):
+        grid = open_map()
+        near = {**result(), 'forward_m': .009, 'distance_m': .1, 'turn_deg': 15,
+                'current': [30, 100, 374, 900]}
+        self.assertIsNone(approach_step(near, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+        for change in (dict(distance_m=.5), dict(current=result()['current']), dict(current=[30, 200, 374, 900])):
+            with self.subTest(change=change):
+                self.assertIsNotNone(approach_step({**near, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
 
     def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
         for action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
@@ -139,6 +148,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 if action in ('forward', 'clamp', 'heading_drift'):
                     self.assertTrue(all(v[2] == 0 for v in commands))
                 self.assertTrue(all(v[2] == 0 for v in commands if v[0] != 0))
+                self.assertTrue(all(abs(v[0]) >= .01 for v in commands if v[0] != 0))
                 if action == 'overshoot': self.assertEqual(len(commands), 1)
                 self.assertEqual(c.robot.velocity, (0, 0, 0))
                 self.assertFalse(c.base_enabled)

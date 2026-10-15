@@ -303,7 +303,9 @@ Select a confident item estimate to enable **SLOW APPROACH TEST**, subject to th
 existing localization, sensor, no-go and stopped-controller checks.
 Save the item's final GOAL front-camera photo before approaching. Each stopped
 round compares that saved image with CURRENT. Rough arrival accepts target width
-at 90–110% of GOAL and visible top/bottom within 150/1000. The item must remain
+at 85–115% of GOAL, visible top/bottom within 150/1000 and an estimated remaining
+range within 2 cm. A visual match completes approach even if the LLM suggests a
+tiny final adjustment; ALIGN handles the residual distance and framing. The item must remain
 visible; horizontal centering and heading are not completion gates. ALIGN handles
 the final angle and fine positioning.
 Vertical cropping is retained; horizontally clipped targets cannot confirm range.
@@ -322,6 +324,8 @@ targets that move_base's arrival tolerance would otherwise skip. STOP, leases,
 fresh sensors and the full swept footprint/no-go checks stay active during travel.
 Only an explicit LLM turn produces angular velocity. Forward travel never adds
 endpoint steering or heading corrections; its current forward path is checked live.
+Necessary translations use at least 0.01 m/s, the driver's representable speed
+step, so millimeter corrections do not truncate to a zero motor command.
 During approach, stale LiDAR/odometry pauses with zero velocity while keeping the
 task and Codex session. Fresh sensors and measured standstill allow resumption;
 paused time does not consume the chassis movement timeout. STOP, lease loss,
