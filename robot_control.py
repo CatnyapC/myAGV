@@ -1056,7 +1056,8 @@ class Control:
                     dict(actual, yaw_rad=math.radians(actual['yaw_deg'])), goal, self.config['clearance_m'])
                 measured = self.robot.nav.get_odom_pose()
                 error = math.atan2(math.sin(yaw-math.radians(measured['yaw_deg'])), math.cos(yaw-math.radians(measured['yaw_deg'])))
-                remaining = (target[0]-measured['x_m'])*math.cos(yaw) + (target[1]-measured['y_m'])*math.sin(yaw)
+                dx, dy = target[0]-measured['x_m'], target[1]-measured['y_m']
+                remaining = math.hypot(dx, dy) if forward else 0
                 if turning and abs(error) <= math.radians(.3):
                     turning = False
                 if not turning and remaining <= .003:
@@ -1064,10 +1065,12 @@ class Control:
                     return
                 if time.monotonic() >= deadline:
                     raise RuntimeError('Measured approach movement timed out')
-                if abs((target[0]-measured['x_m'])*math.sin(yaw) - (target[1]-measured['y_m'])*math.cos(yaw)) > .02:
-                    raise RuntimeError('Approach deviated from validated path')
+                if not turning and forward:
+                    # Correct wheel drift toward the same target; live path validation guards clearance.
+                    heading = math.atan2(dy, dx)
+                    error = math.atan2(math.sin(heading-math.radians(measured['yaw_deg'])), math.cos(heading-math.radians(measured['yaw_deg'])))
                 self.base_enabled = True
-                speed = 0 if turning else min(.03, max(.005, remaining))
+                speed = 0 if turning or abs(error) > math.radians(10) else min(.03, max(.005, remaining))
                 angular = math.copysign(min(.1, max(.015, abs(error))), error) if abs(error) > math.radians(.3) else 0
                 self.robot.velocity, self.robot.velocity_at = (speed, 0, angular), time.monotonic()
                 time.sleep(.05)

@@ -45,7 +45,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
 
     def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
-        for action in ('forward', 'turn', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
+        for action in ('forward', 'turn', 'drift', 'drift_obstacle', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
             with self.subTest(action=action):
                 c = fake_control()
                 c.robot.grid, c.robot.zones = open_map(), dict(revision=2, zones=[])
@@ -62,6 +62,8 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     c.deadline = now[0] + .45
                     velocity = c.robot.velocity
                     commands.append(velocity)
+                    if action.startswith('drift') and len(commands) == 1:
+                        measured['y_m'] += .03
                     if action != 'timeout':
                         measured['yaw_deg'] += math.degrees(velocity[2]*seconds)
                         measured['x_m'] += velocity[0]*seconds*math.cos(math.radians(measured['yaw_deg']))
@@ -69,11 +71,13 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     if action == 'stop': c.stop_pending = 'STOP'
                     if action == 'sensors': c.robot.sensors_ready = lambda: False
                     if action == 'zones': c.robot.zones['revision'] += 1
-                    if action == 'obstacle': c.robot.grid['cells'][30*80+21] = 100
-                goal = dict(x_m=2 if action == 'turn' else 2.006, y_m=3,
-                            yaw_rad=math.radians(4.5) if action == 'turn' else 0)
+                    if action in ('obstacle', 'drift_obstacle'): c.robot.grid['cells'][30*80+21] = 100
+                distance = .63 if action.startswith('drift') else .006
+                turn = math.radians(-4 if action.startswith('drift') else 4.5 if action == 'turn' else 0)
+                goal = dict(x_m=2 if action == 'turn' else 2+distance*math.cos(turn),
+                            y_m=3 if action == 'turn' else 3+distance*math.sin(turn), yaw_rad=turn)
                 with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
-                    if action in ('forward', 'turn'):
+                    if action in ('forward', 'turn', 'drift'):
                         c.move_approach(goal, POSE)
                     else:
                         with self.assertRaises((Stopped, RuntimeError, ValueError)):
@@ -81,6 +85,9 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(commands)
                 if action == 'forward': self.assertGreaterEqual(measured['x_m'], 2.003)
                 if action == 'turn': self.assertLess(abs(measured['yaw_deg']-4.5), .31)
+                if action == 'drift':
+                    self.assertLess(math.hypot(measured['x_m']-goal['x_m'], measured['y_m']-goal['y_m']), .0031)
+                    self.assertTrue(any(v[0] > 0 for v in commands))
                 self.assertEqual(c.robot.velocity, (0, 0, 0))
                 self.assertFalse(c.base_enabled)
                 c.robot.nav.go_to.assert_not_called()
