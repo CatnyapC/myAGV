@@ -74,15 +74,22 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         packet = dict(type='grasp_test', item_id='cup', action='grasp', grasp_z_mm=-62.28)
         with patch('robot_control.wait_arm', return_value=[90,10,20]), \
              patch('robot_control.arm_deadline', return_value=nullcontext()), \
-             patch('robot_control.time.sleep'), patch('robot_control.atomic_json'):
+             patch('robot_control.time.sleep'), patch('robot_control.atomic_json'), \
+             patch('robot_control.print') as logged:
             c.execute(packet)
             self.assertEqual(frames, [b'M25 A100 F500\r', b'G90\r',
                 b'G0 X0 Y150 Z-62.28 E27 F30\r', b'M25 A0 F500\r', b'G90\r',
                 b'G0 X0.0 Y150.0 Z100.0 E27.0 F30\r'])
+            self.assertEqual([(json.loads(args.args[0])['value'], json.loads(args.args[0])['status'])
+                              for args in logged.call_args_list],
+                             [(100, 'Grasp test: opening gripper'), (0, 'Grasp test: clamping item')])
             frames.clear()
+            logged.reset_mock()
             c.execute(dict(packet, action='place'))
             self.assertEqual(frames, [b'G90\r', b'G0 X0.0 Y150.0 Z-62.28 E27.0 F30\r',
                 b'M25 A100 F500\r', b'G90\r', b'G0 X0.0 Y150.0 Z100.0 E27.0 F30\r'])
+            self.assertEqual(json.loads(logged.call_args.args[0])['value'], 100)
+            self.assertEqual(json.loads(logged.call_args.args[0])['status'], 'Place test: releasing item')
 
     def test_grasp_holds_until_separate_place_even_after_config_reload(self):
         c = fake_control()

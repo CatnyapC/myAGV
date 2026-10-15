@@ -454,6 +454,8 @@ class Control:
                 self.arm._serial_port.write(('M25 A%s F500\r' % value).encode())
                 self.arm._serial_port.flush()
                 self.arm._respone()
+        print(json.dumps(dict(event='gripper_command', time_s=time.time(), task_id=self.task_id,
+                              phase=self.phase, status=self.status, value=value)), flush=True)
         time.sleep(1.5)
 
     def arm_step(self, axis, direction, pickup=False, distance=1, guard=None, y_mm=0):
