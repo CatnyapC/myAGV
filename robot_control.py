@@ -16,7 +16,7 @@ import time
 import uuid
 
 from navigation import arm_deadline, load_stations, pickup_angles, save_station, validate_angles, wait_arm
-from fetch_calibration import FETCH_VISION_TIMEOUT_S, alignment_command, calibration_config, metric_arm_alignment, pickup_delta
+from fetch_calibration import FETCH_VISION_RETRIES, FETCH_VISION_TIMEOUT_S, alignment_command, calibration_config, metric_arm_alignment, pickup_delta
 from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
 from web_backend.map_data import validate_rectangle
@@ -1173,6 +1173,7 @@ class Control:
 
     def calibrate_fetch(self, packet, config):
         config = calibration_config(config)
+        request_timeout = (FETCH_VISION_TIMEOUT_S + 5) * (FETCH_VISION_RETRIES + 1)
         self.phase, self.status = 'calibrating', 'Aligning pickup with front and arm cameras'
         self.base_enabled = False
         self.robot.zero()
@@ -1214,13 +1215,13 @@ class Control:
                         raise ValueError('ARM Z left calibration GOAL height during alignment')
                 request_id = str(uuid.uuid4())
                 atomic_json(request_path, dict(id=request_id, boot_id=self.boot_id, task_id=self.task_id,
-                    stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + FETCH_VISION_TIMEOUT_S + 5,
+                    stop_epoch=self.stop_epoch, map_id=map_id, expires_at_s=time.time() + request_timeout,
                     item=packet['vision_item'], images=images, history=history, stage=stage,
                     round=round_index + 1, preview=packet.get('preview', False), limits=config,
                     prompt=packet.get('fetch_settings', {}).get('prompt'), arm_position_mm=position,
                     alignment_protocol=packet.get('alignment_protocol')))
                 self.status = '%s alignment round %d: waiting for LLM' % (stage, round_index + 1)
-                end = time.monotonic() + FETCH_VISION_TIMEOUT_S + 5
+                end = time.monotonic() + request_timeout
                 while True:
                     end += current()
                     try:

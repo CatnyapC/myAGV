@@ -331,6 +331,9 @@ task and Codex session. Fresh sensors and measured standstill allow resumption;
 paused time does not consume movement or ALIGN inference timeouts. STOP, lease loss,
 map/no-go changes and driver faults still cancel. A changed base pose after a
 photo discards that adjustment and takes a fresh photo for the next round.
+ALIGN request failures, including HTTP 409, retry up to five times after the first
+attempt. Local session recovery resends identity, GOAL and retained metric context;
+no movement is issued until one request succeeds. STOP/task changes cancel retries.
 Codex keeps one session for the approach. The first turn sends identity and GOAL;
 later turns send only CURRENT and actual movement feedback. Its compact six-field
 JSON omits repeated confidence, uncertainty and arrival flags. Location estimates

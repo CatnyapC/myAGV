@@ -3,6 +3,7 @@ import base64
 import math
 
 FETCH_VISION_TIMEOUT_S = 65
+FETCH_VISION_RETRIES = 5
 
 
 def calibration_config(value):

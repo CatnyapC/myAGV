@@ -26,6 +26,34 @@ def body():
 
 
 class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_alignment_retries_five_times_and_reseeds_conflicting_session(self):
+        image = 'data:image/jpeg;base64,AQ=='
+        measurement = dict(goal=[450, 950, 550, 1000], current=[450, 950, 550, 1000])
+        for failures in (5, 6):
+            with self.subTest(failures=failures):
+                trace = {}
+                session = dict(id='same-arm-session', sequence=5, start=False)
+                errors = [web.HTTPBadGateway(text='Local Codex request failed (HTTP 409)') for _ in range(failures)]
+                with patch('web_backend.resolve.request_json', new=AsyncMock(side_effect=errors+[measurement])) as request, \
+                     patch('web_backend.resolve.close_codex_session', new=AsyncMock()) as close, \
+                     patch('web_backend.resolve.asyncio.sleep', new=AsyncMock()):
+                    async def align():
+                        return await locate_pickup(dict(arm=image), dict(name='Cup', appearance='Red'),
+                            'key', image, [], stage='arm', goal=image, model=bridge.MODEL, session=session, trace=trace)
+                    if failures == 5:
+                        self.assertFalse(any((await align()).values()))
+                    else:
+                        with self.assertRaises(web.HTTPBadGateway):
+                            await align()
+                self.assertEqual(request.await_count, 6)
+                self.assertEqual(close.await_count, 5)
+                self.assertEqual(trace['retry_count'], 5)
+                self.assertEqual(len(trace['request_errors']), 5)
+                bodies = [call.args[0] for call in request.call_args_list]
+                self.assertEqual([b['session']['start'] for b in bodies], [False]+[True]*5)
+                self.assertTrue(all(b['session']['id'] == session['id'] and b['session']['sequence'] == 5 for b in bodies))
+                self.assertEqual([len([p for p in b['messages'][1]['content'] if p['type'] == 'image_url']) for b in bodies], [1]+[3]*5)
+
     async def test_conversation_reuses_process_and_thread_but_appends_turns(self):
         queue = asyncio.Queue()
         sent = []
