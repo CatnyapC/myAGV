@@ -1,6 +1,25 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chassisOutline, mapFitBounds, rectangleCorners, toView, toWorld, type MapInfo, type Navigation } from './mapGeometry.ts';
+import { chassisOutline, latestMapObservation, mapFitBounds, rectangleCorners, toView, toWorld, type MapInfo, type Navigation, type Photo } from './mapGeometry.ts';
+
+test('map shows only the latest current observation across cameras and items', () => {
+  const older: Extract<Photo, { kind: 'observation' }> = { id: 'older', kind: 'observation',
+    saved_at_s: 100, captured_at_s: 1, camera_id: 'front', map_id: 'room', map_revision: 1,
+    frame: 'map', base_pose: { x_m: 1, y_m: 2, yaw_rad: 0 }, source: 'ros',
+    image_url: '', available: true, map_matches: true, item_id: 'cup' };
+  const newest = { ...older, id: 'newest', camera_id: 'arm' as const, item_id: 'box', captured_at_s: 3 };
+  const photos: Photo[] = [newest, { ...older, id: 'middle', captured_at_s: 2 }, older,
+    { ...newest, id: 'historical', captured_at_s: 4, current: false },
+    { ...newest, id: 'other-map', captured_at_s: 5, map_id: 'elsewhere' },
+    { ...older, id: 'reference', kind: 'reference' }];
+  assert.equal(latestMapObservation(photos, 'room'), newest);
+  assert.equal(photos.length, 6);
+  const tied = { ...newest, id: 'tied' };
+  assert.equal(latestMapObservation([...photos, tied], 'room'), tied);
+  assert.equal(latestMapObservation([], 'room'), undefined);
+  assert.equal(latestMapObservation(photos, 'missing'), undefined);
+  assert.equal(latestMapObservation([{ ...older, current: false }], 'room'), undefined);
+});
 
 test('rotated display coordinates preserve world zones and reverse input once', () => {
   const origin = { x_m: -3.2, y_m: 1.4, yaw_rad: 0.6632251158 };

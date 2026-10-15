@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { chassisOutline, mapFitBounds, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type ObservationPoint, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
+import { chassisOutline, latestMapObservation, mapFitBounds, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type ObservationPoint, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
 
 export function MapView(props: {
   info: MapInfo; image: string; zones: Zone[]; selected: string | null;
@@ -137,8 +137,8 @@ export function MapView(props: {
     const group = observations.current;
     if (!group) return;
     group.clearLayers();
-    for (const photo of props.photos) {
-      if (photo.kind !== 'observation' || photo.map_id !== props.info.map_id || photo.current === false) continue;
+    const photo = latestMapObservation(props.photos, props.info.map_id);
+    if (photo) {
       const chosen = photo.id === props.selectedPhotoId;
       const marker = L.circleMarker(toView([photo.base_pose.x_m, photo.base_pose.y_m], props.info.display.origin),
         { radius: chosen ? 6 : 4, color: chosen ? 'var(--cyan-11)' : 'var(--gray-11)', weight: 1.5,

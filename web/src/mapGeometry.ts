@@ -22,6 +22,15 @@ export type ItemLocation = { item_id: string; photo_id: string; name: string; im
   x_m: number; y_m: number; uncertainty_m: number; confidence: number; captured_at_s: number; base_pose: Origin };
 export type PhotoIndex = { version: number; revision: number; photos: Photo[]; items: Item[]; locations?: ItemLocation[] };
 export type Stations = Record<string, { base: { x_m: number; y_m: number; yaw_deg: number }; arm_angles_deg: number[] }>;
+
+export function latestMapObservation(photos: Photo[], mapId: string) {
+  let latest: Extract<Photo, { kind: 'observation' }> | undefined;
+  for (const photo of photos) {
+    if (photo.kind !== 'observation' || photo.map_id !== mapId || photo.current === false) continue;
+    if (!latest || photo.captured_at_s >= latest.captured_at_s) latest = photo;
+  }
+  return latest;
+}
 export type Navigation = {
   map_id: string; frame: string; source: 'simulation' | 'ros'; stamp_s: number;
   pose: Origin | null; goal: Origin | null; path: Point[]; moving: boolean; phase: string; status: string;
