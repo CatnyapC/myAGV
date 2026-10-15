@@ -310,6 +310,7 @@ Vertical cropping is retained; horizontally clipped targets cannot confirm range
 The coarse map stand-off distance is only a staging position, not this endpoint.
 Each round permits at most 0.25 m forward and +/-15 degrees of turning, enforced
 by the prompt, response schema, result validation and chassis executor. Forward
+requests above 0.25 m are clamped rather than rejected by runtime validation.
 travel must also stay within half the estimated remaining GOAL distance derived
 from the target width ratio. At GOAL width or larger, no forward travel is allowed.
 The base stops for a fresh photo after each adjustment. It executes at slow speed

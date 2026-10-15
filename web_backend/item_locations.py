@@ -171,7 +171,7 @@ def approach_result(result, photo, grid, item, config):
     fields = {'seen', 'arrived', 'forward_m', 'turn_deg', 'bearing_deg', 'distance_m', 'uncertainty_m', 'confidence', 'goal', 'current'}
     if not isinstance(result, dict) or set(result) != fields or any(type(result[k]) is not bool for k in ('seen', 'arrived')):
         raise ValueError('Invalid item approach result')
-    for key, lo, hi in (('forward_m', 0, .25), ('turn_deg', -15, 15)):
+    for key, lo, hi in (('forward_m', 0, float('inf')), ('turn_deg', -15, 15)):
         if type(result[key]) not in (int, float) or not math.isfinite(result[key]) or not lo <= result[key] <= hi:
             raise ValueError('Item approach step exceeds bounds')
     if not result['seen']:
@@ -198,7 +198,7 @@ def approach_step(result, photo, grid, zones, costmap, item, radius, config):
         if result['forward_m'] or result['turn_deg'] or not matched:
             raise ValueError('Item approach arrival does not match saved front GOAL')
         return None, estimate
-    forward, turn = result['forward_m'], result['turn_deg']
+    forward, turn = min(result['forward_m'], .25), result['turn_deg']
     if scale > 1.1:
         raise ValueError('Item closer than saved front GOAL; stop and reposition')
     if forward == 0 and turn == 0 and matched:
@@ -207,8 +207,7 @@ def approach_step(result, photo, grid, zones, costmap, item, radius, config):
         raise ValueError('Item approach made no useful progress')
     if forward and scale >= 1:
         raise ValueError('Item already at saved front GOAL distance')
-    if forward > .5 * result['distance_m'] * max(0, 1 - scale) + 1e-9:
-        raise ValueError('Item approach would overshoot conservative GOAL distance')
+    forward = min(forward, .5 * result['distance_m'] * max(0, 1 - scale))
     yaw = pose['yaw_rad'] + math.radians(turn)
     goal = dict(x_m=pose['x_m'] + forward * math.cos(yaw), y_m=pose['y_m'] + forward * math.sin(yaw),
                 yaw_rad=math.atan2(math.sin(yaw), math.cos(yaw)))
@@ -272,6 +271,7 @@ async def refine_approach(value, key, config, reference, goal, trace=None, model
     prompt = '''Approach the named item's saved FINAL GOAL front-camera distance cautiously.
 Return only six JSON fields: forward_m, turn_deg, bearing_deg, distance_m, goal, current.
 Each round: forward_m must be 0..0.25 meters; turn_deg must be -15..15 degrees.
+0.25 meters is the maximum forward travel per round, never a default step. The controller clamps larger requests to 0.25 meters or less near GOAL.
 Stop after each bounded adjustment and reassess the new CURRENT photo; never request the entire remaining travel at once.
 Prioritize forward distance. Center the item when useful, but keeping it in view is enough.
 No heading or centering tolerance is an arrival requirement; ALIGN fixes angle later.

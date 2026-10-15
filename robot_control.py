@@ -1035,13 +1035,17 @@ class Control:
             response_path.unlink(missing_ok=True)
 
     def move_approach(self, goal, source):
+        forward = math.hypot(goal['x_m']-source['x_m'], goal['y_m']-source['y_m'])
+        if forward > .25 and math.isfinite(forward):
+            goal = dict(goal, x_m=source['x_m'] + .25*(goal['x_m']-source['x_m'])/forward,
+                        y_m=source['y_m'] + .25*(goal['y_m']-source['y_m'])/forward)
         self.travel_guard(goal)
         self.robot.nav.wait_stopped()
         start = self.robot.nav.get_odom_pose()
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         forward = math.hypot(goal['x_m']-source['x_m'], goal['y_m']-source['y_m'])
         turn = math.atan2(math.sin(goal['yaw_rad']-source['yaw_rad']), math.cos(goal['yaw_rad']-source['yaw_rad']))
-        if not math.isfinite(forward) or not math.isfinite(turn) or forward > .25 + 1e-9 or abs(turn) > math.radians(15) + 1e-9:
+        if not math.isfinite(forward) or not math.isfinite(turn) or abs(turn) > math.radians(15) + 1e-9:
             raise ValueError('Item approach step exceeds bounds')
         yaw = math.radians(start['yaw_deg']) + turn
         target = (start['x_m'] + forward*math.cos(yaw), start['y_m'] + forward*math.sin(yaw))
