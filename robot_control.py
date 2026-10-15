@@ -962,6 +962,8 @@ class Control:
     def approach_item(self, packet):
         config = location_config(packet['location_config'])
         item, estimate = packet['vision_item'], packet['estimate']
+        if not item.get('front_goal_photo_id'):
+            raise ValueError('Saved final GOAL front camera required for approach')
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         request_path = self.directory / 'fetch_vision_request.json'
         response_path = self.directory / 'fetch_vision_response.json'
@@ -1015,7 +1017,7 @@ class Control:
                 estimate = dict(corrected, base_pose=pose)
                 if goal is None:
                     return dict(rounds=round_index + 1, estimate=corrected,
-                                outcome='arrived' if response['result']['arrived'] else 'stand_off')
+                                outcome='arrived')
                 if round_index == 15:
                     raise RuntimeError('Item approach did not converge after 16 rounds')
                 self.go(dict(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad'])), precise=True)

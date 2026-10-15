@@ -163,6 +163,7 @@ class MapFetchAPITest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(forwarded['estimate']['x_m'], 5)
                     self.assertEqual(forwarded['reference_photo_id'], cameras['front'])
                     self.assertEqual(forwarded['vision_item']['arm_goal_photo_id'], cameras['arm'])
+                    self.assertEqual(forwarded['vision_item']['front_goal_photo_id'], cameras['front'])
                     self.assertEqual(forwarded['vision_item']['reference_photo_id'], reference['id'])
                     snapshot = await (await client.get('/api/items')).json()
                     self.assertTrue(snapshot['items'][0]['fetch_available'])

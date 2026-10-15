@@ -296,9 +296,14 @@ model's chosen source view, including items visible only in an earlier view.
 LLM ROUNDS shows this assessment's inputs, output, errors and Codex thread.
 Select a confident item estimate to enable **SLOW APPROACH TEST**, subject to the
 existing localization, sensor, no-go and stopped-controller checks.
-If the current visual estimate is already inside the conservative stand-off
-distance, zero motion ends the approach test as a safe stop rather than an error.
-This does not confirm arrival; FETCH cannot continue to arm alignment or grasping.
+Save the item's final GOAL front-camera photo before approaching. Each stopped
+round compares that saved image with CURRENT. Arrival requires visible target
+width within 10% and its midpoint/top/bottom within 50/1000 of the GOAL image.
+Vertical cropping is retained; horizontally clipped targets cannot confirm range.
+The coarse map stand-off distance is only a staging position, not this endpoint.
+Forward steps shrink near the GOAL; LiDAR, footprint, path and no-go checks remain.
+The standalone test stops after matching GOAL. FETCH proceeds to arm ALIGN and
+then GRASP only after that match; it never treats a coarse safety stop as arrival.
 
 Each revisit replaces its latest unlabelled photo. Confirmed old photos stay as
 historical evidence; new images never inherit a moving object's old identity.

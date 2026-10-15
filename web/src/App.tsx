@@ -121,8 +121,10 @@ export function App() {
     : locationPhotos.some(p => p.location_analysis?.status === 'error') ? 'Position estimation failed; retry in Map actions.' : '';
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
   const selectedLocation = photos?.locations?.find(location => location.item_id === selectedItemId);
+  const frontGoal = photos?.photos.find(p => p.id === selectedItem?.grasp_goal?.front);
   const approachReasons = [...(!connected ? ['UI disconnected'] : hardwareBlocks(state?.hardware, false)),
     ...(!selectedLocation || selectedLocation.confidence < .7 ? ['Select a confident item position'] : []),
+    ...(!frontGoal?.available ? ['Save final GOAL front camera'] : []),
     ...(state?.llm?.status !== 'configured' ? ['Configure LLM'] : []), ...(!state?.cameras?.front ? ['Fresh front camera required'] : []),
     ...(!state?.hardware?.item_approach_available ? ['Restart robot controller to enable approach'] : []),
     ...(busy ? ['Current request running'] : [])];

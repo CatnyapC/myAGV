@@ -561,11 +561,17 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     estimate = next((e for e in snapshot['locations'] if e['item_id'] == data.get('item_id')), None)
                     if not item or not estimate or estimate['confidence'] < .7:
                         raise ValueError('Current confident item location required for approach')
+                    goal_id = (item.get('grasp_goal') or {}).get('front')
+                    front_goal = next((p for p in photos.value['photos'] if p['id'] == goal_id), {})
+                    if (front_goal.get('kind') != 'observation' or front_goal.get('source') != 'ros'
+                            or front_goal.get('camera_id') != 'front' or front_goal.get('item_id') != item['id']
+                            or not photos.image_path(goal_id).is_file() or not photos.image_path(goal_id).with_suffix('.jpg').is_file()):
+                        raise ValueError('Save final GOAL front camera before approaching')
                     if not editor.hardware.control.get('item_approach_available'):
                         raise ValueError('Restart robot controller to enable item approach')
                     if not editor.hardware.cameras.get('front') or not editor.hardware.control.get('navigation_ready'):
                         raise ValueError('Fresh front camera and navigation readiness required')
-                    data = {**data, 'vision_item': {k: item[k] for k in ('id', 'name', 'appearance')},
+                    data = {**data, 'vision_item': dict(**{k: item[k] for k in ('id', 'name', 'appearance')}, front_goal_photo_id=goal_id),
                             'estimate': estimate, 'location_config': location_calibration,
                             'reference_photo_id': estimate['photo_id'],
                             'catalog_signature': catalog_signature(photos.value['items'])}
@@ -615,7 +621,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         data = {**data, 'pickup_angles': angles, 'grasp_z_mm': grasp_z, 'preview': False}
                     data = {**data, 'fetch_settings': dict(fetch_settings['values']),
                             'alignment_protocol': 'metric-v1' if metric_protocol else 'visual-bounds-v1',
-                            'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], arm_goal_photo_id=item['grasp_goal']['arm'], calibration_z_mm=item['calibration_z_mm']) if model_key() else None}
+                            'vision_item': dict(id=item['id'], name=item['name'], appearance=item['appearance'], reference_photo_id=item['reference_photo_id'], front_goal_photo_id=item['grasp_goal']['front'], arm_goal_photo_id=item['grasp_goal']['arm'], calibration_z_mm=item['calibration_z_mm']) if model_key() else None}
                 if kind in ('map_update', 'update_plan', 'survey'):
                     if not editor.hardware.cameras.get('front'):
                         raise ValueError('Fresh front camera required for map updating')
@@ -840,7 +846,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         and (not approach or (editor.zones['revision'] == value['zone_revision']
                              and control.get('zone_revision') == value['zone_revision']
                              and (editor.hardware.grid or {}).get('map_id') == value['map_id']
-                             and catalog_signature(photos.value['items']) == value['catalog_signature'])))
+                             and catalog_signature(photos.value['items']) == value['catalog_signature']
+                             and any(i['id'] == value['item']['id'] and (i.get('grasp_goal') or {}).get('front') == value['item'].get('front_goal_photo_id') for i in photos.value['items']))))
 
             while True:
                 await asyncio.sleep(.1)
@@ -887,8 +894,13 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             mime = 'jpeg' if image_path.with_suffix('.jpg').is_file() else 'png'
                             image_path = image_path.with_suffix('.jpg') if mime == 'jpeg' else image_path
                             reference_image = 'data:image/' + mime + ';base64,' + base64.b64encode(await asyncio.to_thread(image_path.read_bytes)).decode('ascii')
+                            goal_photo = next((p for p in photos.value['photos'] if p['id'] == value['item']['front_goal_photo_id']
+                                               and p.get('item_id') == value['item']['id'] and p.get('camera_id') == 'front'), None)
+                            if goal_photo is None:
+                                raise ValueError('Saved final GOAL front camera unavailable')
+                            goal_image = await asyncio.to_thread(photos.reference_image, goal_photo['id'])
                             result = await refine_approach(value, key, location_calibration,
-                                dict(image=reference_image, base_pose=reference['base_pose']), trace=entry, model=model, fast_mode=fetch_log['fast_mode'])
+                                dict(image=reference_image, base_pose=reference['base_pose']), goal_image, trace=entry, model=model, fast_mode=fetch_log['fast_mode'])
                             await asyncio.to_thread(editor.hardware.refresh)
                             if not current(value):
                                 raise ValueError('Item approach stopped or changed during vision request')
@@ -900,7 +912,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                 photos.set_locations(photo['id'], dict(status='complete', catalog_signature=value['catalog_signature'], estimates=[corrected]), photos.value['revision'])
                             entry.update(corrected_location=corrected, base_command={k: result[k] for k in ('forward_m', 'turn_deg')})
                             if goal is None:
-                                entry['outcome'] = 'arrived' if result['arrived'] else 'stand_off'
+                                entry['outcome'] = 'arrived'
                             await editor.emit('photos')
                         else:
                             reference = next((p for p in photos.value['photos']

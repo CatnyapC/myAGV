@@ -22,32 +22,42 @@ from web_backend.server import EDITOR, create_app
 from web_backend.storage import atomic_bytes, atomic_json
 
 
-ITEM = dict(id=str(uuid.uuid4()), name='Cup', appearance='Red')
+ITEM = dict(id=str(uuid.uuid4()), name='Cup', appearance='Red', front_goal_photo_id='front-goal')
 POSE = dict(x_m=2, y_m=3, yaw_rad=0)
 IMAGE = 'data:image/jpeg;base64,AQ=='
 
 
 def result(**values):
     return dict(seen=True, arrived=False, forward_m=.2, turn_deg=0, bearing_deg=0,
-                distance_m=1.5, uncertainty_m=.35, confidence=.9, **values)
+                distance_m=1.5, uncertainty_m=.35, confidence=.9, goal=[300, 0, 700, 1000],
+                current=[425, 500, 575, 1000], **values)
 
 
 class ApproachTest(unittest.IsolatedAsyncioTestCase):
-    def test_zero_motion_inside_stand_off_is_safe_stop_not_arrival_or_no_progress(self):
+    def test_saved_goal_scale_controls_arrival_instead_of_coarse_stand_off(self):
         grid = open_map()
-        stopped = {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 18,
-                   'distance_m': .7, 'uncertainty_m': .35, 'confidence': .87}
-        goal, estimate = approach_step(stopped, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
-        self.assertIsNone(goal)
-        self.assertFalse(stopped['arrived'])
-        self.assertAlmostEqual(estimate['x_m'], POSE['x_m'] + .7 * math.cos(math.radians(18)))
-        for change, error in ((dict(distance_m=1.5), 'no useful progress'),
-                              (dict(arrived=True), 'arrival not geometrically confirmed'),
-                              (dict(forward_m=.01), 'no useful progress'),
-                              (dict(forward_m=.2), 'stand-off clearance'),
-                              (dict(seen=False), 'lost'), (dict(confidence=.69), 'confidence')):
+        close = {**result(), 'forward_m': .1, 'bearing_deg': 18, 'distance_m': .7}
+        goal, _ = approach_step(close, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+        self.assertAlmostEqual(goal['x_m'], 2.1)
+        matched = {**close, 'forward_m': 0, 'arrived': True, 'current': close['goal']}
+        self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)[0])
+        for change, error in ((dict(forward_m=0), 'no useful progress'),
+                              (dict(arrived=True, forward_m=0), 'saved front GOAL'),
+                              (dict(current=[260, 0, 740, 1000], forward_m=0), 'closer than'),
+                              (dict(current=[320, 0, 680, 1000]), 'overshoot'),
+                              (dict(arrived=True, forward_m=0, current=[300, 200, 700, 1000]), 'saved front GOAL'),
+                              (dict(goal=None), 'bounds'), (dict(seen=False), 'lost'),
+                              (dict(confidence=.69), 'confidence')):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
-                approach_step({**stopped, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+                approach_step({**close, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+
+    def test_missing_front_goal_is_refused_before_capture_or_motion(self):
+        c = fake_control()
+        with self.assertRaisesRegex(ValueError, 'final GOAL'):
+            c.approach_item(dict(location_config=DEFAULT_CONFIG, estimate={},
+                                 vision_item={k: v for k, v in ITEM.items() if k != 'front_goal_photo_id'}))
+        c.capture.assert_not_called()
+        c.robot.nav.go_to.assert_not_called()
 
     def test_bounds_clearance_identity_arrival_and_camera_transform(self):
         grid = open_map()
@@ -66,14 +76,14 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(rotated_goal['x_m'], expected[0])
         self.assertAlmostEqual(rotated_goal['y_m'], expected[1])
         for change in (dict(seen=False), dict(forward_m=.21), dict(turn_deg=16), dict(forward_m=True),
-                       dict(confidence=.69), dict(distance_m=float('nan')), dict(distance_m=.8),
+                       dict(confidence=.69), dict(distance_m=float('nan')), dict(distance_m=.2),
                        dict(arrived=True), dict(forward_m=0), dict(bearing_deg=30), dict(extra='grasp')):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 approach_step({**proposal, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
         goal, _ = approach_step({**proposal, 'forward_m': 0, 'turn_deg': 15, 'bearing_deg': 30},
                                dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
         self.assertAlmostEqual(goal['yaw_rad'], math.radians(15))
-        self.assertIsNone(approach_step({**proposal, 'arrived': True, 'forward_m': 0, 'distance_m': .9},
+        self.assertIsNone(approach_step({**proposal, 'arrived': True, 'forward_m': 0, 'distance_m': .9, 'current': result()['goal']},
                                        dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
         for obstacle in (100, -1):
             blocked = deepcopy(grid)
@@ -106,7 +116,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as folder:
             c.directory = Path(folder)
             requests = []
-            answers = iter([result(), {**result(), 'arrived': True, 'forward_m': 0, 'distance_m': .9}])
+            answers = iter([result(), {**result(), 'arrived': True, 'forward_m': 0, 'distance_m': .9, 'current': result()['goal']}])
 
             def respond(path, value):
                 requests.append(value)
@@ -124,11 +134,11 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             c.arm.set_gripper_value.assert_not_called()
             self.assertFalse(list(c.directory.iterdir()))
             c.capture.reset_mock(); c.go.reset_mock()
-            answers = iter([{**result(), 'forward_m': 0, 'bearing_deg': 18, 'distance_m': .7}])
+            answers = iter([{**result(), 'forward_m': 0, 'distance_m': .2, 'current': result()['goal']}])
             with patch('robot_control.atomic_json', side_effect=respond):
                 stopped = c.approach_item(packet)
             self.assertEqual(stopped['rounds'], 1)
-            self.assertEqual(stopped['outcome'], 'stand_off')
+            self.assertEqual(stopped['outcome'], 'arrived')
             c.go.assert_not_called()
             self.assertEqual(c.capture.call_count, 1)
             c.arm.set_coords.assert_not_called()
@@ -192,6 +202,14 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             reference = index.add(image, dict(kind='reference', source='phone'), 0)
             index.edit(reference['id'], dict(expected_revision=1, item_id='new', name='Cup', confirmed=True), grid['map_id'])
             item = index.value['items'][0]
+            cameras = {}
+            for camera in ('front', 'arm'):
+                saved = index.add(image, dict(kind='observation', source='ros', camera_id=camera,
+                    map_id=grid['map_id'], map_revision=1, frame='map', captured_at_s=time.time(), base_pose=POSE,
+                    **(dict(arm_z_mm=35) if camera == 'arm' else {})), index.value['revision'])
+                index.image_path(saved['id']).with_suffix('.jpg').write_bytes(image)
+                cameras[camera] = saved['id']
+            index.save_grasp_goal(item['id'], cameras, index.value['revision'], grid['map_id'])
             photo = index.add(image, dict(kind='observation', source='ros', camera_id='front', map_id=grid['map_id'],
                 map_revision=1, frame='map', captured_at_s=time.time(), base_pose=POSE), index.value['revision'])
             signature = catalog_signature(index.value['items'])
@@ -218,17 +236,17 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             c.capture.side_effect = capture
             bodies = []
             entered, release = asyncio.Event(), asyncio.Event()
-            cancelling = safe_stopping = False
+            cancelling = goal_matching = False
 
-            async def provider(body, key, timeout, fast_mode=True):
+            async def provider(body, key, timeout, fast_mode=True, trace=None):
                 bodies.append(body)
-                if safe_stopping:
-                    return {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 18, 'distance_m': .7}
+                if goal_matching:
+                    return {**result(), 'forward_m': 0, 'distance_m': .2, 'current': result()['goal']}
                 if cancelling:
                     entered.set()
                     await release.wait()
                     return result()
-                return result() if len(bodies) == 1 else {**result(), 'arrived': True, 'forward_m': 0, 'distance_m': .9}
+                return result() if len(bodies) == 1 else {**result(), 'arrived': True, 'forward_m': 0, 'distance_m': .9, 'current': result()['goal']}
 
             with patch('web_backend.server.load_key', return_value=('configured', 'private-key')), patch('web_backend.resolve.request_json', side_effect=provider):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
@@ -241,20 +259,29 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 async with TestClient(TestServer(app)) as client:
                     command = dict(id=str(uuid.uuid4()), type='approach_item', map_id=grid['map_id'], expected_revision=0,
                         index_revision=index.value['revision'], item_id=item['id'], vision_item=dict(id='injected'), location_config={})
+                    saved_jpeg = index.image_path(cameras['front']).with_suffix('.jpg')
+                    saved_jpeg.unlink()
+                    missing_goal = await client.post('/api/commands', json=command)
+                    self.assertEqual(missing_goal.status, 400)
+                    self.assertIn('final GOAL', await missing_goal.text())
+                    hardware.command.assert_not_called()
+                    saved_jpeg.write_bytes(image)
                     self.assertEqual((await client.post('/api/commands', json=command)).status, 200)
                     forwarded = hardware.command.call_args.args[0]
                     self.assertEqual(forwarded['vision_item']['id'], item['id'])
+                    self.assertEqual(forwarded['vision_item']['front_goal_photo_id'], cameras['front'])
                     self.assertEqual(forwarded['location_config'], DEFAULT_CONFIG)
                     self.assertEqual((await client.post('/api/commands', json={**command, 'index_revision': 0})).status, 400)
                     completed = await asyncio.wait_for(asyncio.to_thread(c.approach_item, forwarded), 4)
                     self.assertEqual(completed['rounds'], 2)
+                    self.assertIn('FINAL GOAL', bodies[0]['messages'][1]['content'][3]['text'])
                     current = await (await client.get('/api/items')).json()
                     location = current['locations'][0]
                     self.assertAlmostEqual(location['x_m'], 3.1)
                     self.assertEqual(location['base_pose']['x_m'], 2.2)
                     self.assertNotEqual(location['photo_id'], photo['id'])
                     self.assertNotIn('station_link', current['items'][0])
-                    self.assertEqual(len([p for p in bodies[1]['messages'][1]['content'] if p['type'] == 'image_url']), 3)
+                    self.assertEqual(len([p for p in bodies[1]['messages'][1]['content'] if p['type'] == 'image_url']), 4)
                     context = json.loads(bodies[1]['messages'][1]['content'][0]['text'])
                     self.assertEqual(context['history'][0]['after_pose']['x_m'], 2.2)
                     self.assertEqual(context['history'][0]['commanded']['forward_m'], .2)
@@ -282,16 +309,16 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertAlmostEqual(current['locations'][0]['x_m'], 3.1)
                     self.assertEqual(current['photos'][-1]['location_analysis']['status'], 'cancelled')
                     self.assertFalse((bridge / 'fetch_vision_response.json').exists())
-                    cancelling, safe_stopping = False, True
-                    c.stop_pending, c.phase, c.task_id = None, 'idle', 'stand-off-task'
+                    cancelling, goal_matching = False, True
+                    c.stop_pending, c.phase, c.task_id = None, 'idle', 'goal-matched-task'
                     c.go.reset_mock()
                     stopped = await asyncio.wait_for(asyncio.to_thread(c.approach_item, forwarded), 4)
-                    self.assertEqual(stopped['outcome'], 'stand_off')
+                    self.assertEqual(stopped['outcome'], 'arrived')
                     self.assertEqual(stopped['rounds'], 1)
                     c.go.assert_not_called()
                     log = await (await client.get('/api/fetch-log')).json()
                     self.assertEqual(log['rounds'][0]['status'], 'returned')
-                    self.assertEqual(log['rounds'][0]['outcome'], 'stand_off')
+                    self.assertEqual(log['rounds'][0]['outcome'], 'arrived')
                     self.assertNotIn('error', log['rounds'][0])
                     current = await (await client.get('/api/items')).json()
                     self.assertAlmostEqual(current['locations'][0]['x_m'], stopped['estimate']['x_m'])
