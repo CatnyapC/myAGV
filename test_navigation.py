@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 
 import fetch_demo
 from install_navigation_turn import patch as patch_navigation_turn
+from install_navigation_turn import patch_goal_stop
 import navigation
 from teleop_control import Controller, parse_args, record_station
 
@@ -25,6 +26,25 @@ class NavigationTurnPatchTest(unittest.TestCase):
     scoring = ('      //the point is legal... add it to the trajectory\n'
                'cost = path_distance_bias_ * path_dist + goal_dist * goal_distance_bias_ + occdist_scale_ * occ_cost;\n'
                'if(best_traj->cost_ == -1.0)\n      best_traj->cost_ = 1.0;\n')
+    goal_stop = ('  bool TrajectoryPlannerROS::stopWithAccLimits(const Pose& global_pose, const Pose& robot_vel, Twist& cmd_vel){\n'
+                 '    double vx = sign(robot_vel.pose.position.x) * std::max(0.0, fabs(robot_vel.pose.position.x) - acc_lim_x_ * sim_period_);\n'
+                 '    double vth = sign(vel_yaw) * std::max(0.0, fabs(vel_yaw) - acc_lim_theta_ * sim_period_);\n'
+                 '    bool valid_cmd = tc_->checkTrajectory(x, y, yaw, vx, vy, vth);\n'
+                 '    return false;\n  }\n\n'
+                 '  bool TrajectoryPlannerROS::rotateToGoal(){ keep_collision_check(); }\n'
+                 'if (!rotating_to_goal_ && !base_local_planner::stopped(base_odom, rot_stopped_velocity_, trans_stopped_velocity_)) { stopWithAccLimits(); } else { rotateToGoal(); }\n')
+
+    def test_goal_stop_commands_zero_and_preserves_measured_stop_gate(self):
+        updated = patch_goal_stop(self.goal_stop)
+        self.assertEqual(patch_goal_stop(updated), updated)
+        for axis in ('linear.x', 'linear.y', 'angular.z'):
+            self.assertIn('cmd_vel.%s = 0.0;' % axis, updated)
+        self.assertNotIn('acc_lim_x_ * sim_period_', updated)
+        suffix = self.goal_stop[self.goal_stop.index('  bool TrajectoryPlannerROS::rotateToGoal('):]
+        self.assertTrue(updated.endswith(suffix))
+        for invalid in ('', self.goal_stop.replace('double vx = sign', 'double vx = unknown')):
+            with self.assertRaises(ValueError):
+                patch_goal_stop(invalid)
 
     def test_heading_and_collision_patch_is_scoped_and_idempotent(self):
         score = 'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;'
@@ -55,14 +75,18 @@ class NavigationTurnPatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'trajectory_planner.cpp'
             path.write_text(source)
+            wrapper = path.with_name('trajectory_planner_ros.cpp')
+            wrapper.write_text(self.goal_stop)
             old_backup = path.with_suffix('.cpp.before-shortest-turn')
             old_backup.write_text('original upstream source')
             command = [sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')), str(path)]
             for _ in range(2):
                 subprocess.run(command, check=True, capture_output=True, text=True)
             self.assertEqual(path.read_text(), patch_navigation_turn(source))
+            self.assertEqual(wrapper.read_text(), patch_goal_stop(self.goal_stop))
             backup = path.with_suffix('.cpp.before-shortest-turn-v2')
             self.assertEqual(backup.read_text(), source)
+            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v2').read_text(), self.goal_stop)
             self.assertEqual(old_backup.read_text(), 'original upstream source')
             path.write_text(source)
             result = subprocess.run(command, capture_output=True, text=True)
@@ -70,6 +94,20 @@ class NavigationTurnPatchTest(unittest.TestCase):
             self.assertIn('Backup exists', result.stderr)
             self.assertEqual(path.read_text(), source)
             self.assertEqual(backup.read_text(), source)
+
+    def test_unknown_goal_stop_does_not_partially_install_planner_patch(self):
+        source = self.scoring + ('//next we want to generate trajectories for rotating in place\n'
+                                 'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;\n'
+                                 '//do we have a legal trajectory\n')
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'trajectory_planner.cpp'
+            path.write_text(source)
+            path.with_name('trajectory_planner_ros.cpp').write_text('unknown source')
+            result = subprocess.run([sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')),
+                                     str(path)], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(path.read_text(), source)
+            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v2').exists())
 
 
 class FakeArm:
@@ -369,7 +407,7 @@ class NavigationTest(unittest.TestCase):
         self.nav.wait_stopped.assert_not_called()
         self.nav.client.get_state.return_value = 3
         self.nav.get_pose.return_value = dict(POSE, x_m=9)
-        with self.assertRaisesRegex(RuntimeError, "tolerance"):
+        with self.assertRaisesRegex(RuntimeError, r"tolerance; measured 780\.0 cm / 0\.0 degrees"):
             self.nav.go_to(POSE)
 
     def test_missing_localization_does_not_send_goal(self):

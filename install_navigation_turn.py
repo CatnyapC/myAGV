@@ -37,14 +37,38 @@ def patch(source):
     return source.replace(unsafe, safe)
 
 
+def patch_goal_stop(source):
+    start = source.find('  bool TrajectoryPlannerROS::stopWithAccLimits(')
+    end = source.find('  bool TrajectoryPlannerROS::rotateToGoal(', start)
+    if start < 0 or end < 0:
+        raise ValueError('Unexpected goal stop function; refused partial patch')
+    original = source[start:end]
+    updated = (original[:original.find('{') + 1] + '\n'
+               '    // MYAGV_MEASURED_STOP: command zero; the caller waits for stopped odometry before turning.\n'
+               '    cmd_vel.linear.x = 0.0;\n'
+               '    cmd_vel.linear.y = 0.0;\n'
+               '    cmd_vel.angular.z = 0.0;\n'
+               '    return true;\n'
+               '  }\n\n')
+    if original != updated and not all(token in original for token in (
+            'double vx = sign(robot_vel.pose.position.x)', 'double vth = sign(vel_yaw)',
+            'bool valid_cmd = tc_->checkTrajectory', 'return false;')):
+        raise ValueError('Unexpected goal deceleration; refused partial patch')
+    return source[:start] + updated + source[end:]
+
+
 if __name__ == '__main__':
     path = Path(sys.argv[1])
-    original = path.read_text()
-    updated = patch(original)
-    if updated != original:
-        backup = path.with_suffix(path.suffix + '.before-shortest-turn-v2')
-        if backup.exists():
-            raise SystemExit('Backup exists; inspect previous installation first')
+    changes = []
+    for source, transform in ((path, patch), (path.with_name('trajectory_planner_ros.cpp'), patch_goal_stop)):
+        original = source.read_text()
+        updated = transform(original)
+        if updated != original:
+            backup = source.with_suffix(source.suffix + '.before-shortest-turn-v2')
+            if backup.exists():
+                raise SystemExit('Backup exists; inspect previous installation first')
+            changes.append((source, backup, original, updated))
+    for source, backup, original, updated in changes:
         backup.write_text(original)
-        path.write_text(updated)
-    print('Shortest-turn source ready; rebuild base_local_planner and restart navigation')
+        source.write_text(updated)
+    print('Navigation source ready; rebuild base_local_planner and restart navigation')

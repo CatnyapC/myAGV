@@ -257,7 +257,7 @@ class Navigation:
         self.active = True
         try:
             self.client.send_goal(goal)
-            print("Navigation goal sent; waiting for move_base...", flush=True)
+            print(json.dumps(dict(event='navigation_goal', time_s=time.time(), goal=pose)), flush=True)
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if getattr(self, 'guard', None):
@@ -274,9 +274,11 @@ class Navigation:
                     actual = self.get_pose()
                     distance = math.hypot(actual["x_m"] - pose["x_m"], actual["y_m"] - pose["y_m"])
                     angle = abs((actual["yaw_deg"] - pose["yaw_deg"] + 180) % 360 - 180)
+                    print(json.dumps(dict(event='navigation_arrival', time_s=time.time(), goal=pose,
+                                          actual=actual, distance_m=distance, yaw_error_deg=angle)), flush=True)
                     if distance > position_tolerance or angle > yaw_tolerance:
-                        raise RuntimeError("Arrival outside %g cm / %g degree tolerance" %
-                                           (position_tolerance * 100, yaw_tolerance))
+                        raise RuntimeError("Arrival outside %g cm / %g degree tolerance; measured %.1f cm / %.1f degrees" %
+                                           (position_tolerance * 100, yaw_tolerance, distance * 100, angle))
                     return
                 time.sleep(0.05)
             raise TimeoutError("Navigation timed out")

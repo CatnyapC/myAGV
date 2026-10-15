@@ -1,12 +1,33 @@
 // Offline regression: no ROS goals or velocity commands are published.
 #include <base_local_planner/costmap_model.h>
 #include <base_local_planner/trajectory_planner.h>
+#include <base_local_planner/trajectory_planner_ros.h>
 #include <cassert>
 #include <cmath>
 #include <iostream>
 
-int main() {
+int main(int argc, char** argv) {
+  ros::init(argc, argv, "myagv_navigation_regression", ros::init_options::AnonymousName);
   ros::Time::init();
+  // The private stop helper must not feed measured overspeed back as another drive command.
+  base_local_planner::TrajectoryPlannerROS wrapper;
+  wrapper.dsrv_ = nullptr;  // The upstream default constructor leaves this unset until initialize().
+  for (double vx : {-.2, 0., .02, .11, .3}) {
+    for (double wz : {-.4, 0., .03, .3}) {
+      geometry_msgs::PoseStamped pose, velocity;
+      pose.pose.orientation.w = 1;
+      velocity.pose.position.x = vx;
+      velocity.pose.position.y = -.02;
+      velocity.pose.orientation.z = sin(wz / 2);
+      velocity.pose.orientation.w = cos(wz / 2);
+      geometry_msgs::Twist command;
+      command.linear.x = .09;
+      command.linear.y = -.02;
+      command.angular.z = -.3;
+      assert(wrapper.stopWithAccLimits(pose, velocity, command));
+      assert(command.linear.x == 0 && command.linear.y == 0 && command.angular.z == 0);
+    }
+  }
   costmap_2d::Costmap2D map(120, 120, .05, -3, -3, 0);
   base_local_planner::CostmapModel world(map);
   std::vector<geometry_msgs::Point> footprint;
@@ -59,5 +80,5 @@ int main() {
       }
     }
   }
-  std::cout << "Shortest-turn and collision regressions passed\n";
+  std::cout << "Measured-stop, shortest-turn and collision regressions passed\n";
 }

@@ -53,6 +53,9 @@ can tie at low speeds and choose a turn away from the path. It reuses the existi
 when no path point is visible. Collision checks still cover every simulated point.
 The upstream escape fallback's collision override is removed: a blocked reverse
 trajectory stays invalid instead of being relabeled as a valid motion command.
+Arrival braking sends zero velocity and retains the planner's measured-odometry
+stop gate before final rotation. Feedback-minus-acceleration braking can keep
+driving on this chassis when its low-speed response exceeds the command.
 The installer refuses unknown source layouts and keeps `.before-shortest-turn-v2`,
 preserving the original `.before-shortest-turn` backup when upgrading.
 Web navigation caps turns at 0.1 rad/s and translation at 0.1 m/s. Global planning
@@ -64,9 +67,11 @@ Rebuild and restart navigation to load the patch. Run the offline regression
 on the ROS machine; it publishes no motion commands:
 
 ```bash
-g++ -std=c++14 test_navigation_turn.cpp -o /tmp/myagv-navigation-turn $(pkg-config --cflags --libs base_local_planner)
+g++ -std=c++14 -fno-access-control test_navigation_turn.cpp -o /tmp/myagv-navigation-turn $(pkg-config --cflags --libs base_local_planner)
 /tmp/myagv-navigation-turn
 ```
+
+The access-control flag is only for testing the installed private braking helper.
 
 ## Initial setup in the UI
 
