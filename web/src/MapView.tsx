@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { chassisOutline, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type ObservationPoint, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
+import { chassisOutline, mapFitBounds, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type ObservationPoint, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
 
 export function MapView(props: {
   info: MapInfo; image: string; zones: Zone[]; selected: string | null;
@@ -19,7 +19,6 @@ export function MapView(props: {
   latest.current = props;
   const preview = useRef<L.Rectangle | null>(null);
   const polygons = useRef<L.LayerGroup | null>(null);
-  const bounds = useRef<L.LatLngBounds | null>(null);
   const robot = useRef<L.Polygon | null>(null);
   const path = useRef<L.Polyline | null>(null);
   const target = useRef<L.Polygon | null>(null);
@@ -28,6 +27,7 @@ export function MapView(props: {
   const itemPoints = useRef<L.LayerGroup | null>(null);
   const length = props.navigation?.footprint.length_m ?? .32;
   const width = props.navigation?.footprint.width_m ?? .28;
+  const hasRobotPose = Boolean(props.navigation?.pose && props.navigation.map_id === props.info.map_id);
   const activePoint = props.update?.active && props.update.map_id === props.info.map_id ? props.update.goals[props.update.completed] : null;
 
   useEffect(() => {
@@ -73,16 +73,17 @@ export function MapView(props: {
     const display = props.info.display;
     const nextBounds = L.latLngBounds([0, 0], [display.height_m, display.width_m]);
     const image = L.imageOverlay(props.image, nextBounds, { className: 'occupancy-raster', interactive: false }).addTo(instance);
-    const fitBounds = display.content_bounds ? L.latLngBounds(display.content_bounds) : nextBounds;
-    bounds.current = fitBounds;
-    instance.setMaxBounds(nextBounds.pad(.4));
-    instance.fitBounds(fitBounds, { padding: [12, 12], animate: false });
     return () => { image.remove(); };
   }, [props.info, props.image]);
 
   useEffect(() => {
-    if (bounds.current) map.current?.fitBounds(bounds.current, { padding: [12, 12], animate: false });
-  }, [props.fitVersion]);
+    const instance = map.current;
+    if (!instance) return;
+    const { info, navigation } = latest.current;
+    const fitBounds = L.latLngBounds(mapFitBounds(info, navigation));
+    instance.setMaxBounds(L.latLngBounds([0, 0], [info.display.height_m, info.display.width_m]).extend(fitBounds).pad(.4));
+    instance.fitBounds(fitBounds, { padding: [12, 12], animate: false });
+  }, [props.info, props.image, props.fitVersion, hasRobotPose]);
 
   useEffect(() => {
     const nav = props.navigation;

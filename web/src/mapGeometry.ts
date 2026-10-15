@@ -40,6 +40,19 @@ export function toView([x, y]: Point, origin: Origin): Point {
   const dx = x - origin.x_m, dy = y - origin.y_m;
   return [-s * dx + c * dy, c * dx + s * dy]; // Leaflet [v, u], in meters.
 }
+export function mapFitBounds(info: MapInfo, navigation: Navigation | null): [Point, Point] {
+  const display = info.display;
+  const bounds: [Point, Point] = display.content_bounds ?? [[0, 0], [display.height_m, display.width_m]];
+  const pose = navigation?.map_id === info.map_id ? navigation.pose : null;
+  if (!pose || !navigation) return bounds;
+  const [y, x] = toView([pose.x_m, pose.y_m], display.origin);
+  const points = [...bounds, ...chassisOutline(pose, navigation.footprint.length_m, navigation.footprint.width_m)
+    .map(point => toView(point, display.origin))];
+  // Keep the robot centered while leaving room for all explored cells.
+  const halfHeight = Math.max(...points.map(point => Math.abs(point[0] - y)));
+  const halfWidth = Math.max(...points.map(point => Math.abs(point[1] - x)));
+  return [[y - halfHeight, x - halfWidth], [y + halfHeight, x + halfWidth]];
+}
 export function toWorld([v, u]: Point, origin: Origin): Point {
   const c = Math.cos(origin.yaw_rad), s = Math.sin(origin.yaw_rad);
   return [origin.x_m + c * u - s * v, origin.y_m + s * u + c * v];
