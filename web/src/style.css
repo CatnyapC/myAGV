@@ -88,6 +88,11 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .panel-title { font-size: 11px; letter-spacing: .08em; font-weight: 750; display: flex; flex: 1; align-items: center; height: 100%; user-select: none; }
 .layout-editing .panel-title { cursor: grab; color: var(--cyan-11); }
 .panel-tools { display: flex; align-items: center; gap: 4px; }
+.stop-recovery-trigger { display: inline-flex; }
+.stop-recovery-trigger:focus-visible { outline: 2px solid var(--cyan-8); outline-offset: 2px; border-radius: 6px; }
+.stop-recovery-trigger .button:disabled { pointer-events: none; }
+.stop-recovery-tooltip { position: fixed; z-index: 1500; width: 280px; max-width: calc(100vw - 16px); padding-block: 6px; }
+.stop-recovery-tooltip [role='tooltip'] { max-height: min(320px, calc(100dvh - 28px)); overflow: auto; padding: 10px 12px; border: 1px solid var(--gray-7); border-radius: 6px; background: var(--gray-2); color: var(--gray-12); box-shadow: 0 4px 16px #0006; font-size: 12px; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
 .button.stop-recovery { color: var(--orange-11); background: var(--orange-3); animation: stop-recovery-pulse 2s ease-in-out infinite; }
 .button.stop-recovery:disabled { animation: none; }
 @keyframes stop-recovery-pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--orange-4); border-color: var(--orange-6); } 50% { box-shadow: 0 0 0 4px var(--orange-3); border-color: var(--orange-9); } }

@@ -1,4 +1,4 @@
-import { useState, type PointerEvent } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ShieldCheck } from 'lucide-react';
 import { Button } from './ui';
@@ -14,18 +14,60 @@ type Props = { stations: Stations; state?: HardwareState; connected: boolean; go
 
 export function StopRecovery({ state, connected, command }: Pick<Props, 'state' | 'connected' | 'command'>) {
   const [pending, setPending] = useState(false);
-  if (state?.phase !== 'fault' && state?.phase !== 'recovering_stop') return null;
+  const [tooltip, setTooltip] = useState<{ top: number; left: number } | null>(null);
+  const trigger = useRef<HTMLSpanElement>(null);
+  const popup = useRef<HTMLDivElement>(null);
+  const tooltipId = useId();
+  const visible = state?.phase === 'fault' || state?.phase === 'recovering_stop';
+  const open = tooltip !== null;
+  useLayoutEffect(() => {
+    if (!visible) { setTooltip(null); return; }
+    if (!open) return;
+    const place = () => {
+      if (!trigger.current || !popup.current) return;
+      const rect = trigger.current.getBoundingClientRect();
+      const height = popup.current.getBoundingClientRect().height;
+      const top = rect.bottom + height > window.innerHeight - 8 ? Math.max(8, rect.top - height) : rect.bottom;
+      const left = Math.max(8, Math.min(rect.right - 280, window.innerWidth - 288));
+      setTooltip(value => value && (value.top !== top || value.left !== left) ? { top, left } : value);
+    };
+    place();
+    const hide = () => setTooltip(null);
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') hide(); };
+    window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
+    document.addEventListener('keydown', escape);
+    return () => {
+      window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [open, visible, pending, state?.phase, state?.status, state?.arm_error]);
+  if (!visible || !state) return null;
+  const showTooltip = () => {
+    const rect = trigger.current!.getBoundingClientRect();
+    setTooltip({ top: rect.bottom, left: Math.max(8, Math.min(rect.right - 280, window.innerWidth - 288)) });
+  };
+  const leaveTooltip = (event: PointerEvent<HTMLElement>) => {
+    const target = event.relatedTarget instanceof Node ? event.relatedTarget : null;
+    if (trigger.current?.matches(':focus-within') || trigger.current?.contains(target) || popup.current?.contains(target)) return;
+    setTooltip(null);
+  };
   const checking = pending || state.phase === 'recovering_stop';
   const description = `Verify base, wheels and arm are stopped. Click to clear fault. Fresh feedback required; homing resets. Previous task stays stopped.\n${state.status}${state.arm_error ? ` · ${state.arm_error}` : ''}`;
   return <>
     <span className="sr-only" role="alert">Stop unconfirmed · motion locked</span>
+    <span ref={trigger} className="stop-recovery-trigger" tabIndex={!connected || checking ? 0 : undefined}
+      aria-describedby={open ? tooltipId : undefined} onPointerEnter={showTooltip} onPointerLeave={leaveTooltip}
+      onFocus={showTooltip} onBlur={() => setTooltip(null)}>
     <Button variant="ghost" className="icon stop-recovery" aria-label={checking ? 'Validating stop' : 'Validate stop and clear fault'}
-      title={checking ? 'Validating stopped hardware…' : description} aria-description={description} aria-busy={checking}
+      aria-describedby={open ? tooltipId : undefined} aria-busy={checking}
       disabled={!connected || checking} onClick={async () => {
         setPending(true);
         try { await command('recover_stop', { confirmed: true }); }
         finally { setPending(false); }
-      }}><ShieldCheck size={16} /></Button>
+      }}><ShieldCheck size={16} /></Button></span>
+    {tooltip && createPortal(<div ref={popup} className="dark stop-recovery-tooltip" style={tooltip} onPointerLeave={leaveTooltip}>
+      <div id={tooltipId} role="tooltip">{checking ? 'Validating stopped hardware…' : description}</div>
+    </div>, document.body)}
   </>;
 }
 
