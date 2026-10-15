@@ -13,6 +13,7 @@ type Round = {
   usage?: { inputTokens?: number; cachedInputTokens?: number }; codex?: { thread_id: string; turn_id: string; service_tier?: string };
   measured_images?: { label: string; image: string; bounds?: number[] }[];
   base_command?: { forward_m: number; turn_deg: number }; corrected_location?: { x_m: number; y_m: number; uncertainty_m: number };
+  outcome?: 'arrived' | 'stand_off';
 };
 
 export function LLMTurns(props: { connected: boolean; onLog: LogReporter }) {
@@ -71,6 +72,7 @@ export function LLMTurns(props: { connected: boolean; onLog: LogReporter }) {
         {round.correction && <span>Suggestion: arm X {round.correction.X} mm · Y {round.correction.Y ?? 0} mm · base {round.correction.turn_deg}° (positive = clockwise)</span>}
         {round.base_command && <span>Base suggestion: forward {(round.base_command.forward_m * 100).toFixed(0)} cm · turn {round.base_command.turn_deg}°</span>}
         {round.corrected_location && <span>Corrected item: X {round.corrected_location.x_m.toFixed(2)} · Y {round.corrected_location.y_m.toFixed(2)} m · ±{round.corrected_location.uncertainty_m.toFixed(2)} m</span>}
+        {round.outcome === 'stand_off' && <span>Inside conservative stand-off distance; stopped without motion. Arrival isn't confirmed.</span>}
         <span className="muted">Request history · movement completion appears in LOG.</span>
         {round.error && <span role="alert" className="muted">{round.error}</span>}
         {round.messages && <details><summary>Prompt</summary><pre>{round.messages[0].content}</pre>

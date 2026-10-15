@@ -296,6 +296,9 @@ model's chosen source view, including items visible only in an earlier view.
 LLM ROUNDS shows this assessment's inputs, output, errors and Codex thread.
 Select a confident item estimate to enable **SLOW APPROACH TEST**, subject to the
 existing localization, sensor, no-go and stopped-controller checks.
+If the current visual estimate is already inside the conservative stand-off
+distance, zero motion ends the approach test as a safe stop rather than an error.
+This does not confirm arrival; FETCH cannot continue to arm alignment or grasping.
 
 Each revisit replaces its latest unlabelled photo. Confirmed old photos stay as
 historical evidence; new images never inherit a moving object's old identity.

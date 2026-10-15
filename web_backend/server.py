@@ -899,6 +899,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                     raise ValueError('Item approach stopped or catalog changed')
                                 photos.set_locations(photo['id'], dict(status='complete', catalog_signature=value['catalog_signature'], estimates=[corrected]), photos.value['revision'])
                             entry.update(corrected_location=corrected, base_command={k: result[k] for k in ('forward_m', 'turn_deg')})
+                            if goal is None:
+                                entry['outcome'] = 'arrived' if result['arrived'] else 'stand_off'
                             await editor.emit('photos')
                         else:
                             reference = next((p for p in photos.value['photos']

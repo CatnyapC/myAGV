@@ -62,7 +62,10 @@ class MapFetchTest(unittest.TestCase):
         c.arm.set_angles.side_effect, c.arm.set_coords.side_effect = joints, coordinates
         c.grip = Mock(side_effect=lambda value: events.append(('grip', value)))
         c.go = Mock(side_effect=go)
-        c.approach_item = Mock(side_effect=lambda packet: events.append(('approach',)))
+        def approach(packet):
+            events.append(('approach',))
+            return dict(outcome='arrived')
+        c.approach_item = Mock(side_effect=approach)
         c.calibrate_fetch = Mock(side_effect=align)
         with tempfile.TemporaryDirectory() as folder, patch('robot_control.arm_deadline', return_value=nullcontext()), \
              patch('robot_control.wait_arm', side_effect=lambda *a, **kw: list(angles)):
@@ -82,7 +85,7 @@ class MapFetchTest(unittest.TestCase):
         c.robot.nav.go_to_pickup.assert_not_called()
 
     def test_fetch_preflight_and_stage_failures_stop_subsequent_actions(self):
-        for failure in ('camera', 'joints', 'height', 'confidence', 'approach', 'align', 'return', 'stop', 'map'):
+        for failure in ('camera', 'joints', 'height', 'confidence', 'approach', 'stand_off', 'align', 'return', 'stop', 'map'):
             with self.subTest(failure=failure):
                 c, packet = fake_control(), fetch_packet()
                 c.config['transport_angles'] = [0, 10, 20, 27]
@@ -90,12 +93,13 @@ class MapFetchTest(unittest.TestCase):
                 c.robot.costmaps = {'global': (time.monotonic(), 2, True, c.robot.grid)}
                 c.robot.nav.get_pose.return_value = dict(x_m=2, y_m=3, yaw_deg=0)
                 c.fold, c.go, c.grip, c.move_arm, c.test_grasp = Mock(), Mock(), Mock(), Mock(), Mock()
-                c.approach_item, c.calibrate_fetch = Mock(), Mock()
+                c.approach_item, c.calibrate_fetch = Mock(return_value=dict(outcome='arrived')), Mock()
                 if failure == 'camera': c.capture.side_effect = RuntimeError('camera unavailable')
                 if failure == 'joints': packet['pickup_angles'] = [90, 20, 30]
                 if failure == 'height': packet['grasp_z_mm'] = 35
                 if failure == 'confidence': packet['estimate']['confidence'] = .6
                 if failure == 'approach': c.approach_item.side_effect = RuntimeError('item lost')
+                if failure == 'stand_off': c.approach_item.return_value = dict(outcome='stand_off')
                 if failure == 'align': c.calibrate_fetch.side_effect = RuntimeError('alignment failed')
                 if failure == 'return': c.go.side_effect = [None, RuntimeError('return blocked')]
                 if failure == 'stop': c.approach_item.side_effect = lambda packet: setattr(c, 'stop_pending', 'STOP')
@@ -107,6 +111,10 @@ class MapFetchTest(unittest.TestCase):
                     c.go.assert_not_called()
                 if failure != 'return': c.test_grasp.assert_not_called()
                 else: self.assertEqual([call.args[0]['action'] for call in c.test_grasp.call_args_list], ['grasp'])
+                if failure == 'stand_off':
+                    c.calibrate_fetch.assert_not_called()
+                    c.grip.assert_not_called()
+                    c.move_arm.assert_not_called()
                 self.assertFalse(c.base_enabled)
 
 

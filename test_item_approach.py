@@ -33,6 +33,22 @@ def result(**values):
 
 
 class ApproachTest(unittest.IsolatedAsyncioTestCase):
+    def test_zero_motion_inside_stand_off_is_safe_stop_not_arrival_or_no_progress(self):
+        grid = open_map()
+        stopped = {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 18,
+                   'distance_m': .7, 'uncertainty_m': .35, 'confidence': .87}
+        goal, estimate = approach_step(stopped, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+        self.assertIsNone(goal)
+        self.assertFalse(stopped['arrived'])
+        self.assertAlmostEqual(estimate['x_m'], POSE['x_m'] + .7 * math.cos(math.radians(18)))
+        for change, error in ((dict(distance_m=1.5), 'no useful progress'),
+                              (dict(arrived=True), 'arrival not geometrically confirmed'),
+                              (dict(forward_m=.01), 'no useful progress'),
+                              (dict(forward_m=.2), 'stand-off clearance'),
+                              (dict(seen=False), 'lost'), (dict(confidence=.69), 'confidence')):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
+                approach_step({**stopped, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+
     def test_bounds_clearance_identity_arrival_and_camera_transform(self):
         grid = open_map()
         proposal = result()
@@ -107,6 +123,16 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             c.arm.set_coords.assert_not_called()
             c.arm.set_gripper_value.assert_not_called()
             self.assertFalse(list(c.directory.iterdir()))
+            c.capture.reset_mock(); c.go.reset_mock()
+            answers = iter([{**result(), 'forward_m': 0, 'bearing_deg': 18, 'distance_m': .7}])
+            with patch('robot_control.atomic_json', side_effect=respond):
+                stopped = c.approach_item(packet)
+            self.assertEqual(stopped['rounds'], 1)
+            self.assertEqual(stopped['outcome'], 'stand_off')
+            c.go.assert_not_called()
+            self.assertEqual(c.capture.call_count, 1)
+            c.arm.set_coords.assert_not_called()
+            c.arm.set_gripper_value.assert_not_called()
             requests.clear()
             pose.update(x_m=2)
             c.capture.reset_mock(); c.go.reset_mock()
@@ -192,10 +218,12 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             c.capture.side_effect = capture
             bodies = []
             entered, release = asyncio.Event(), asyncio.Event()
-            cancelling = False
+            cancelling = safe_stopping = False
 
             async def provider(body, key, timeout, fast_mode=True):
                 bodies.append(body)
+                if safe_stopping:
+                    return {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 18, 'distance_m': .7}
                 if cancelling:
                     entered.set()
                     await release.wait()
@@ -254,7 +282,20 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertAlmostEqual(current['locations'][0]['x_m'], 3.1)
                     self.assertEqual(current['photos'][-1]['location_analysis']['status'], 'cancelled')
                     self.assertFalse((bridge / 'fetch_vision_response.json').exists())
-                self.assertAlmostEqual(PhotoIndex(ui, root / 'stations.json').snapshot(grid['map_id'])['locations'][0]['x_m'], 3.1)
+                    cancelling, safe_stopping = False, True
+                    c.stop_pending, c.phase, c.task_id = None, 'idle', 'stand-off-task'
+                    c.go.reset_mock()
+                    stopped = await asyncio.wait_for(asyncio.to_thread(c.approach_item, forwarded), 4)
+                    self.assertEqual(stopped['outcome'], 'stand_off')
+                    self.assertEqual(stopped['rounds'], 1)
+                    c.go.assert_not_called()
+                    log = await (await client.get('/api/fetch-log')).json()
+                    self.assertEqual(log['rounds'][0]['status'], 'returned')
+                    self.assertEqual(log['rounds'][0]['outcome'], 'stand_off')
+                    self.assertNotIn('error', log['rounds'][0])
+                    current = await (await client.get('/api/items')).json()
+                    self.assertAlmostEqual(current['locations'][0]['x_m'], stopped['estimate']['x_m'])
+                self.assertAlmostEqual(PhotoIndex(ui, root / 'stations.json').snapshot(grid['map_id'])['locations'][0]['x_m'], stopped['estimate']['x_m'])
 
 
 if __name__ == '__main__':

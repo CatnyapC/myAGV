@@ -196,6 +196,8 @@ def approach_step(result, photo, grid, zones, costmap, item, radius, config):
             raise ValueError('Item approach arrival not geometrically confirmed')
         return None, estimate
     forward, turn = result['forward_m'], result['turn_deg']
+    if forward == 0 and turn == 0 and distance < minimum + .03:
+        return None, estimate  # Honor the prompt's conservative stop without claiming arrival.
     if forward < .02 and abs(turn) < 2:
         raise ValueError('Item approach made no useful progress')
     if forward and (abs(bearing - turn) > 20 or distance < minimum + forward + .03):

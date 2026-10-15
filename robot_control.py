@@ -1014,7 +1014,8 @@ class Control:
                     self.robot.zones['zones'], costmap, item, self.config['clearance_m'], config)
                 estimate = dict(corrected, base_pose=pose)
                 if goal is None:
-                    return dict(rounds=round_index + 1, estimate=corrected)
+                    return dict(rounds=round_index + 1, estimate=corrected,
+                                outcome='arrived' if response['result']['arrived'] else 'stand_off')
                 if round_index == 15:
                     raise RuntimeError('Item approach did not converge after 16 rounds')
                 self.go(dict(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad'])), precise=True)
@@ -1283,8 +1284,10 @@ class Control:
             current()
             self.fold()
             self.go(goal, precise=True)
-            self.approach_item(packet)
+            approached = self.approach_item(packet)
             current()
+            if approached['outcome'] != 'arrived':
+                raise RuntimeError('Item approach stopped inside conservative stand-off distance; fetch blocked')
             self.grip(100)
             self.move_arm(target)
             self.calibrate_fetch(dict(packet, preview=False), calibration)
