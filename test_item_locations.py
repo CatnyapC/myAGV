@@ -50,20 +50,23 @@ class LocationGeometryTest(unittest.TestCase):
         result['estimates'][0]['distance_m'] = 6
         self.assertEqual(project_estimates(result, photo, grid, items, config), [])
 
-    def test_approach_excludes_walls_unknown_and_no_go_and_faces_item(self):
+    def test_approach_returns_capture_pose_and_excludes_walls_unknown_and_no_go(self):
         grid = open_map()
         pose = dict(x_m=1.5, y_m=3, yaw_rad=0)
-        estimate = dict(x_m=5, y_m=3, uncertainty_m=.35, confidence=.9, base_pose=pose)
+        capture_pose = dict(x_m=4.2, y_m=2.7, yaw_rad=.4)
+        estimate = dict(x_m=5, y_m=3, uncertainty_m=.35, confidence=.9, base_pose=capture_pose)
         goal = approach_goal(grid, [], None, pose, estimate, .2, DEFAULT_CONFIG)
-        self.assertGreaterEqual(math.hypot(goal['x_m']-5, goal['y_m']-3), .8)
-        self.assertAlmostEqual(goal['yaw_rad'], math.atan2(3-goal['y_m'], 5-goal['x_m']))
+        self.assertEqual(goal, capture_pose)
         self.assertTrue(plan_path(global_costmap(grid, .2), pose, goal))
         rotated = deepcopy(grid)
         rotated['origin'] = dict(x_m=-3, y_m=2, yaw_rad=math.pi / 2)
         p = local_to_world([1.5, 3], rotated['origin'])
         t = local_to_world([5, 3], rotated['origin'])
+        captured = local_to_world([4.2, 2.7], rotated['origin'])
         rp = dict(x_m=p[0], y_m=p[1], yaw_rad=math.pi / 2)
-        rg = approach_goal(rotated, [], None, rp, dict(estimate, x_m=t[0], y_m=t[1], base_pose=rp), .2, DEFAULT_CONFIG)
+        rotated_capture = dict(x_m=captured[0], y_m=captured[1], yaw_rad=math.pi / 2 + .4)
+        rg = approach_goal(rotated, [], None, rp, dict(estimate, x_m=t[0], y_m=t[1], base_pose=rotated_capture), .2, DEFAULT_CONFIG)
+        self.assertEqual(rg, rotated_capture)
         self.assertTrue(plan_path(global_costmap(rotated, .2), rp, rg))
         for wall_value in (100, -1):
             blocked = deepcopy(grid)
@@ -82,6 +85,16 @@ class LocationGeometryTest(unittest.TestCase):
             dynamic['cells'][y*80+30] = 100
         with self.assertRaises(ValueError):
             approach_goal(grid, [], dynamic, pose, estimate, .2, DEFAULT_CONFIG)
+
+        for invalid in (None, dict(x_m=4, y_m=3), dict(capture_pose, yaw_rad=math.nan),
+                        dict(capture_pose, x_m=9), dict(capture_pose, yaw_rad=4)):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                approach_goal(grid, [], None, pose, dict(estimate, base_pose=invalid), .2, DEFAULT_CONFIG)
+        for cell_value in (100, -1):
+            blocked = deepcopy(grid)
+            blocked['cells'][27 * 80 + 42] = cell_value
+            with self.subTest(cell_value=cell_value), self.assertRaises(ValueError):
+                approach_goal(blocked, [], None, pose, estimate, .2, DEFAULT_CONFIG)
 
 
 class LocationAPITest(unittest.IsolatedAsyncioTestCase):
@@ -189,6 +202,7 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
                     response = await client.post('/api/item-locations/approach', json=dict(map_id=grid['map_id'],
                         expected_revision=index['revision'], zone_revision=0, item_id=item_id, photo_id=location['photo_id']))
                     self.assertEqual(response.status, 200, await response.text())
+                    self.assertEqual((await response.json())['goal'], poses[0])
 
     async def test_model_receives_both_images_and_only_validated_measurements_survive(self):
         from aiohttp import web
@@ -256,7 +270,7 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
                     response = await client.post('/api/item-locations/approach', json=payload)
                     self.assertEqual(response.status, 200, await response.text())
                     goal = (await response.json())['goal']
-                    self.assertLess(goal['x_m'], 5)
+                    self.assertEqual(goal, photo['base_pose'])
                     stale = await client.post('/api/item-locations/approach', json={**payload, 'zone_revision': 1})
                     self.assertEqual(stale.status, 409)
                     stale = await client.post('/api/item-locations/approach', json={**payload, 'expected_revision': 0})

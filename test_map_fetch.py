@@ -23,7 +23,7 @@ def fetch_packet():
     return dict(type='fetch', item_id='cup', pickup_angles=[90, 20, 30, 27], grasp_z_mm=12.5,
         vision_item=dict(id='cup', calibration_z_mm=35), fetch_settings={}, location_config=DEFAULT_CONFIG,
         estimate=dict(x_m=5, y_m=3, confidence=.9, uncertainty_m=.35,
-                      base_pose=dict(x_m=2, y_m=3, yaw_rad=0)))
+                      base_pose=dict(x_m=3.2, y_m=2.7, yaw_rad=.4)))
 
 
 class MapFetchTest(unittest.TestCase):
@@ -63,6 +63,7 @@ class MapFetchTest(unittest.TestCase):
         c.grip = Mock(side_effect=lambda value: events.append(('grip', value)))
         c.go = Mock(side_effect=go)
         def approach(packet):
+            self.assertEqual(pose, dict(x_m=3.2, y_m=2.7, yaw_deg=math.degrees(.4)))
             events.append(('approach',))
             return dict(outcome='arrived')
         c.approach_item = Mock(side_effect=approach)
@@ -79,8 +80,9 @@ class MapFetchTest(unittest.TestCase):
         self.assertEqual([e[1] for e in events if e[0] == 'coords'],
             [[1, 160, 12.5, 27], [1, 160, 35, 27], [1, 160, 12.5, 27], [1, 160, 35, 27]])
         self.assertEqual(c.go.call_args.args[0], start)
-        approach = c.go.call_args_list[0].args[0]
-        self.assertAlmostEqual(math.radians(approach['yaw_deg']), math.atan2(3-approach['y_m'], 5-approach['x_m']))
+        self.assertEqual(c.go.call_args_list[0].args[0],
+                         dict(x_m=3.2, y_m=2.7, yaw_deg=math.degrees(.4)))
+        self.assertEqual(c.go.call_count, 2)
         self.assertFalse(c.base_enabled)
         c.robot.nav.go_to_pickup.assert_not_called()
 
@@ -140,6 +142,12 @@ class MapFetchAPITest(unittest.IsolatedAsyncioTestCase):
             index.save_grasp_goal(item['id'], cameras, index.value['revision'], grid['map_id'])
             index.set_locations(cameras['front'], dict(status='complete', catalog_signature=catalog_signature(index.value['items']),
                 estimates=[dict(item_id=item['id'], x_m=5, y_m=3, uncertainty_m=.35, confidence=.9)]), index.value['revision'])
+            observation_pose = dict(x_m=3.2, y_m=2.7, yaw_rad=.4)
+            observation = index.add(image, dict(kind='observation', source='ros', camera_id='front',
+                map_id=grid['map_id'], map_revision=1, frame='map', captured_at_s=time.time() + 1,
+                base_pose=observation_pose), index.value['revision'])
+            index.set_locations(observation['id'], dict(status='complete', catalog_signature=catalog_signature(index.value['items']),
+                estimates=[dict(item_id=item['id'], x_m=4.5, y_m=3.5, uncertainty_m=.35, confidence=.9)]), index.value['revision'])
             with patch('web_backend.server.load_key', return_value=('configured', 'private-test-key')):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 hardware = app[EDITOR].hardware
@@ -160,8 +168,9 @@ class MapFetchAPITest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(forwarded['grasp_z_mm'], 12.5)
                     self.assertFalse(forwarded['preview'])
                     self.assertEqual(forwarded['location_config'], DEFAULT_CONFIG)
-                    self.assertEqual(forwarded['estimate']['x_m'], 5)
-                    self.assertEqual(forwarded['reference_photo_id'], cameras['front'])
+                    self.assertEqual(forwarded['estimate']['x_m'], 4.5)
+                    self.assertEqual(forwarded['estimate']['base_pose'], observation_pose)
+                    self.assertEqual(forwarded['reference_photo_id'], observation['id'])
                     self.assertEqual(forwarded['vision_item']['arm_goal_photo_id'], cameras['arm'])
                     self.assertEqual(forwarded['vision_item']['front_goal_photo_id'], cameras['front'])
                     self.assertEqual(forwarded['vision_item']['reference_photo_id'], reference['id'])

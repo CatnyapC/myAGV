@@ -1,13 +1,12 @@
 """Coarse visual item estimates and stopped, reachable navigation previews."""
 import base64
-from collections import deque
 import hashlib
 import json
 import math
 from fetch_calibration import FETCH_VISION_TIMEOUT_S, visible_bounds
 
 from .map_data import local_to_world, world_to_local
-from .simulation import cell_index, global_costmap, navigation_grid, segment_clear
+from .simulation import cell_index, global_costmap, navigation_grid, plan_path, segment_clear, validate_pose
 
 DEFAULT_CONFIG = dict(camera_yaw_deg=0, camera_forward_m=0, camera_left_m=0,
                       stand_off_m=.45, minimum_uncertainty_m=.35)
@@ -323,31 +322,7 @@ def approach_grid(source, zones, costmap, radius):
 def approach_goal(source, zones, costmap, pose, estimate, radius, config):
     if estimate['confidence'] < .7:
         raise ValueError('Item estimate confidence too low for approach')
-    known, inflated = approach_grid(source, zones, costmap, radius)
-    first = cell_index(inflated, pose)
-    queue, travel, best = deque([first]), {first: 0}, None
-    w, h, r = source['width'], source['height'], source['resolution_m']
-    target = [estimate['x_m'], estimate['y_m']]
-    minimum = max(config['stand_off_m'], radius + .15) + estimate['uncertainty_m']
-    viewing = [estimate['base_pose']['x_m'] - target[0], estimate['base_pose']['y_m'] - target[1]]
-    while queue:
-        i = queue.popleft()
-        x, y = i % w, i // w
-        point = local_to_world([(x + .5) * r, (y + .5) * r], source['origin'])
-        dx, dy = point[0] - target[0], point[1] - target[1]
-        distance = math.hypot(dx, dy)
-        if minimum <= distance <= minimum + 1 and dx * viewing[0] + dy * viewing[1] >= .5 * distance * math.hypot(*viewing):
-            # Check sight up to the uncertainty region; the object itself may occupy a map cell.
-            sight_end = [target[0] + dx * estimate['uncertainty_m'] / distance,
-                         target[1] + dy * estimate['uncertainty_m'] / distance]
-            score = (distance, travel[i])
-            if (best is None or score < best[0]) and segment_clear(known, point, sight_end):
-                best = (score, dict(x_m=point[0], y_m=point[1], yaw_rad=math.atan2(-dy, -dx)))
-        for nx, ny in ((x-1, y), (x+1, y), (x, y-1), (x, y+1)):
-            nxt = ny * w + nx
-            if 0 <= nx < w and 0 <= ny < h and nxt not in travel and inflated['cells'][nxt] == 0:
-                travel[nxt] = travel[i] + 1
-                queue.append(nxt)
-    if best is None:
-        raise ValueError('No reachable approach with clearance and line of sight')
-    return best[1]
+    goal = validate_pose(estimate.get('base_pose'))
+    _, inflated = approach_grid(source, zones, costmap, radius)
+    plan_path(inflated, pose, goal)
+    return goal
