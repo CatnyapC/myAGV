@@ -148,11 +148,12 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
   </details>;
 }
 
-export function MapUpdateControls({ toolbar, state, connected, goal, command, points, revision, saving, selectedId, onSelect, onSave }:
+export function MapUpdateControls({ toolbar, state, connected, goal, command, points, revision, saving, selectedId, onSelect, onSave, onClearLocations }:
   Pick<Props, 'state' | 'connected' | 'goal' | 'command'> & {
     toolbar: HTMLElement | null;
     points: ObservationPoint[]; revision: number; saving: boolean; selectedId: string | null;
     onSelect: (id: string | null) => void; onSave: (points: ObservationPoint[], selectedId?: string | null) => Promise<void>;
+    onClearLocations: () => Promise<void>;
   }) {
   const [minutes, setMinutes] = useState('10');
   const [updating, setUpdating] = useState(false);
@@ -169,7 +170,9 @@ export function MapUpdateControls({ toolbar, state, connected, goal, command, po
   const cannotPlan = !idle || updating || saving || blockers.length > 0;
   const updateCommand = async (type: string) => {
     setUpdating(true);
-    try { await command(type, type === 'update_start' || type === 'update_pause' || type === 'map_refresh'
+    try {
+      if (type === 'locations_clear') { await onClearLocations(); return; }
+      await command(type, type === 'update_start' || type === 'update_pause' || type === 'map_refresh'
       ? { task_id: state?.task_id } : type === 'survey'
         ? { observation_point_id: selectedId, observation_revision: revision }
         : { limit_s: Number(minutes) * 60, goals }); }
@@ -182,6 +185,9 @@ export function MapUpdateControls({ toolbar, state, connected, goal, command, po
     <div className="action-line">
       <Button variant="default" title={blockers.join('; ')} disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start item updates</Button>
       <Button disabled={!connected || updating || paused || !update?.active} onClick={() => void updateCommand('update_pause')}>Pause item updates</Button>
+      <Button title="Clear all located item positions; keep photos, items, calibration and observation points"
+        disabled={!connected || updating || saving || (!idle && !paused)}
+        onClick={() => void updateCommand('locations_clear')}>Clear item positions</Button>
     </div>
     <div className="action-line">
       <Button disabled={!selected || !idle || updating || saving || pointBlockers.length > 0}

@@ -346,6 +346,17 @@ export function App() {
       reportError((failure as Error).message); if (type === 'reset_map') throw failure;
     }
   }
+  async function clearItemLocations() {
+    if (!photos || !packet) return;
+    setError('');
+    try {
+      const saved = await api<PhotoIndex>('/api/item-locations/clear', { method: 'POST', body: JSON.stringify({
+        map_id: packet.info.map_id, expected_revision: photos.revision,
+      }) });
+      setPhotos(saved);
+      log('Item positions cleared', 'info', 'Map');
+    } catch (failure) { reportError((failure as Error).message); void reload().catch(() => {}); }
+  }
   async function saveObservationPoints(points: ObservationPoint[], selectId: string | null = selectedPointId) {
     if (!observationPoints || !packet || observationPoints.map_id !== packet.info.map_id) return;
     setPointsSaving(true); setError('');
@@ -596,7 +607,7 @@ export function App() {
         </div>}
         {state?.demo === false && <MapUpdateControls toolbar={mapToolbar} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand}
           points={visiblePoints} revision={observationPoints?.revision ?? 0} saving={pointsSaving}
-          selectedId={selectedPointId} onSelect={setSelectedPointId} onSave={saveObservationPoints} />}
+          selectedId={selectedPointId} onSelect={setSelectedPointId} onSave={saveObservationPoints} onClearLocations={clearItemLocations} />}
         {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
           <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"
             value={keyboardCorners[i]} onChange={e => setKeyboardCorners(v => v.map((item, n) => n === i ? e.target.value : item))} /></label>)}

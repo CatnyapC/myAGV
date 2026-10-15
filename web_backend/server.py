@@ -256,6 +256,18 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             raise web.HTTPConflict(text='Item estimate changed; retry approach')
         return web.json_response(dict(goal=goal, estimate=estimate, map_id=editor.grid['map_id'], index_revision=revision))
 
+    async def clear_locations(request):
+        data = await request.json()
+        if not isinstance(data, dict) or type(data.get('expected_revision')) is not int:
+            raise ValueError('Current photo index revision required')
+        async with photo_lock:
+            photo_stopped()
+            if data.get('map_id') != editor.grid['map_id']:
+                raise web.HTTPConflict(text='Map changed; retry clearing positions')
+            photos.clear_locations(data['expected_revision'])
+        await editor.emit('photos')
+        return web.json_response(photos.snapshot(editor.grid['map_id']))
+
     async def queue_locations(request):
         data = await request.json()
         if not isinstance(data, dict) or type(data.get('expected_revision')) is not int:
@@ -1088,6 +1100,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     app.router.add_get('/api/items', photo_index)
     app.router.add_post('/api/resolve', resolve)
     app.router.add_post('/api/item-locations/estimate', queue_locations)
+    app.router.add_post('/api/item-locations/clear', clear_locations)
     app.router.add_post('/api/item-locations/approach', estimated_approach)
     app.router.add_get('/api/stations', stations)
     app.router.add_post('/api/photos/reference', reference_upload)

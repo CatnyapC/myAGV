@@ -204,6 +204,39 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.status, 200, await response.text())
                     self.assertEqual((await response.json())['goal'], poses[0])
 
+                    payload = dict(map_id=grid['map_id'], expected_revision=index['revision'])
+                    response = await client.post('/api/item-locations/clear', json={**payload, 'expected_revision': 0})
+                    self.assertEqual(response.status, 400)
+                    response = await client.post('/api/item-locations/clear', json={**payload, 'map_id': 'old'})
+                    self.assertEqual(response.status, 409)
+                    hardware.control['phase'] = 'navigating'
+                    response = await client.post('/api/item-locations/clear', json=payload)
+                    self.assertEqual(response.status, 409)
+                    hardware.control['phase'] = 'update_paused'
+                    points = await (await client.get('/api/observation-points')).json()
+                    response = await client.post('/api/item-locations/clear', json=payload)
+                    self.assertEqual(response.status, 200, await response.text())
+                    cleared = await response.json()
+                    self.assertEqual(cleared['locations'], [])
+                    self.assertEqual(cleared['items'], index['items'])
+                    self.assertEqual([p['id'] for p in cleared['photos']], [p['id'] for p in index['photos']])
+                    self.assertTrue(all(p['available'] for p in cleared['photos']))
+                    self.assertEqual(await (await client.get('/api/observation-points')).json(), points)
+                    self.assertEqual(PhotoIndex(ui, root / 'stations.json').snapshot(grid['map_id'])['locations'], [])
+                    await asyncio.sleep(.65)
+                    self.assertEqual(len(calls), 1)  # Old ROS frames must not be estimated again.
+                    captures = [str(uuid.uuid4()), str(uuid.uuid4())]
+                    capture(0)
+                    capture(1)
+                    for _ in range(100):
+                        fresh = await (await client.get('/api/items')).json()
+                        if fresh['locations']:
+                            break
+                        await asyncio.sleep(.05)
+                    self.assertEqual(len(calls), 2)
+                    self.assertEqual(fresh['locations'][0]['x_m'], 4.5)
+                    self.assertNotIn(fresh['locations'][0]['photo_id'], [p['id'] for p in index['photos']])
+
     async def test_model_receives_both_images_and_only_validated_measurements_survive(self):
         from aiohttp import web
         photo = dict(base_pose=dict(x_m=1.5, y_m=3, yaw_rad=0))
@@ -291,6 +324,24 @@ class LocationAPITest(unittest.IsolatedAsyncioTestCase):
                     index = await wait_status(client, 'error')
                     self.assertEqual(index['locations'], [])
                     self.assertIn('Invalid model estimate', index['photos'][1]['location_analysis']['error'])
+
+                    mode = 'stall'
+                    entered.clear()
+                    release.clear()
+                    await client.post('/api/item-locations/estimate', json=dict(map_id='test-map', expected_revision=index['revision']))
+                    await asyncio.wait_for(entered.wait(), 3)
+                    running = await (await client.get('/api/items')).json()
+                    response = await client.post('/api/item-locations/clear', json=dict(map_id='test-map', expected_revision=running['revision']))
+                    self.assertEqual(response.status, 200, await response.text())
+                    release.set()
+                    for _ in range(100):
+                        log = await (await client.get('/api/fetch-log')).json()
+                        if log['rounds'][-1]['status'] == 'cancelled':
+                            break
+                        await asyncio.sleep(.05)
+                    self.assertEqual(log['rounds'][-1]['status'], 'cancelled')
+                    self.assertEqual((await (await client.get('/api/items')).json())['locations'], [])
+                    self.assertEqual(PhotoIndex(root, root / 'stations.json').snapshot('test-map')['locations'], [])
 
 
 if __name__ == '__main__':

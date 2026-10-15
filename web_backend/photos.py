@@ -228,6 +228,16 @@ class PhotoIndex:
         photo['location_analysis'] = analysis
         self.commit(value)
 
+    def clear_locations(self, revision):
+        self.check(revision)
+        value = deepcopy(self.value)
+        for photo in value['photos']:
+            if photo['kind'] == 'observation' and photo['camera_id'] == 'front':
+                # Retire old views so automatic estimation cannot restore cleared positions.
+                photo['current'] = False
+                photo.pop('location_analysis', None)
+        self.commit(value)
+
     def add(self, image, metadata, revision):
         self.check(revision)
         validate_png(image)
