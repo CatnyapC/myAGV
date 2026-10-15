@@ -53,7 +53,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         ready[0] = False
         with patch('robot_control.time.sleep', side_effect=lambda _: setattr(c, 'stop_pending', 'STOP')):
             with self.assertRaises(Stopped):
-                c.wait_approach_sensors()
+                c.wait_vision_sensors()
 
     def test_bounded_corrections_and_visible_off_center_item_can_finish(self):
         grid = open_map()

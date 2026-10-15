@@ -326,9 +326,9 @@ Only an explicit LLM turn produces angular velocity. Forward travel never adds
 endpoint steering or heading corrections; its current forward path is checked live.
 Necessary translations use at least 0.01 m/s, the driver's representable speed
 step, so millimeter corrections do not truncate to a zero motor command.
-During approach, stale LiDAR/odometry pauses with zero velocity while keeping the
+During approach or ALIGN, stale LiDAR/odometry pauses with zero velocity while keeping the
 task and Codex session. Fresh sensors and measured standstill allow resumption;
-paused time does not consume the chassis movement timeout. STOP, lease loss,
+paused time does not consume movement or ALIGN inference timeouts. STOP, lease loss,
 map/no-go changes and driver faults still cancel. A changed base pose after a
 photo discards that adjustment and takes a fresh photo for the next round.
 Codex keeps one session for the approach. The first turn sends identity and GOAL;

@@ -294,7 +294,7 @@ class Control:
         elif not self.robot.driver_watchdog or not self.robot.exclusive:
             reason = 'Driver watchdog unavailable or competing chassis publisher'
         elif not self.robot.sensors_ready() and not (self.phase in ('refreshing_map', 'recovering_stop') and not self.base_enabled):
-            if self.phase == 'approaching_item':
+            if self.phase in ('approaching_item', 'calibrating'):
                 self.base_enabled = False
                 self.robot.zero()
             else:
@@ -365,22 +365,22 @@ class Control:
         self.read_arm()
         self.arm_error = ''
 
-    def wait_approach_sensors(self):
+    def wait_vision_sensors(self):
         if self.robot.sensors_ready():
             return 0
         started, previous = time.monotonic(), self.status
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
         self.base_enabled = False
         self.robot.zero()
-        self.status = 'Item approach paused: waiting for fresh LiDAR and odometry'
-        print(json.dumps(dict(event='approach_sensors_paused', time_s=time.time(), task_id=self.task_id)), flush=True)
+        self.status = 'Vision task paused: waiting for fresh LiDAR and odometry'
+        print(json.dumps(dict(event='vision_sensors_paused', time_s=time.time(), task_id=self.task_id, phase=self.phase)), flush=True)
         while True:
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
-                raise Stopped('Item approach cancelled or lease expired')
+                raise Stopped('Vision task cancelled or lease expired')
             if not self.robot.driver_watchdog or not self.robot.exclusive or self.robot.ros.is_shutdown():
                 raise Stopped('Driver watchdog, exclusive output or ROS unavailable')
             if not self.robot.grid or self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
-                raise Stopped('Map or no-go zones changed while approach paused')
+                raise Stopped('Map or no-go zones changed while vision task paused')
             if self.robot.sensors_ready():
                 try:
                     self.robot.nav.wait_stopped(timeout=1)
@@ -391,7 +391,7 @@ class Control:
             time.sleep(.05)
         self.status = previous
         paused = time.monotonic() - started
-        print(json.dumps(dict(event='approach_sensors_resumed', time_s=time.time(), task_id=self.task_id, paused_s=paused)), flush=True)
+        print(json.dumps(dict(event='vision_sensors_resumed', time_s=time.time(), task_id=self.task_id, phase=self.phase, paused_s=paused)), flush=True)
         return paused
 
     def travel_guard(self, pose, local_alignment=False):
@@ -414,8 +414,8 @@ class Control:
             raise RuntimeError('Set and confirm localization first')
         if not self.robot.driver_watchdog or not self.robot.exclusive:
             raise RuntimeError('Chassis watchdog, exclusive output and fresh sensors required')
-        paused = self.wait_approach_sensors() if self.phase == 'approaching_item' else 0
-        if self.phase != 'approaching_item' and not self.robot.sensors_ready():
+        paused = self.wait_vision_sensors() if self.phase in ('approaching_item', 'calibrating') else 0
+        if self.phase not in ('approaching_item', 'calibrating') and not self.robot.sensors_ready():
             raise RuntimeError('Chassis watchdog, exclusive output and fresh sensors required')
         self.robot.nav.get_pose(timeout=.1)
         if not self.robot.clearance_ready(self.config['clearance_m']):
@@ -496,7 +496,9 @@ class Control:
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
                 raise Stopped('Arm step cancelled or lease expired')
             if guard:
+                waiting = time.monotonic()
                 guard()
+                end += time.monotonic() - waiting
             with arm_deadline(.4):
                 actual = self.arm.get_coords_info()
             if actual and len(actual) >= len(coords) and all(type(a) in (int, float) and math.isfinite(a)
@@ -1013,7 +1015,7 @@ class Control:
                 raise Stopped('Item approach cancelled or lease expired')
             if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
                 raise ValueError('Map or no-go zones changed during item approach')
-            self.wait_approach_sensors()
+            self.wait_vision_sensors()
             self.travel_guard(self.robot.nav.get_pose())
 
         try:
@@ -1134,6 +1136,8 @@ class Control:
     def turn_fetch(self, degrees, config=None, local_alignment=False):
         config = calibration_config(config)
         number(degrees, -2, 2, 'Fetch base turn')
+        if self.phase == 'calibrating':
+            self.wait_vision_sensors()
         self.robot.nav.wait_stopped()
         start = self.robot.nav.get_odom_pose()
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
@@ -1143,6 +1147,8 @@ class Control:
         end = time.monotonic() + config['turn_' + size + '_duration_s']
         try:
             while True:
+                if self.phase == 'calibrating':
+                    end += self.wait_vision_sensors()
                 pose = self.robot.nav.get_odom_pose()
                 if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
                     raise Stopped('Map or no-go zones changed during fetch rotation')
@@ -1180,14 +1186,14 @@ class Control:
                 raise Stopped('Fetch alignment cancelled or lease expired')
             if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
                 raise ValueError('Map or no-go zones changed during fetch alignment')
-            if not self.robot.sensors_ready():
-                raise RuntimeError('Fresh sensors required during fetch alignment')
+            return self.wait_vision_sensors()
 
         try:
             if not packet.get('preview'):
                 target_z = number(packet['vision_item'].get('calibration_z_mm'),
                     LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Calibration GOAL Z; recapture GOAL if missing')
                 self.status = 'Moving Z to ARM CALIBRATION GOAL height'
+                current()
                 self.robot.nav.wait_stopped()
                 self.move_pickup_z(target_z, current)
             for round_index in range(33):
@@ -1214,7 +1220,7 @@ class Control:
                 self.status = '%s alignment round %d: waiting for LLM' % (stage, round_index + 1)
                 end = time.monotonic() + FETCH_VISION_TIMEOUT_S + 5
                 while True:
-                    current()
+                    end += current()
                     try:
                         response = json.loads(response_path.read_text())
                     except (OSError, ValueError):

@@ -28,6 +28,31 @@ from web_backend.storage import atomic_bytes, atomic_json
 
 
 class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
+    def test_align_waits_for_sensor_refresh_without_discarding_response(self):
+        c = fake_control()
+        c.task_id = 'same-align-task'
+        c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
+        c.capture.return_value = dict(image='compressed')
+        ready = [True]
+        c.robot.sensors_ready = lambda: ready[0]
+        with tempfile.TemporaryDirectory() as folder:
+            c.directory = Path(folder)
+            def respond(path, value):
+                atomic_json(path, value)
+                atomic_json(c.directory / 'fetch_vision_response.json',
+                    dict(id=value['id'], result=dict(x_mm=0, turn_deg=0), aligned_perfectly=True))
+                ready[0] = False
+                c.watchdog()
+            with patch('robot_control.atomic_json', side_effect=respond), \
+                 patch('robot_control.time.sleep', side_effect=lambda _: ready.__setitem__(0, True)):
+                c.calibrate_fetch(dict(preview=True, vision_item=dict(name='cup')), None)
+        self.assertIsNone(c.stop_pending)
+        self.assertEqual(c.stop_epoch, 0)
+        self.assertEqual(c.task_id, 'same-align-task')
+        c.robot.nav.wait_stopped.assert_any_call(timeout=1)
+        c.capture.assert_called_once_with('front', vision=True)
+        c.arm.set_coords.assert_not_called()
+
     def test_grasp_wire_commands_keep_clamp_and_send_one_full_target_per_move(self):
         from pymycobot.ultraArmP340 import ultraArmP340
         from pymycobot.error import calibration_parameters
