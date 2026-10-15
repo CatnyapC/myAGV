@@ -21,7 +21,7 @@ from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
 from web_backend.map_data import validate_rectangle
 from web_backend.photos import digest_station
-from web_backend.item_locations import approach_goal, approach_step, location_config
+from web_backend.item_locations import approach_goal, approach_step, location_config, validate_approach_path
 from web_backend.simulation import validate_pose
 from web_backend.storage import atomic_json
 
@@ -1020,18 +1020,61 @@ class Control:
                                 outcome='arrived')
                 if round_index == 15:
                     raise RuntimeError('Item approach did not converge after 16 rounds')
-                self.go(dict(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad'])), precise=True)
+                self.move_approach(goal, pose)
                 current()
                 self.robot.nav.wait_stopped()
                 after = self.robot.nav.get_pose()
                 after = dict(after, yaw_rad=math.radians(after['yaw_deg']))
                 history.append(dict(images=dict(front=capture['image']), base_pose=pose, after_pose=after,
-                                    commanded={k: response['result'][k] for k in ('forward_m', 'turn_deg')}, estimate=corrected))
+                                    commanded=dict(forward_m=math.hypot(goal['x_m']-pose['x_m'], goal['y_m']-pose['y_m']),
+                                        turn_deg=math.degrees(math.atan2(math.sin(goal['yaw_rad']-pose['yaw_rad']), math.cos(goal['yaw_rad']-pose['yaw_rad'])))), estimate=corrected))
         finally:
             self.base_enabled = False
             self.robot.zero()
             request_path.unlink(missing_ok=True)
             response_path.unlink(missing_ok=True)
+
+    def move_approach(self, goal, source):
+        self.travel_guard(goal)
+        self.robot.nav.wait_stopped()
+        start = self.robot.nav.get_odom_pose()
+        map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
+        forward = math.hypot(goal['x_m']-source['x_m'], goal['y_m']-source['y_m'])
+        turn = math.atan2(math.sin(goal['yaw_rad']-source['yaw_rad']), math.cos(goal['yaw_rad']-source['yaw_rad']))
+        yaw = math.radians(start['yaw_deg']) + turn
+        target = (start['x_m'] + forward*math.cos(yaw), start['y_m'] + forward*math.sin(yaw))
+        deadline = time.monotonic() + abs(turn)/.1 + forward/.03 + 5
+        turning = True
+        print(json.dumps(dict(event='approach_motion_target', time_s=time.time(), goal=goal, forward_m=forward, turn_deg=math.degrees(turn))), flush=True)
+        try:
+            while True:
+                if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision or self.robot.ros.is_shutdown():
+                    raise Stopped('Map, no-go zones or ROS changed during approach movement')
+                self.travel_guard(goal)
+                actual = self.robot.nav.get_pose()
+                validate_approach_path(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
+                    dict(actual, yaw_rad=math.radians(actual['yaw_deg'])), goal, self.config['clearance_m'])
+                measured = self.robot.nav.get_odom_pose()
+                error = math.atan2(math.sin(yaw-math.radians(measured['yaw_deg'])), math.cos(yaw-math.radians(measured['yaw_deg'])))
+                remaining = (target[0]-measured['x_m'])*math.cos(yaw) + (target[1]-measured['y_m'])*math.sin(yaw)
+                if turning and abs(error) <= math.radians(.3):
+                    turning = False
+                if not turning and remaining <= .003:
+                    print(json.dumps(dict(event='approach_motion_completed', time_s=time.time(), actual_odom=measured, remaining_m=remaining)), flush=True)
+                    return
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Measured approach movement timed out')
+                if abs((target[0]-measured['x_m'])*math.sin(yaw) - (target[1]-measured['y_m'])*math.cos(yaw)) > .02:
+                    raise RuntimeError('Approach deviated from validated path')
+                self.base_enabled = True
+                speed = 0 if turning else min(.03, max(.005, remaining))
+                angular = math.copysign(min(.1, max(.015, abs(error))), error) if abs(error) > math.radians(.3) else 0
+                self.robot.velocity, self.robot.velocity_at = (speed, 0, angular), time.monotonic()
+                time.sleep(.05)
+        finally:
+            self.base_enabled = False
+            self.robot.zero()
+            self.robot.nav.wait_stopped()
 
     def turn_fetch(self, degrees, config=None, local_alignment=False):
         config = calibration_config(config)

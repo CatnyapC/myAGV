@@ -302,11 +302,20 @@ LLM ROUNDS shows this assessment's inputs, output, errors and Codex thread.
 Select a confident item estimate to enable **SLOW APPROACH TEST**, subject to the
 existing localization, sensor, no-go and stopped-controller checks.
 Save the item's final GOAL front-camera photo before approaching. Each stopped
-round compares that saved image with CURRENT. Arrival requires visible target
-width within 10% and its midpoint/top/bottom within 50/1000 of the GOAL image.
+round compares that saved image with CURRENT. Rough arrival accepts target width
+at 80–125% of GOAL and visible top/bottom within 150/1000. The item must remain
+visible; horizontal centering and heading are not completion gates. ALIGN handles
+the final angle and fine positioning.
 Vertical cropping is retained; horizontally clipped targets cannot confirm range.
 The coarse map stand-off distance is only a staging position, not this endpoint.
-Forward steps shrink near the GOAL; LiDAR, footprint, path and no-go checks remain.
+Request each complete useful correction without a per-round distance/angle cap.
+The base executes it at slow speed against measured odometry, including small
+targets that move_base's arrival tolerance would otherwise skip. STOP, leases,
+fresh sensors and the full swept footprint/no-go checks stay active during travel.
+Codex keeps one session for the approach. The first turn sends identity and GOAL;
+later turns send only CURRENT and actual movement feedback. Its compact six-field
+JSON omits repeated confidence, uncertainty and arrival flags. Location estimates
+retain their prior confidence and uncertainty while visual range/bearing updates.
 The standalone test stops after matching GOAL. FETCH proceeds to arm ALIGN and
 then GRASP only after that match; it never treats a coarse safety stop as arrival.
 

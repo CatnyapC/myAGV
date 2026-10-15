@@ -851,7 +851,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
             while True:
                 await asyncio.sleep(.1)
-                if fetch_sessions and (editor.hardware.control.get('phase') != 'calibrating'
+                if fetch_sessions and (editor.hardware.control.get('phase') not in ('calibrating', 'approaching_item')
                         or any(not identity.startswith(str(editor.hardware.control.get('boot_id')) + ':' + str(editor.hardware.control.get('task_id')) + ':') for identity in fetch_sessions)):
                     await release_fetch_sessions()
                 try:
@@ -880,6 +880,13 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if resolve_lock.locked():
                         raise ValueError('Another LLM request is running; retry fetch explicitly')
                     async with resolve_lock:
+                        session = None
+                        if model == CODEX_MODEL:
+                            identity = value['boot_id'] + ':' + value['task_id'] + ':' + ('approach' if value.get('mode') == 'approach' else value.get('stage', 'base'))
+                            if fetch_sessions and identity not in fetch_sessions:
+                                await release_fetch_sessions()
+                            session = dict(id=identity, sequence=value.get('round', entry['round']), start=not value['history'])
+                            fetch_sessions.add(identity)
                         if value.get('mode') == 'approach':
                             async with photo_lock:
                                 photo = await ingest_capture(value['capture_id'])
@@ -899,8 +906,21 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             if goal_photo is None:
                                 raise ValueError('Saved final GOAL front camera unavailable')
                             goal_image = await asyncio.to_thread(photos.reference_image, goal_photo['id'])
-                            result = await refine_approach(value, key, location_calibration,
-                                dict(image=reference_image, base_pose=reference['base_pose']), goal_image, trace=entry, model=model, fast_mode=fetch_log['fast_mode'])
+                            inference = asyncio.create_task(refine_approach(value, key, location_calibration,
+                                dict(image=reference_image, base_pose=reference['base_pose']), goal_image, trace=entry, model=model,
+                                fast_mode=fetch_log['fast_mode'], session=session, effort=fetch_log['reasoning_effort']))
+                            try:
+                                while not inference.done():
+                                    await asyncio.wait({inference}, timeout=.1)
+                                    if not current(value):
+                                        raise ValueError('Approach stopped or changed during inference')
+                                result = await inference
+                            finally:
+                                if not inference.done():
+                                    inference.cancel()
+                                await asyncio.gather(inference, return_exceptions=True)
+                                if not current(value):
+                                    await release_fetch_sessions()
                             await asyncio.to_thread(editor.hardware.refresh)
                             if not current(value):
                                 raise ValueError('Item approach stopped or changed during vision request')
@@ -930,13 +950,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                         metric = MetricArmCalibration(metric_cache.get(cache_key))
                                     except (ValueError, KeyError, TypeError):
                                         metric = MetricArmCalibration()
-                            session = None
                             if model == CODEX_MODEL:
-                                identity = value['boot_id'] + ':' + value['task_id'] + ':' + value.get('stage', 'base')
-                                if fetch_sessions and identity not in fetch_sessions:
-                                    await release_fetch_sessions()
-                                session = dict(id=identity, sequence=value.get('round', entry['round']), start=not value['history'])
-                                fetch_sessions.add(identity)
                                 if metric is None:
                                     metric = MetricArmCalibration()
                             inference = asyncio.create_task(locate_pickup(value['images'], value['item'], key, reference_image, value['history'],

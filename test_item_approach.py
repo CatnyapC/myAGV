@@ -34,6 +34,59 @@ def result(**values):
 
 
 class ApproachTest(unittest.IsolatedAsyncioTestCase):
+    def test_full_corrections_are_allowed_and_visible_off_center_item_can_finish(self):
+        grid = open_map()
+        goal, _ = approach_step({**result(), 'forward_m': .5, 'turn_deg': 40, 'bearing_deg': 40},
+                                dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+        self.assertAlmostEqual(goal['x_m'], 2 + .5*math.cos(math.radians(40)))
+        self.assertAlmostEqual(goal['yaw_rad'], math.radians(40))
+        matched = {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 60,
+                   'current': [20, 0, 420, 1000]}
+        self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+
+    def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
+        for action in ('forward', 'turn', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
+            with self.subTest(action=action):
+                c = fake_control()
+                c.robot.grid, c.robot.zones = open_map(), dict(revision=2, zones=[])
+                c.robot.costmaps = {'global': (0, 2, True, c.robot.grid)}
+                c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
+                c.robot.velocity = (0, 0, 0)
+                c.deadline = .45
+                measured, now, commands = dict(x_m=2, y_m=3, yaw_deg=0), [0.], []
+                c.robot.nav.get_pose.side_effect = lambda **kw: dict(measured)
+                c.robot.nav.get_odom_pose.side_effect = lambda: dict(measured)
+                c.robot.zero.side_effect = lambda: setattr(c.robot, 'velocity', (0, 0, 0))
+                def tick(seconds):
+                    now[0] += seconds
+                    c.deadline = now[0] + .45
+                    velocity = c.robot.velocity
+                    commands.append(velocity)
+                    if action != 'timeout':
+                        measured['yaw_deg'] += math.degrees(velocity[2]*seconds)
+                        measured['x_m'] += velocity[0]*seconds*math.cos(math.radians(measured['yaw_deg']))
+                        measured['y_m'] += velocity[0]*seconds*math.sin(math.radians(measured['yaw_deg']))
+                    if action == 'stop': c.stop_pending = 'STOP'
+                    if action == 'sensors': c.robot.sensors_ready = lambda: False
+                    if action == 'zones': c.robot.zones['revision'] += 1
+                    if action == 'obstacle': c.robot.grid['cells'][30*80+21] = 100
+                goal = dict(x_m=2 if action == 'turn' else 2.006, y_m=3,
+                            yaw_rad=math.radians(4.5) if action == 'turn' else 0)
+                with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
+                    if action in ('forward', 'turn'):
+                        c.move_approach(goal, POSE)
+                    else:
+                        with self.assertRaises((Stopped, RuntimeError, ValueError)):
+                            c.move_approach(goal, POSE)
+                self.assertTrue(commands)
+                if action == 'forward': self.assertGreaterEqual(measured['x_m'], 2.003)
+                if action == 'turn': self.assertLess(abs(measured['yaw_deg']-4.5), .31)
+                self.assertEqual(c.robot.velocity, (0, 0, 0))
+                self.assertFalse(c.base_enabled)
+                c.robot.nav.go_to.assert_not_called()
+                c.arm.set_coords.assert_not_called()
+                c.arm.set_gripper_value.assert_not_called()
+
     def test_saved_goal_scale_controls_arrival_instead_of_coarse_stand_off(self):
         grid = open_map()
         close = {**result(), 'forward_m': .1, 'bearing_deg': 18, 'distance_m': .7}
@@ -43,8 +96,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)[0])
         for change, error in ((dict(forward_m=0), 'no useful progress'),
                               (dict(arrived=True, forward_m=0), 'saved front GOAL'),
-                              (dict(current=[260, 0, 740, 1000], forward_m=0), 'closer than'),
-                              (dict(current=[320, 0, 680, 1000]), 'overshoot'),
+                              (dict(current=[240, 0, 760, 1000], forward_m=0), 'closer than'),
                               (dict(arrived=True, forward_m=0, current=[300, 200, 700, 1000]), 'saved front GOAL'),
                               (dict(goal=None), 'bounds'), (dict(seen=False), 'lost'),
                               (dict(confidence=.69), 'confidence')):
@@ -75,9 +127,9 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         expected = local_to_world([2.2, 3], rotated['origin'])
         self.assertAlmostEqual(rotated_goal['x_m'], expected[0])
         self.assertAlmostEqual(rotated_goal['y_m'], expected[1])
-        for change in (dict(seen=False), dict(forward_m=.21), dict(turn_deg=16), dict(forward_m=True),
-                       dict(confidence=.69), dict(distance_m=float('nan')), dict(distance_m=.2),
-                       dict(arrived=True), dict(forward_m=0), dict(bearing_deg=30), dict(extra='grasp')):
+        for change in (dict(seen=False), dict(forward_m=-.1), dict(turn_deg=float('inf')), dict(forward_m=True),
+                       dict(confidence=.69), dict(distance_m=float('nan')),
+                       dict(arrived=True), dict(forward_m=0), dict(extra='grasp')):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 approach_step({**proposal, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
         goal, _ = approach_step({**proposal, 'forward_m': 0, 'turn_deg': 15, 'bearing_deg': 30},
@@ -111,7 +163,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         c.robot.nav.get_pose.side_effect = lambda **kw: dict(pose)
         c.capture.side_effect = lambda *a, **k: dict(capture_id=str(uuid.uuid4()), image=IMAGE,
             base_pose=dict(x_m=pose['x_m'], y_m=pose['y_m'], yaw_rad=math.radians(pose['yaw_deg'])))
-        c.go = Mock(side_effect=lambda goal, **kw: pose.update(goal))
+        c.move_approach = Mock(side_effect=lambda goal, source: pose.update(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad'])))
         packet = dict(location_config=DEFAULT_CONFIG, vision_item=ITEM, estimate={}, reference_photo_id='source', catalog_signature='catalog')
         with tempfile.TemporaryDirectory() as folder:
             c.directory = Path(folder)
@@ -126,39 +178,39 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             with patch('robot_control.atomic_json', side_effect=respond):
                 self.assertEqual(c.execute(dict(type='approach_item', **packet))['rounds'], 2)
             self.assertEqual(c.capture.call_count, 2)
-            self.assertEqual(c.go.call_count, 1)
-            self.assertTrue(c.go.call_args.kwargs['precise'])
+            self.assertEqual(c.move_approach.call_count, 1)
             self.assertEqual(requests[1]['history'][0]['after_pose']['x_m'], 2.2)
-            self.assertEqual(requests[1]['history'][0]['commanded'], dict(forward_m=.2, turn_deg=0))
+            self.assertAlmostEqual(requests[1]['history'][0]['commanded']['forward_m'], .2)
+            self.assertAlmostEqual(requests[1]['history'][0]['commanded']['turn_deg'], 0)
             c.arm.set_coords.assert_not_called()
             c.arm.set_gripper_value.assert_not_called()
             self.assertFalse(list(c.directory.iterdir()))
-            c.capture.reset_mock(); c.go.reset_mock()
+            c.capture.reset_mock(); c.move_approach.reset_mock()
             answers = iter([{**result(), 'forward_m': 0, 'distance_m': .2, 'current': result()['goal']}])
             with patch('robot_control.atomic_json', side_effect=respond):
                 stopped = c.approach_item(packet)
             self.assertEqual(stopped['rounds'], 1)
             self.assertEqual(stopped['outcome'], 'arrived')
-            c.go.assert_not_called()
+            c.move_approach.assert_not_called()
             self.assertEqual(c.capture.call_count, 1)
             c.arm.set_coords.assert_not_called()
             c.arm.set_gripper_value.assert_not_called()
             requests.clear()
             pose.update(x_m=2)
-            c.capture.reset_mock(); c.go.reset_mock()
+            c.capture.reset_mock(); c.move_approach.reset_mock()
             answers = iter([result()] * 16)
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(RuntimeError, '16 rounds'):
                 c.approach_item(packet)
             self.assertEqual(len(requests), 16)
-            self.assertEqual(c.go.call_count, 15)
+            self.assertEqual(c.move_approach.call_count, 15)
             self.assertEqual(len(requests[-1]['history']), 15)
             self.assertFalse(c.base_enabled)
             self.assertFalse(list(c.directory.iterdir()))
-            c.go.reset_mock()
+            c.move_approach.reset_mock()
             c.stop_pending = 'STOP'
             with self.assertRaises(Stopped):
                 c.approach_item(packet)
-            c.go.assert_not_called()
+            c.move_approach.assert_not_called()
             c.stop_pending = None
             c.deadline = time.monotonic() - 1
             with self.assertRaises(Stopped):
@@ -171,7 +223,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             answers = iter([{**result(), 'seen': False}])
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'lost'):
                 c.approach_item(packet)
-            c.go.assert_not_called()
+            c.move_approach.assert_not_called()
             answers = iter([result()])
 
             def changed_pose(path, value):
@@ -180,7 +232,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
 
             with patch('robot_control.atomic_json', side_effect=changed_pose), self.assertRaisesRegex(RuntimeError, 'pose changed'):
                 c.approach_item(packet)
-            c.go.assert_not_called()
+            c.move_approach.assert_not_called()
             answers = iter([result()])
 
             def changed_map(path, value):
@@ -189,7 +241,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
 
             with patch('robot_control.atomic_json', side_effect=changed_map), self.assertRaisesRegex(ValueError, 'Map or no-go'):
                 c.approach_item(packet)
-            c.go.assert_not_called()
+            c.move_approach.assert_not_called()
 
     async def test_shared_worker_corrects_map_with_real_acquisition_and_executed_history(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -221,7 +273,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             c.robot.costmaps = {'global': (time.monotonic(), 0, True, grid)}
             pose = dict(x_m=2, y_m=3, yaw_deg=0)
             c.robot.nav.get_pose.side_effect = lambda **kw: dict(pose)
-            c.go = Mock(side_effect=lambda goal, **kw: pose.update(goal))
+            c.move_approach = Mock(side_effect=lambda goal, source: pose.update(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad'])))
 
             def capture(*args, **kwargs):
                 capture_id = str(uuid.uuid4())
@@ -238,17 +290,25 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             entered, release = asyncio.Event(), asyncio.Event()
             cancelling = goal_matching = False
 
+            def compact(measurement):
+                return {k: measurement[k] for k in ('forward_m', 'turn_deg', 'bearing_deg', 'distance_m', 'goal', 'current')}
+
             async def provider(body, key, timeout, fast_mode=True, trace=None):
                 bodies.append(body)
                 if goal_matching:
-                    return {**result(), 'forward_m': 0, 'distance_m': .2, 'current': result()['goal']}
+                    return compact({**result(), 'forward_m': 0, 'distance_m': .2, 'current': result()['goal']})
                 if cancelling:
                     entered.set()
                     await release.wait()
-                    return result()
-                return result() if len(bodies) == 1 else {**result(), 'arrived': True, 'forward_m': 0, 'distance_m': .9, 'current': result()['goal']}
+                    return compact(result())
+                return compact(result() if len(bodies) == 1 else {**result(), 'forward_m': 0, 'distance_m': .9, 'current': result()['goal']})
 
-            with patch('web_backend.server.load_key', return_value=('configured', 'private-key')), patch('web_backend.resolve.request_json', side_effect=provider):
+            from web_backend.codex_bridge import MODEL as CODEX_MODEL
+            atomic_json(ui / 'settings.json', dict(revision=0, values=dict(auto_align=False, manual_angle_deg=0,
+                llm_model=CODEX_MODEL, reasoning_effort='low', fast_mode=True)))
+            with patch('web_backend.server.load_token', return_value=('configured', 'private-key')), \
+                 patch('web_backend.server.close_codex_session', new_callable=AsyncMock) as close_session, \
+                 patch('web_backend.resolve.request_json', side_effect=provider):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 hardware = app[EDITOR].hardware
                 hardware.refresh = Mock(side_effect=lambda: setattr(hardware, 'control', c.snapshot()))
@@ -281,13 +341,22 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(location['base_pose']['x_m'], 2.2)
                     self.assertNotEqual(location['photo_id'], photo['id'])
                     self.assertNotIn('station_link', current['items'][0])
-                    self.assertEqual(len([p for p in bodies[1]['messages'][1]['content'] if p['type'] == 'image_url']), 4)
+                    self.assertEqual(len([p for p in bodies[1]['messages'][1]['content'] if p['type'] == 'image_url']), 1)
                     context = json.loads(bodies[1]['messages'][1]['content'][0]['text'])
-                    self.assertEqual(context['history'][0]['after_pose']['x_m'], 2.2)
-                    self.assertEqual(context['history'][0]['commanded']['forward_m'], .2)
+                    self.assertEqual(context['last_executed']['after_pose']['x_m'], 2.2)
+                    self.assertAlmostEqual(context['last_executed']['commanded']['forward_m'], .2)
+                    self.assertEqual(bodies[0]['session']['id'], bodies[1]['session']['id'])
+                    self.assertEqual([b['session']['start'] for b in bodies[:2]], [True, False])
+                    self.assertEqual([b['session']['sequence'] for b in bodies[:2]], [1, 2])
+                    close_session.assert_not_awaited()
+                    fields = bodies[0]['response_format']['json_schema']['schema']['properties']
+                    self.assertEqual(len(fields), 6)
+                    self.assertNotIn('maximum', fields['forward_m'])
+                    self.assertNotIn('maximum', fields['turn_deg'])
                     log = await (await client.get('/api/fetch-log')).json()
                     self.assertEqual([r['mode'] for r in log['rounds']], ['approach', 'approach'])
                     self.assertNotIn('private-key', json.dumps(log))
+                    self.assertEqual(len(json.loads(log['rounds'][0]['result_json'])), 6)
                     self.assertAlmostEqual(log['rounds'][-1]['corrected_location']['x_m'], 3.1)
                     self.assertFalse((bridge / 'fetch_vision_response.json').exists())
                     cancelling = True
@@ -311,11 +380,11 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse((bridge / 'fetch_vision_response.json').exists())
                     cancelling, goal_matching = False, True
                     c.stop_pending, c.phase, c.task_id = None, 'idle', 'goal-matched-task'
-                    c.go.reset_mock()
+                    c.move_approach.reset_mock()
                     stopped = await asyncio.wait_for(asyncio.to_thread(c.approach_item, forwarded), 4)
                     self.assertEqual(stopped['outcome'], 'arrived')
                     self.assertEqual(stopped['rounds'], 1)
-                    c.go.assert_not_called()
+                    c.move_approach.assert_not_called()
                     log = await (await client.get('/api/fetch-log')).json()
                     self.assertEqual(log['rounds'][0]['status'], 'returned')
                     self.assertEqual(log['rounds'][0]['outcome'], 'arrived')
