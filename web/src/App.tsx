@@ -681,6 +681,17 @@ export function App() {
             ...(!selectedItem?.reference_photo_id ? ['Select an item with an uploaded reference photo'] : []),
             ...(!selectedItem?.grasp_goal_ready ? ['Save the arm calibration GOAL'] : []),
           ]} />
+        <section className="fetch-test" aria-label="Slow approach test">
+          <div className="section-divider" /><h3 className="subheading">SLOW APPROACH TEST</h3>
+          {selectedItem && <span className="muted">{selectedItem.name}</span>}
+          <div className="action-line">
+            <Button disabled={approachReasons.length > 0} title={approachReasons.join('; ') || 'Observe and slowly approach the selected item. Stops before grasping.'}
+              onClick={() => void hardwareCommand('approach_item', {
+                item_id: selectedItemId, index_revision: photos?.revision,
+              })}>APPROACH</Button>
+          </div>
+          {approachReasons.length > 0 && <span className="muted">{approachReasons.join('; ')}</span>}
+        </section>
       </div>{photoMode && photos && <PhotoEditor key={photoMode === 'import' ? 'import' : selectedPhotoId}
         photo={photoMode !== 'import' ? selectedPhoto : null} autoDescribe={photoMode === 'uploaded'}
         index={photos} stations={stations} enabled={canEditPhotos}
