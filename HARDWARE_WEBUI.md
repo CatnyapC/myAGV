@@ -51,13 +51,16 @@ The patch also scores the endpoint heading of forward arcs: grid distance alone
 can tie at low speeds and choose a turn away from the path. It reuses the existing
 0.3 heading weight without increasing simulation steps, and rejects a trajectory
 when no path point is visible. Collision checks still cover every simulated point.
+Forward candidates are rejected when the current heading differs from the visible
+path direction by more than 20 degrees. Legal in-place turns remain available;
+small steering corrections resume within that threshold.
 The upstream escape fallback's collision override is removed: a blocked reverse
 trajectory stays invalid instead of being relabeled as a valid motion command.
 Arrival braking sends zero velocity and retains the planner's measured-odometry
 stop gate before final rotation. Feedback-minus-acceleration braking can keep
 driving on this chassis when its low-speed response exceeds the command.
-The installer refuses unknown source layouts and keeps `.before-shortest-turn-v2`,
-preserving the original `.before-shortest-turn` backup when upgrading.
+The installer refuses unknown source layouts and keeps `.before-shortest-turn-v3`,
+preserving earlier backups when upgrading.
 Web navigation caps turns at 0.1 rad/s and forward travel at 0.05 m/s;
 reverse escape stays at 0.02 m/s. Global planning runs on demand:
 periodic replanning resets TrajectoryPlannerROS's accepted-position

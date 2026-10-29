@@ -58,10 +58,16 @@ class NavigationTurnPatchTest(unittest.TestCase):
         self.assertIn('i == num_steps - 1', updated)
         self.assertIn('if (heading_diff == DBL_MAX) { traj.cost_ = -2.0; return; }', updated)
         self.assertIn('occ_cost + 0.3 * heading_diff;', updated)
+        self.assertIn('i == 0 && vx_samp > 0.0', updated)
+        self.assertIn('headingDiff(cell_x, cell_y, x_i, y_i, theta_i) > M_PI / 9.0', updated)
         self.assertIn('MYAGV_COLLISION_STOP', updated)
         self.assertNotIn('best_traj->cost_ = 1.0;', updated)
         heading_only = source.replace(score, 'double ahead_gdist = headingDiff(cell_x, cell_y, x_r, y_r, th_r); // MYAGV_SHORTEST_TURN', 1)
         self.assertEqual(patch_navigation_turn(heading_only), updated)
+        gate_start = updated.index('      // MYAGV_TURN_FIRST')
+        gate_end = updated.index('      // MYAGV_ENDPOINT_HEADING', gate_start)
+        previous = updated[:gate_start] + updated[gate_end:]
+        self.assertEqual(patch_navigation_turn(previous), updated)
         for invalid in ('', source.replace(score, ''), source.replace(score, score * 2),
                         source.replace(self.scoring, ''), source + self.scoring,
                         source.replace('best_traj->cost_ = 1.0;', '')):
@@ -79,15 +85,18 @@ class NavigationTurnPatchTest(unittest.TestCase):
             wrapper.write_text(self.goal_stop)
             old_backup = path.with_suffix('.cpp.before-shortest-turn')
             old_backup.write_text('original upstream source')
+            v2_backup = path.with_suffix('.cpp.before-shortest-turn-v2')
+            v2_backup.write_text('previous patch backup')
             command = [sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')), str(path)]
             for _ in range(2):
                 subprocess.run(command, check=True, capture_output=True, text=True)
             self.assertEqual(path.read_text(), patch_navigation_turn(source))
             self.assertEqual(wrapper.read_text(), patch_goal_stop(self.goal_stop))
-            backup = path.with_suffix('.cpp.before-shortest-turn-v2')
+            backup = path.with_suffix('.cpp.before-shortest-turn-v3')
             self.assertEqual(backup.read_text(), source)
-            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v2').read_text(), self.goal_stop)
+            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v3').read_text(), self.goal_stop)
             self.assertEqual(old_backup.read_text(), 'original upstream source')
+            self.assertEqual(v2_backup.read_text(), 'previous patch backup')
             path.write_text(source)
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
@@ -107,7 +116,7 @@ class NavigationTurnPatchTest(unittest.TestCase):
                                      str(path)], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(path.read_text(), source)
-            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v2').exists())
+            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v3').exists())
 
 
 class FakeArm:

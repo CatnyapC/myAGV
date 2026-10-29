@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
     }
     for (double offset : {0., .025}) {
       for (double bearing : {0., M_PI_2, M_PI, -M_PI_2}) {
-        for (int error : {-170, -135, -90, -45, 45, 90, 135, 170}) {
+        for (int error : {-170, -135, -90, -45, -21, -19, 0, 19, 21, 45, 90, 135, 170}) {
           // Match web_hardware.launch; meter_scoring scales distance biases by .05.
           base_local_planner::TrajectoryPlanner planner(
               world, map, footprint, .2, .2, .3, 1.5, .025, 8, 20,
@@ -70,10 +70,13 @@ int main(int argc, char** argv) {
           if (blocked) {
             assert(trajectory.cost_ < 0);
           } else {
-            if (trajectory.thetav_ * error >= 0)
+            if (error != 0 && trajectory.thetav_ * error >= 0)
               std::cerr << "Wrong turn: bearing=" << bearing << " error=" << error
                         << " offset=" << offset << " wz=" << trajectory.thetav_ << '\n';
-            assert(trajectory.cost_ >= 0 && trajectory.thetav_ * error < 0);
+            assert(trajectory.cost_ >= 0);
+            if (error != 0) assert(trajectory.thetav_ * error < 0);
+            if (std::abs(error) > 20) assert(trajectory.xv_ == 0);
+            else assert(trajectory.xv_ > 0);
             assert(std::abs(trajectory.xv_) <= .050001);
             assert(std::abs(trajectory.thetav_) <= .100001);
           }
@@ -81,5 +84,5 @@ int main(int argc, char** argv) {
       }
     }
   }
-  std::cout << "Measured-stop, shortest-turn and collision regressions passed\n";
+  std::cout << "Measured-stop, turn-first, shortest-turn and collision regressions passed\n";
 }
