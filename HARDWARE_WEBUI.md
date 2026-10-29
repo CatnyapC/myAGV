@@ -445,6 +445,12 @@ occupied ROS costmap cells and disconnected regions, and leaves space for the
 chassis and estimate uncertainty. Low-confidence estimates cannot provide a goal.
 **Resolve** can also select this approach. **Fetch** automatically navigates to
 the approach, refines with the front camera, aligns, grasps, returns and places.
+For both outbound and return navigation, Fetch advances after move_base reports
+success and measured standstill is confirmed, even outside the 8 cm / 15 degree
+arrival tolerance. The measured error is logged. Camera approach and alignment
+still gate pickup; placement uses the actual return position. Navigation failures,
+timeouts, STOP, lease loss and sensor checks still stop the task. Standalone Go
+keeps its arrival tolerance check.
 
 After **Go** reaches the observation point, select the item pin and use **Refine
 approach** in the map panel. The item must be visible in the front camera. This

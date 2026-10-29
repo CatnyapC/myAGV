@@ -362,7 +362,7 @@ class NavigationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'tolerance'):
             self.nav.go_to(POSE, position_tolerance=.10, yaw_tolerance=10)
 
-    def test_fetch_arrival_tolerance_accepts_nearby_pose_and_rejects_excess_error(self):
+    def test_eight_cm_arrival_tolerance_accepts_nearby_pose_and_rejects_excess_error(self):
         self.nav.client.get_state.return_value = 3
         for distance, angle, accepted in ((.079, 14.9, True), (.081, 0, False), (0, 15.1, False)):
             with self.subTest(distance=distance, angle=angle):
@@ -373,6 +373,35 @@ class NavigationTest(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(RuntimeError, '8 cm / 15 degree tolerance'):
                         self.nav.go_to(POSE, position_tolerance=.08, yaw_tolerance=15)
+
+    def test_optional_arrival_check_logs_error_and_completes_one_goal(self):
+        self.nav.client.get_state.return_value = 3
+        for distance, angle in ((.139, 4.8), (0, 15.1)):
+            with self.subTest(distance=distance, angle=angle):
+                self.nav.client.send_goal.reset_mock()
+                self.nav.wait_stopped.reset_mock()
+                self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + distance,
+                                                     yaw_deg=POSE['yaw_deg'] + angle)
+                with patch('navigation.print') as output:
+                    self.nav.go_to(POSE, position_tolerance=.08, yaw_tolerance=15, require_arrival=False)
+                self.nav.client.send_goal.assert_called_once()
+                self.nav.wait_stopped.assert_called_once()
+                self.nav.client.cancel_goal.assert_not_called()
+                self.assertFalse(self.nav.active)
+                self.assertIn('; continuing to next phase', output.call_args.args[0])
+                arrival = json.loads(output.call_args_list[-2].args[0])
+                self.assertAlmostEqual(arrival['distance_m'], distance)
+                self.assertAlmostEqual(arrival['yaw_error_deg'], angle)
+
+    def test_optional_arrival_check_still_requires_navigation_success_and_standstill(self):
+        self.nav.client.get_state.return_value = 4
+        with self.assertRaisesRegex(RuntimeError, 'Navigation failed'):
+            self.nav.go_to(POSE, require_arrival=False)
+        self.nav.wait_stopped.assert_not_called()
+        self.nav.client.get_state.return_value = 3
+        self.nav.wait_stopped.side_effect = TimeoutError('Base not stationary')
+        with self.assertRaisesRegex(TimeoutError, 'Base not stationary'):
+            self.nav.go_to(POSE, require_arrival=False)
 
     def test_web_planner_preserves_arrival_latch_and_turn_limits(self):
         launch = ET.parse(Path(__file__).with_name('web_hardware.launch')).getroot()

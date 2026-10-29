@@ -235,7 +235,7 @@ class Navigation:
             time.sleep(0.1)
         raise RuntimeError("Navigation cancellation unconfirmed; use hardware stop")
 
-    def go_to(self, pose, timeout=120, *, position_tolerance=0.05, yaw_tolerance=5):
+    def go_to(self, pose, timeout=120, *, position_tolerance=0.05, yaw_tolerance=5, require_arrival=True):
         pose = validate_pose(pose)
         if getattr(self, 'guard', None):
             self.guard(pose)
@@ -277,8 +277,11 @@ class Navigation:
                     print(json.dumps(dict(event='navigation_arrival', time_s=time.time(), goal=pose,
                                           actual=actual, distance_m=distance, yaw_error_deg=angle)), flush=True)
                     if distance > position_tolerance or angle > yaw_tolerance:
-                        raise RuntimeError("Arrival outside %g cm / %g degree tolerance; measured %.1f cm / %.1f degrees" %
-                                           (position_tolerance * 100, yaw_tolerance, distance * 100, angle))
+                        message = "Arrival outside %g cm / %g degree tolerance; measured %.1f cm / %.1f degrees" % (
+                            position_tolerance * 100, yaw_tolerance, distance * 100, angle)
+                        if require_arrival:
+                            raise RuntimeError(message)
+                        print(message + "; continuing to next phase", flush=True)
                     return
                 time.sleep(0.05)
             raise TimeoutError("Navigation timed out")

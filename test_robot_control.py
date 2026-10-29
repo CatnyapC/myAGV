@@ -248,7 +248,7 @@ class ControlTest(unittest.TestCase):
                 c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=math.pi / 2)))
                 c.fold.assert_not_called()
                 c.robot.nav.go_to.assert_called_once_with(dict(x_m=1, y_m=2, yaw_deg=90),
-                                                         position_tolerance=.08, yaw_tolerance=15)
+                                                         position_tolerance=.08, yaw_tolerance=15, require_arrival=True)
                 c.robot.zero.assert_called_once()
                 self.assertEqual(c.robot.path, [])
                 self.assertFalse(c.base_enabled)
@@ -258,13 +258,17 @@ class ControlTest(unittest.TestCase):
                     c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=0)))
                 self.assertEqual(c.robot.nav.go_to.call_count, 1)
 
-    def test_go_uses_eight_cm_and_fifteen_degree_tolerance(self):
-        c = fake_control()
+    def test_go_forwards_arrival_requirement_and_cleans_up(self):
         goal = dict(x_m=1, y_m=2, yaw_deg=90)
-        c.go(goal)
-        c.robot.nav.go_to.assert_called_once_with(goal, position_tolerance=.08, yaw_tolerance=15)
-        self.assertFalse(c.base_enabled)
-        self.assertIsNone(c.goal)
+        for required in (True, False):
+            with self.subTest(require_arrival=required):
+                c = fake_control()
+                c.go(goal, require_arrival=required)
+                c.robot.nav.go_to.assert_called_once_with(goal, position_tolerance=.08, yaw_tolerance=15,
+                                                         require_arrival=required)
+                c.robot.zero.assert_called_once()
+                self.assertFalse(c.base_enabled)
+                self.assertIsNone(c.goal)
 
     def test_manual_arm_step_sets_absolute_mode_before_target(self):
         c = fake_control()
