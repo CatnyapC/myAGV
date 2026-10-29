@@ -88,6 +88,16 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(change=change):
                 self.assertIsNotNone(approach_step({**near, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
 
+    def test_clipped_views_follow_normal_model_turn_handling(self):
+        grid = open_map()
+        for goal_box in ([300, 0, 700, 1000], [0, 0, 400, 1000], [600, 0, 1000, 1000]):
+            for current, turn in (([0, 0, 200, 1000], 15), ([800, 0, 1000, 1000], -15)):
+                with self.subTest(goal=goal_box, current=current):
+                    proposal = {**result(), 'goal': goal_box, 'current': current, 'forward_m': 0, 'turn_deg': turn}
+                    goal, _ = approach_step(proposal, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+                    self.assertEqual((goal['x_m'], goal['y_m']), (POSE['x_m'], POSE['y_m']))
+                    self.assertAlmostEqual(goal['yaw_rad'], math.radians(turn))
+
     def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
         for action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
             with self.subTest(action=action):
@@ -457,7 +467,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(fields['turn_deg']['minimum'], -15)
                     self.assertEqual(fields['turn_deg']['maximum'], 15)
                     prompt = bodies[0]['messages'][0]['content']
-                    self.assertIn('0..0.25 meters', prompt)
+                    self.assertIn('-0.25..0.25 meters', prompt)
                     self.assertNotIn('full remaining forward distance', prompt)
                     log = await (await client.get('/api/fetch-log')).json()
                     self.assertEqual([r['mode'] for r in log['rounds']], ['approach', 'approach'])

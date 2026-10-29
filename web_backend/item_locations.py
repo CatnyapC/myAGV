@@ -189,8 +189,6 @@ def approach_step(result, photo, grid, zones, costmap, item, radius, config):
     estimate = approach_result(result, photo, grid, item, config)
     pose = photo['base_pose']
     goal_box, current_box = result['goal'], result['current']
-    if any(box[0] == 0 or box[2] == 1000 for box in (goal_box, current_box)):
-        raise ValueError('Front target width clipped; GOAL distance cannot be confirmed')
     scale = (current_box[2] - current_box[0]) / (goal_box[2] - goal_box[0])
     matched = (.85 <= scale <= 1.15
                and abs(current_box[1] - goal_box[1]) <= 150 and abs(current_box[3] - goal_box[3]) <= 150

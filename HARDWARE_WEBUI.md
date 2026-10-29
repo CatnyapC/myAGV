@@ -308,7 +308,7 @@ range within 2 cm. A visual match completes approach even if the LLM suggests a
 tiny final adjustment; ALIGN handles the residual distance and framing. The item must remain
 visible; horizontal centering and heading are not completion gates. ALIGN handles
 the final angle and fine positioning.
-Vertical cropping is retained; horizontally clipped targets cannot confirm range.
+Clipping is retained in visible boxes; the model chooses the next bounded adjustment.
 The coarse map stand-off distance is only a staging position, not this endpoint.
 Each round permits at most 0.25 m forward or backward and +/-15 degrees of turning, enforced
 by the prompt, response schema, result validation and chassis executor. Forward
