@@ -97,7 +97,7 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .button.stop-recovery:disabled { animation: none; }
 @keyframes stop-recovery-pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--orange-4); border-color: var(--orange-6); } 50% { box-shadow: 0 0 0 4px var(--orange-3); border-color: var(--orange-9); } }
 @media (prefers-reduced-motion: reduce) { .button.stop-recovery { animation: none; border-color: var(--orange-8); } }
-.map-tools { display: flex; align-items: center; justify-content: space-between; padding: 3px 7px 3px 12px; height: 40px; flex-shrink: 0; border-bottom: 1px solid var(--gray-6); gap: 5px; }
+.map-tools { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 3px 7px 3px 12px; height: 40px; flex-shrink: 0; border-bottom: 1px solid var(--gray-6); gap: 5px; }
 .toolbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .map-tools .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .obstacle-filter { display: inline-flex; align-items: center; gap: 8px; }
@@ -170,7 +170,7 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .size-row label { display: flex; gap: 4px; align-items: center; font-size: 10px; color: var(--gray-11); }
 .size-row input { width: 53px; padding: 0 4px; }
 .dialog-footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-top: 1px solid var(--gray-6); }
-.coordinate-editor { flex-shrink: 0; padding: 8px 12px; border-top: 1px solid var(--gray-6); }
+.coordinate-editor { position: absolute; top: 100%; left: 0; right: 0; z-index: 1001; background: var(--gray-2); padding: 8px 12px; border-top: 1px solid var(--gray-6); }
 .coordinate-editor summary { color: var(--gray-11); cursor: pointer; font-size: 11px; }
 .coordinate-row { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; margin-top: 8px; }
 .coordinate-row label { display: flex; flex-direction: column; gap: 3px; font-size: 10px; color: var(--gray-11); }

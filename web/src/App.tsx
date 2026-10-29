@@ -591,6 +591,14 @@ export function App() {
               </Dropdown.Content></Dropdown.Portal>
             </Dropdown.Root>
           </div>
+          {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
+            <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"
+              value={keyboardCorners[i]} onChange={e => setKeyboardCorners(v => v.map((item, n) => n === i ? e.target.value : item))} /></label>)}
+              <Button disabled={!keyboardCorners.every(v => v.trim() !== '' && Number.isFinite(Number(v)))} onClick={() => {
+                const [u1, v1, u2, v2] = keyboardCorners.map(Number); setDraft([[v1, u1], [v2, u2]]);
+              }}>Preview</Button>
+            </div>
+          </details>}
         </div>
         {packet ? <MapView info={packet.info} image={packet.image} zones={zones?.zones ?? []} selected={selected}
           drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
@@ -608,14 +616,6 @@ export function App() {
         {state?.demo === false && <MapUpdateControls toolbar={mapToolbar} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand}
           points={visiblePoints} revision={observationPoints?.revision ?? 0} saving={pointsSaving}
           selectedId={selectedPointId} onSelect={setSelectedPointId} onSave={saveObservationPoints} onClearLocations={clearItemLocations} />}
-        {drawing && <details className="coordinate-editor"><summary>Coordinates · view meters</summary>
-          <div className="coordinate-row">{['U1', 'V1', 'U2', 'V2'].map((label, i) => <label key={label}>{label}<input type="number" step="0.05"
-            value={keyboardCorners[i]} onChange={e => setKeyboardCorners(v => v.map((item, n) => n === i ? e.target.value : item))} /></label>)}
-            <Button disabled={!keyboardCorners.every(v => v.trim() !== '' && Number.isFinite(Number(v)))} onClick={() => {
-              const [u1, v1, u2, v2] = keyboardCorners.map(Number); setDraft([[v1, u1], [v2, u2]]);
-            }}>Preview</Button>
-          </div>
-        </details>}
       </>, <span ref={setMapToolbar} />)}
       {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Capture front observation" title="Capture front observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
       {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Capture arm observation" title="Capture arm observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
