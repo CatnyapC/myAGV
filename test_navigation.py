@@ -330,6 +330,8 @@ class NavigationTest(unittest.TestCase):
         params = {node.get("name"): float(node.get("value")) for node in launch.findall("param")
                   if node.get("value") not in ("true", "false")}
         prefix = "/move_base/TrajectoryPlannerROS/"
+        self.assertEqual(params[prefix + "max_vel_x"], .05)
+        self.assertLessEqual(params[prefix + "min_vel_x"], params[prefix + "max_vel_x"])
         # Simulate move_base stopping at its configured acceptance boundary.
         self.nav.client.get_state.return_value = 3
         self.nav.get_pose.return_value = dict(
@@ -386,7 +388,8 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(float(params['min_vel_theta']), -turn_max)
         self.assertLess(float(params['min_in_place_vel_theta']) / float(params['controller_frequency']),
                         2 * float(params['yaw_goal_tolerance']))
-        self.assertEqual(float(params['max_vel_x']), .1)
+        self.assertEqual(float(params['max_vel_x']), .05)
+        self.assertLessEqual(float(params['min_vel_x']), float(params['max_vel_x']))
         self.assertLess(float(params['xy_goal_tolerance']), .10)
         self.assertLess(float(params['yaw_goal_tolerance']), math.radians(10))
         self.assertEqual(params['recovery_behavior_enabled'], 'false')

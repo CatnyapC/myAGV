@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
           base_local_planner::TrajectoryPlanner planner(
               world, map, footprint, .2, .2, .3, 1.5, .025, 8, 20,
               .6 * .05, .8 * .05, .01, .325, .05, .1, M_PI_2,
-              false, .1, .02, .1, -.1, .03, -.02);
+              false, .05, .02, .1, -.1, .03, -.02);
           std::vector<geometry_msgs::PoseStamped> plan;
           for (int i = 0; i <= 40; ++i) {
             geometry_msgs::PoseStamped p;
@@ -74,6 +74,7 @@ int main(int argc, char** argv) {
               std::cerr << "Wrong turn: bearing=" << bearing << " error=" << error
                         << " offset=" << offset << " wz=" << trajectory.thetav_ << '\n';
             assert(trajectory.cost_ >= 0 && trajectory.thetav_ * error < 0);
+            assert(std::abs(trajectory.xv_) <= .050001);
             assert(std::abs(trajectory.thetav_) <= .100001);
           }
         }

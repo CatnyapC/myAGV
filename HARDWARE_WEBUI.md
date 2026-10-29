@@ -58,8 +58,9 @@ stop gate before final rotation. Feedback-minus-acceleration braking can keep
 driving on this chassis when its low-speed response exceeds the command.
 The installer refuses unknown source layouts and keeps `.before-shortest-turn-v2`,
 preserving the original `.before-shortest-turn` backup when upgrading.
-Web navigation caps turns at 0.1 rad/s and translation at 0.1 m/s. Global planning
-runs on demand: periodic replanning resets TrajectoryPlannerROS's accepted-position
+Web navigation caps turns at 0.1 rad/s and forward travel at 0.05 m/s;
+reverse escape stays at 0.02 m/s. Global planning runs on demand:
+periodic replanning resets TrajectoryPlannerROS's accepted-position
 latch and can send the robot back toward the point during final heading alignment.
 Local obstacle checks stay active and a failed local trajectory requests a new plan.
 The displayed path stays visible for the current navigation and clears at the next goal.

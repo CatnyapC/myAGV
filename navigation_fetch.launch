@@ -10,6 +10,8 @@
   <param name="/move_base/TrajectoryPlannerROS/yaw_goal_tolerance" value="0.05" />
   <param name="/move_base/TrajectoryPlannerROS/trans_stopped_vel" value="0.005" />
   <param name="/move_base/TrajectoryPlannerROS/theta_stopped_vel" value="0.01" />
+  <param name="/move_base/TrajectoryPlannerROS/max_vel_x" value="0.05" />
+  <param name="/move_base/TrajectoryPlannerROS/min_vel_x" value="0.02" />
 
   <!-- Keep final alignment and trajectory sampling turn limits consistent.
        The upstream 0.6 rad/s in-place minimum is too coarse for a 0.05 rad goal. -->
