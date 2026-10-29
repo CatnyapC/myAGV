@@ -299,7 +299,10 @@ Earlier history images are not CURRENT and must not supply its coordinates."""
     elif metric_stage:
         from fetch_calibration import metric_arm_alignment
         if metric.inverse:
-            moves, aligned = metric_arm_alignment(result, config)
+            try:
+                moves, aligned = metric_arm_alignment(result, config)
+            except ValueError as exc:
+                raise web.HTTPBadGateway(text=str(exc)) from exc
             residual = result
         else:
             moves, aligned, residual = metric.observe(result, position, config)

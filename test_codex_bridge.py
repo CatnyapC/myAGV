@@ -27,6 +27,43 @@ def body(model=bridge.MODEL):
 
 
 class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
+    async def test_invalid_metric_result_retries_before_returning_motion_or_stopping(self):
+        from fetch_calibration import MetricArmCalibration
+        image = 'data:image/jpeg;base64,AQ=='
+        for field, invalid, failures in product(('x_mm', 'y_mm'), (None, True, 'bad', float('nan'), float('inf')), (1, 6)):
+            with self.subTest(field=field, invalid=invalid, failures=failures):
+                metric = MetricArmCalibration(dict(goal_bounds=[350,750,650,1000],
+                    image_error_to_remaining_mm=[[.125,0],[0,.1]]))
+                bad = dict(x_mm=0, y_mm=0, aligned=False)
+                bad[field] = invalid
+                valid = dict(x_mm=12, y_mm=-3, aligned=False)
+                trace = {}
+                with patch('web_backend.resolve.request_json', new=AsyncMock(side_effect=[bad]*failures+[valid])) as request, \
+                     patch('web_backend.resolve.close_codex_session', new=AsyncMock()) as close, \
+                     patch('web_backend.resolve.asyncio.sleep', new=AsyncMock()):
+                    async def align():
+                        return await locate_pickup(dict(arm=image), dict(name='Cup', appearance='Red'),
+                            'key', image, [], stage='arm', goal=image, model=bridge.MODEL, metric=metric,
+                            session=dict(id='boot:task:arm', sequence=3, start=False), trace=trace)
+                    if failures == 1:
+                        self.assertEqual(await align(), dict(x_mm=12, y_mm=-3, turn_deg=0))
+                    else:
+                        with self.assertRaises(web.HTTPBadGateway) as caught:
+                            await align()
+                        self.assertIn('Arm metric error', caught.exception.text)
+                retries = min(failures, 5)
+                self.assertEqual(request.await_count, retries + 1)
+                self.assertEqual(close.await_count, retries)
+                self.assertEqual(trace['retry_count'], retries)
+                self.assertEqual(len(trace['request_errors']), retries)
+                bodies = [call.args[0] for call in request.call_args_list]
+                self.assertEqual([b['session']['start'] for b in bodies], [False]+[True]*retries)
+                for body in bodies:
+                    self.assertEqual(body['session']['id'], 'boot:task:arm')
+                    self.assertEqual(body['session']['sequence'], 3)
+                    self.assertIn('Base and Z are fixed', body['messages'][0]['content'])
+                self.assertIsNone(metric.pending)
+
     async def test_alignment_retries_five_times_and_reseeds_conflicting_session(self):
         image = 'data:image/jpeg;base64,AQ=='
         measurement = dict(goal=[450, 950, 550, 1000], current=[450, 950, 550, 1000])
