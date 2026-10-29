@@ -74,7 +74,7 @@ export function StopRecovery({ state, connected, command }: Pick<Props, 'state' 
 export function HardwareControls({ stations, state, connected, goal, command, hold, stop }: Props) {
   const [mode, setMode] = useState('BASE');
   const [name, setName] = useState('');
-  const [radius, setRadius] = useState(String(state?.clearance_m ?? .20));
+  const [radius, setRadius] = useState(String(state?.clearance_m ?? .23));
   const [measured, setMeasured] = useState(false);
   const [confirmation, setConfirmation] = useState<{ type: string; message: string; values?: Record<string, unknown> } | null>(null);
   const [confirming, setConfirming] = useState(false);
