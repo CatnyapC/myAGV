@@ -72,7 +72,7 @@ class ObservationPointsTest(unittest.TestCase):
 
 
 class ObservationPointsAPITest(unittest.IsolatedAsyncioTestCase):
-    async def test_manual_update_captures_once_uses_nearest_point_and_estimates_items(self):
+    async def test_manual_update_captures_once_saves_current_point_and_estimates_items(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bridge, ui = root / 'ros', root / 'ui'
@@ -110,11 +110,8 @@ class ObservationPointsAPITest(unittest.IsolatedAsyncioTestCase):
                 hardware.control = dict(stamp_s=time.time(), phase='idle')
                 hardware.command = AsyncMock(side_effect=capture)
                 data = dict(id=str(uuid.uuid4()), session_id='tab', stop_epoch=4, map_id=grid['map_id'],
-                    expected_revision=2, zone_revision=0, camera_id='front', nearest_observation_point=True)
+                    expected_revision=2, zone_revision=0, camera_id='front', save_observation_point=True)
                 async with TestClient(TestServer(app)) as client:
-                    response = await client.post('/api/photos/capture', json=data)
-                    self.assertEqual(response.status, 400, await response.text())
-                    hardware.command.assert_not_called()
                     app[EDITOR].observation_points.save(grid['map_id'], points, 1)
                     hardware.control['phase'] = 'navigating'
                     self.assertEqual((await client.post('/api/photos/capture', json=data)).status, 409)
@@ -127,9 +124,10 @@ class ObservationPointsAPITest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.status, 200, await response.text())
                     snapshot = await response.json()
                     observation = next(p for p in snapshot['photos'] if p['id'] == snapshot['added_id'])
-                    self.assertEqual(observation['base_pose'], {k: points[1][k] for k in measured})
-                    self.assertEqual(observation['measured_base_pose'], measured)
-                    self.assertEqual(observation['observation_point_id'], points[1]['id'])
+                    self.assertEqual(observation['base_pose'], measured)
+                    saved_points = await (await client.get('/api/observation-points')).json()
+                    self.assertEqual(saved_points['points'][:2], points)
+                    self.assertEqual(saved_points['points'][2], dict(id=observation['observation_point_id'], **measured))
                     hardware.command.assert_awaited_once()
                     for _ in range(50):
                         snapshot = await (await client.get('/api/items')).json()
@@ -141,6 +139,21 @@ class ObservationPointsAPITest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(infer.call_args.args[3]['base_pose'], observation['base_pose'])
             saved = PhotoIndex(ui, root / 'stations.json').snapshot(grid['map_id'])
             self.assertEqual(saved['locations'][0]['item_id'], item_id)
+
+    async def test_manual_capture_needs_no_existing_points_items_or_model(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch('web_backend.server.load_key', return_value=('not_configured', None)):
+            app = create_app(directory)
+            async with TestClient(TestServer(app)) as client:
+                pose = app[EDITOR].sim.telemetry()['pose']
+                response = await client.post('/api/photos/capture', json=dict(map_id=app[EDITOR].grid['map_id'],
+                    camera_id='front', expected_revision=0, save_observation_point=True))
+                self.assertEqual(response.status, 200, await response.text())
+                photo = (await response.json())['photos'][0]
+                self.assertEqual(photo['base_pose'], pose)
+                points = await (await client.get('/api/observation-points')).json()
+                self.assertEqual(points['points'], [dict(id=photo['observation_point_id'], **pose)])
+            self.assertEqual(ObservationPoints(directory).load(app[EDITOR].grid['map_id']), points)
 
     async def test_save_restart_conflict_and_map_switch(self):
         with tempfile.TemporaryDirectory() as directory:

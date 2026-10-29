@@ -353,9 +353,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         if points != editor.observation_points.load(metadata['map_id']):
             raise web.HTTPConflict(text='Observation points changed; retry capture')
         pose = metadata['base_pose']
-        point = min(points['points'], key=lambda p: (p['x_m'] - pose['x_m']) ** 2 + (p['y_m'] - pose['y_m']) ** 2)
-        return {**metadata, 'measured_base_pose': pose, 'observation_point_id': point['id'],
-                'base_pose': {k: point[k] for k in ('x_m', 'y_m', 'yaw_rad')},
+        point = dict(id=str(uuid.uuid4()), **pose)
+        editor.observation_points.save(metadata['map_id'], points['points'] + [point], points['revision'] + 1)
+        return {**metadata, 'observation_point_id': point['id'],
                 'location_analysis': dict(status='queued', catalog_signature=catalog_signature(photos.value['items']), estimates=[])}
 
     async def ingest_capture(capture_id, points=None):
@@ -386,16 +386,12 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                 raise ValueError('Invalid map or camera for Demo capture')
             photos.check(data['expected_revision'])
             points = None
-            if data.get('nearest_observation_point') is True:
+            if data.get('save_observation_point') is True:
                 if data['camera_id'] != 'front' or editor.state()['phase'] != 'idle':
                     raise web.HTTPConflict(text='Stop the robot before a manual item update')
                 points = editor.observation_points.load(editor.grid['map_id'])
-                if not points['points']:
-                    raise ValueError('Add an observation point before a manual item update')
-                if not photos.value['items']:
-                    raise ValueError('Add named reference items before a manual item update')
-                if not model_key():
-                    raise web.HTTPServiceUnavailable(text='Selected LLM not configured or unavailable')
+                if len(points['points']) >= 20:
+                    raise ValueError('Remove an observation point before adding another (maximum 20)')
             if editor.hardware:
                 command = {**data, 'id': data.get('id', str(uuid.uuid4())), 'type': 'capture',
                            'expected_revision': data['zone_revision']}
