@@ -216,8 +216,9 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(goal['x_m'], 2.1)
         matched = {**close, 'forward_m': 0, 'arrived': True, 'current': close['goal']}
         self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)[0])
-        for change, error in ((dict(forward_m=0), 'no useful progress'),
-                              (dict(arrived=True, forward_m=0), 'saved front GOAL'),
+        self.assertIsNone(approach_step({**close, 'forward_m': 0}, dict(base_pose=POSE),
+                                       grid, [], ITEM, .2, DEFAULT_CONFIG)[0])
+        for change, error in ((dict(arrived=True, forward_m=0), 'saved front GOAL'),
                               (dict(arrived=True, forward_m=0, current=[300, 200, 700, 1000]), 'saved front GOAL'),
                               (dict(goal=None), 'bounds'), (dict(seen=False), 'lost'),
                               (dict(confidence=.69), 'confidence')):
@@ -265,7 +266,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(rotated_goal['y_m'], expected[1])
         for change in (dict(seen=False), dict(forward_m=-.1), dict(turn_deg=float('inf')), dict(forward_m=True),
                        dict(confidence=.69), dict(distance_m=float('nan')),
-                       dict(arrived=True), dict(forward_m=0), dict(extra='grasp')):
+                       dict(arrived=True), dict(extra='grasp')):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 approach_step({**proposal, **change}, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)
         goal, _ = approach_step({**proposal, 'forward_m': 0, 'turn_deg': 15, 'bearing_deg': 30},

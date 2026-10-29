@@ -199,9 +199,9 @@ def approach_step(result, photo, grid, zones, item, radius, config):
         return goal, None
     goal_box, current_box = result['goal'], result['current']
     scale = (current_box[2] - current_box[0]) / (goal_box[2] - goal_box[0])
-    matched = (.85 <= scale <= 1.15
+    matched = (.80 <= scale <= 1.20
                and abs(current_box[1] - goal_box[1]) <= 150 and abs(current_box[3] - goal_box[3]) <= 150
-               and abs(result['distance_m'] * (1 - scale)) <= .02 + 1e-9)
+               and abs(result['distance_m'] * (1 - scale)) <= .03 + 1e-9)
     if result['arrived']:
         if result['forward_m'] or result['turn_deg'] or not matched:
             raise ValueError('Item approach arrival does not match saved front GOAL')
@@ -212,10 +212,8 @@ def approach_step(result, photo, grid, zones, item, radius, config):
     remaining = .5 * result['distance_m'] * (1 - scale)
     forward = min(max(0, forward), remaining) if scale < 1 else max(min(0, forward), remaining)
     if forward == 0 and turn == 0:
-        if matched:
-            return None, estimate
         if scale <= 1:
-            raise ValueError('Item approach made no useful progress')
+            return None, estimate
         # Reobserve an overshoot instead of failing before the LLM can request retreat.
     yaw = pose['yaw_rad'] + math.radians(turn)
     goal = dict(x_m=pose['x_m'] + forward * math.cos(yaw), y_m=pose['y_m'] + forward * math.sin(yaw),
@@ -288,8 +286,9 @@ Turn only when needed to keep the item visible. Prefer turn-only, then reassess,
 Use GOAL/CURRENT target width ratio and measured executed poses to estimate remaining range.
 Travel magnitude must also be at most half of distance_m*abs(1-current_width/goal_width); reduce it further when uncertain.
 GOAL/current are visible target boxes [left,top,right,bottom], integers normalized to 0..1000.
-Measure independently; retain clipping. At 85..115% of GOAL width, similar vertical cropping and estimated remaining range within 0.02 meters, return zero motion: Approach is ready for ALIGN.
-Do not chase millimeter-level differences or exact framing. ALIGN handles the remaining 1..2 cm, angle and centering; do not request a tiny final move when the visual distance already matches.
+Measure independently; retain clipping. At 80..120% of GOAL width, similar vertical cropping and estimated remaining range within 0.03 meters, return zero motion: Approach is ready for ALIGN.
+Do not chase millimeter-level differences or exact framing. ALIGN handles the remaining 1..3 cm, angle and centering; do not request a tiny final move when the visual distance already matches.
+If the item is identified but no useful forward/turn correction remains, return zero motion to finish Approach and proceed to ALIGN instead of repeating tiny corrections.
 Never advance when CURRENT width is at least GOAL width. Outside the arrival tolerance, if CURRENT is too large, request a small negative forward_m to retreat, then reassess; being too close is recoverable.
 If identity is absent/ambiguous, return null boxes and forward_m=0. Recover visibility with a nonzero turn_deg toward the last seen direction, bounded to -15..15 degrees.
 Use prior_estimate (the last observed world position), current_base_pose, camera calibration, earlier images and executed turns to infer that direction; account for turns already completed, never blindly repeat the old bearing.
