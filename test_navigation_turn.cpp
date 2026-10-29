@@ -76,7 +76,7 @@ int main(int argc, char** argv) {
             assert(trajectory.cost_ >= 0);
             if (error != 0) assert(trajectory.thetav_ * error < 0);
             if (std::abs(error) > 20) assert(trajectory.xv_ == 0);
-            else assert(trajectory.xv_ > 0);
+            else assert(planner.checkTrajectory(offset, offset, yaw, 0, 0, 0, .03, 0, 0));
             assert(std::abs(trajectory.xv_) <= .050001);
             assert(std::abs(trajectory.thetav_) <= .100001);
           }
