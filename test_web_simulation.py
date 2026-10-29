@@ -1,5 +1,6 @@
 import asyncio
 import math
+import random
 import tempfile
 import unittest
 
@@ -11,6 +12,52 @@ from web_backend.simulation import Simulation, cell_index, global_costmap, navig
 
 
 class SimulationTest(unittest.TestCase):
+    def test_inflation_matches_geometric_clearance_without_changing_source(self):
+        rng = random.Random(42)
+        width, height = 17, 13
+        for density in (0, .05, .5, .95, 1):
+            source = [rng.choice((-1, 1, 50, 99, 100)) if rng.random() < density else 0
+                      for _ in range(width * height)]
+            obstacles = [(i % width, i // width) for i, value in enumerate(source) if value != 0]
+            for resolution in (.05, .13, .4):
+                for radius in (0, .2, .61):
+                    grid = dict(width=width, height=height, resolution_m=resolution,
+                                origin=dict(x_m=-2, y_m=4, yaw_rad=.29), cells=list(source))
+                    margin = radius + math.sqrt(2) * resolution
+                    expected = list(source)
+                    for i, value in enumerate(source):
+                        if value != 0:
+                            continue
+                        x, y = i % width, i // width
+                        boundary = min(x + .5, width - x - .5, y + .5, height - y - .5) * resolution
+                        if boundary <= margin or any(math.hypot((x-ox)*resolution, (y-oy)*resolution) <= margin
+                                                     for ox, oy in obstacles):
+                            expected[i] = 100
+                    with self.subTest(density=density, resolution=resolution, radius=radius):
+                        self.assertEqual(global_costmap(grid, radius), {**grid, 'cells': expected})
+                        self.assertEqual(grid['cells'], source)
+
+    def test_path_errors_identify_blocked_or_outside_endpoint(self):
+        grid = dict(width=12, height=12, resolution_m=.1,
+                    origin=dict(x_m=-2, y_m=4, yaw_rad=.29), cells=[0] * 144)
+        def pose(x, y):
+            wx, wy = local_to_world([x, y], grid['origin'])
+            return dict(x_m=wx, y_m=wy)
+        start, goal = pose(.45, .45), pose(.85, .85)
+        for label, endpoint, index in (('Start pose', start, 4 * 12 + 4), ('Goal pose', goal, 8 * 12 + 8)):
+            for cost in (-1, 100):
+                blocked = {**grid, 'cells': list(grid['cells'])}
+                blocked['cells'][index] = cost
+                with self.subTest(label=label, cost=cost), self.assertRaises(ValueError) as error:
+                    plan_path(blocked, start, goal)
+                self.assertIn(f'{label} blocked by global costmap', str(error.exception))
+                self.assertIn(f"x={endpoint['x_m']:.3f} m, y={endpoint['y_m']:.3f} m", str(error.exception))
+                self.assertIn(f'cell {index % 12}, {index // 12}', str(error.exception))
+                self.assertIn(f'cost={cost}', str(error.exception))
+        for label, a, b in (('Start pose', pose(-.05, .45), goal), ('Goal pose', start, pose(1.25, .85))):
+            with self.subTest(label=label), self.assertRaisesRegex(ValueError, f'{label} outside map bounds'):
+                plan_path(grid, a, b)
+
     def test_direct_route_has_no_grid_heading_changes(self):
         grid = dict(map_id='test', frame='map', width=60, height=40, resolution_m=.1,
                     origin=dict(x_m=-2, y_m=4, yaw_rad=.29), cells=[0]*2400)
@@ -113,7 +160,7 @@ class SimulationAPITest(unittest.IsolatedAsyncioTestCase):
                                corners=[[px-.1,py-.1],[px+.1,py-.1],[px+.1,py+.1],[px-.1,py+.1]])
                 self.assertEqual((await client.post('/api/commands', json=overlap)).status, 400)
                 global_grid = await (await client.get('/api/global-costmap')).json()
-                free = [(i, value) for i, value in enumerate(global_grid['cells']) if value == 0]
+                free = [(i, value) for i, value in enumerate(global_grid['cells']) if value == 0 and grid['cells'][i] == 0]
                 goal_index = max(free, key=lambda entry: entry[0])[0]
                 r = grid['resolution_m']
                 gx, gy = local_to_world([(goal_index % grid['width'] + .5)*r, (goal_index // grid['width'] + .5)*r], grid['origin'])

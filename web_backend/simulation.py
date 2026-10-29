@@ -51,14 +51,26 @@ def global_costmap(grid, radius_m=RADIUS_M):
         for x in range(width):
             if cells[y*width+x] == 0 and min((x+.5)*r, (width-x-.5)*r, (y+.5)*r, (height-y-.5)*r) <= radius:
                 cells[y*width+x] = 100  # The chassis cannot extend beyond known map bounds.
-    for i, value in enumerate(grid['cells']):
-        if value == 0:
-            continue
-        x, y = i % width, i // width
-        for dx, dy in offsets:
-            nx, ny = x + dx, y + dy
-            if 0 <= nx < width and 0 <= ny < height and cells[ny * width + nx] == 0:
-                cells[ny * width + nx] = 100
+    # Scan the smaller side; unknown-heavy maps need no work inside blocked regions.
+    if grid['cells'].count(0) < len(cells) / 2:
+        for i, value in enumerate(cells):
+            if value != 0:
+                continue
+            x, y = i % width, i // width
+            for dx, dy in offsets:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height and grid['cells'][ny * width + nx] != 0:
+                    cells[i] = 100
+                    break
+    else:
+        for i, value in enumerate(grid['cells']):
+            if value == 0:
+                continue
+            x, y = i % width, i // width
+            for dx, dy in offsets:
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height and cells[ny * width + nx] == 0:
+                    cells[ny * width + nx] = 100
     return {**grid, 'cells': cells}
 
 
@@ -72,14 +84,15 @@ def validate_pose(value):
     return dict(value)
 
 
-def cell_index(grid, pose):
+def cell_index(grid, pose, label='Pose'):
     u, v = world_to_local([pose['x_m'], pose['y_m']], grid['origin'])
     x, y = math.floor(u / grid['resolution_m']), math.floor(v / grid['resolution_m'])
+    location = f"x={pose['x_m']:.3f} m, y={pose['y_m']:.3f} m (cell {x}, {y})"
     if not (0 <= x < grid['width'] and 0 <= y < grid['height']):
-        raise ValueError('Pose outside map bounds')
+        raise ValueError(f'{label} outside map bounds at {location}')
     index = y * grid['width'] + x
     if grid['cells'][index] != 0:
-        raise ValueError('Pose blocked by global costmap')
+        raise ValueError(f"{label} blocked by global costmap at {location}; cost={grid['cells'][index]}")
     return index
 
 
@@ -114,7 +127,7 @@ def simplify_path(grid, points):
 
 
 def plan_path(grid, start, goal):
-    first, last = cell_index(grid, start), cell_index(grid, goal)
+    first, last = cell_index(grid, start, 'Start pose'), cell_index(grid, goal, 'Goal pose')
     width, height, cells = grid['width'], grid['height'], grid['cells']
     def heuristic(index):
         return math.hypot(index % width - last % width, index // width - last // width)

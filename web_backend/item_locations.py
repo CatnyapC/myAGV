@@ -229,8 +229,8 @@ def validate_approach_path(grid, zones, costmap, pose, goal, radius):
              'origin': dict(x_m=x, y_m=y, yaw_rad=grid['origin']['yaw_rad']),
              'cells': [c for row in range(lo[1], hi[1]) for c in grid['cells'][row * grid['width'] + lo[0]:row * grid['width'] + hi[0]]]}
     _, safe = approach_grid(local, zones, costmap, radius)
-    if any(safe['cells'][cell_index(safe, point)] != 0 for point in (pose, goal)):
-        raise ValueError('Item approach endpoint lacks clearance')
+    cell_index(safe, pose, 'Start pose')
+    cell_index(safe, goal, 'Goal pose')
     if not segment_clear(safe, [pose['x_m'], pose['y_m']], [goal['x_m'], goal['y_m']]):
         raise ValueError('Item approach path blocked by obstacle, unknown space or no-go zone')
 
