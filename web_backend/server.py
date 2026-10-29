@@ -964,7 +964,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             if not current(value):
                                 raise ValueError('Item approach stopped or changed during vision request')
                             goal, corrected = await asyncio.to_thread(approach_step, result, photo, editor.grid, editor.zones['zones'],
-                                editor.hardware.costmap(), value['item'], value['clearance_m'], location_calibration)
+                                value['item'], value['clearance_m'], location_calibration)
                             async with photo_lock:
                                 if not current(value) or await asyncio.to_thread(load_json, request_path, {}) != value:
                                     raise ValueError('Item approach stopped or catalog changed')

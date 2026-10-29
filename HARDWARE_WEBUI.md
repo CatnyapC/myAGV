@@ -318,13 +318,17 @@ travel must also stay within half the estimated remaining GOAL distance derived
 from the target width ratio. At GOAL width or larger, no forward travel is allowed.
 An overshoot remains recoverable: a zero/forward suggestion requests another
 stopped observation, while a negative `forward_m` retreats toward GOAL distance.
-Retreat checks the swept rear path and retains STOP, sensor and lease guards.
+Retreat retains STOP, sensor and lease guards.
 The base stops for a fresh photo after each adjustment. It executes at slow speed
 against measured odometry and stops when it reaches or passes the target, including small
 targets that move_base's arrival tolerance would otherwise skip. STOP, leases,
-fresh sensors and the full swept footprint/no-go checks stay active during travel.
+fresh sensors, map bounds and swept no-go checks stay active during travel.
+Visual Approach ignores occupancy-map obstacles, unknown cells and ROS costmap
+collision costs, including at the starting pose. Camera observations guide each
+bounded adjustment; this phase has no automatic obstacle collision stop.
+Navigation to the observation point and back retains the recorded clearance checks.
 Only an explicit LLM turn produces angular velocity. Forward travel never adds
-endpoint steering or heading corrections; its current forward path is checked live.
+endpoint steering or heading corrections; its current forward path is checked for no-go zones live.
 Necessary translations use at least 0.01 m/s, the driver's representable speed
 step, so millimeter corrections do not truncate to a zero motor command.
 During approach or ALIGN, stale LiDAR/odometry pauses with zero velocity while keeping the

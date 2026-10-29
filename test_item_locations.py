@@ -27,7 +27,7 @@ def open_map():
 
 
 class LocationGeometryTest(unittest.TestCase):
-    def test_blocked_fetch_and_alignment_endpoints_identify_start_or_goal(self):
+    def test_navigation_rejects_blocked_endpoints_but_visual_approach_ignores_obstacles(self):
         start = dict(x_m=1.55, y_m=3.05, yaw_rad=0)
         goal = dict(x_m=4.25, y_m=2.75, yaw_rad=0)
         estimate = dict(confidence=.9, base_pose=goal)
@@ -37,10 +37,9 @@ class LocationGeometryTest(unittest.TestCase):
                 # An adjacent hazard must block the footprint even when its center is free.
                 index = math.floor(endpoint['y_m'] / .1) * 80 + math.floor(endpoint['x_m'] / .1) + 1
                 grid['cells'][index] = value
-                for check in (lambda: approach_goal(grid, [], None, start, estimate, .2, DEFAULT_CONFIG),
-                              lambda: validate_approach_path(grid, [], None, start, goal, .2)):
-                    with self.subTest(label=label, value=value), self.assertRaisesRegex(ValueError, f'{label} blocked by global costmap'):
-                        check()
+                with self.subTest(label=label, value=value), self.assertRaisesRegex(ValueError, f'{label} blocked by global costmap'):
+                    approach_goal(grid, [], None, start, estimate, .2, DEFAULT_CONFIG)
+                validate_approach_path(grid, [], start, goal, .2)
 
     def test_projection_validates_identity_numbers_and_camera_frame(self):
         grid = open_map()

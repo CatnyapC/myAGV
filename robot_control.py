@@ -420,7 +420,8 @@ class Control:
         self.robot.nav.get_pose(timeout=.1)
         if not self.robot.clearance_ready(self.config['clearance_m']):
             raise RuntimeError('Planner footprint does not match measured clearance')
-        self.robot.validate_goal(pose, self.config['clearance_m'])
+        if self.phase != 'approaching_item':
+            self.robot.validate_goal(pose, self.config['clearance_m'])
         return paused
 
     def fold(self):
@@ -1061,9 +1062,8 @@ class Control:
                     history.append(dict(images=dict(front=capture['image']), base_pose=pose, after_pose=feedback,
                                         commanded=dict(forward_m=0, turn_deg=0), estimate=estimate))
                     continue
-                costmap = self.robot.costmaps['global'][3]
                 goal, corrected = approach_step(response['result'], dict(base_pose=pose), self.robot.grid,
-                    self.robot.zones['zones'], costmap, item, self.config['clearance_m'], config)
+                    self.robot.zones['zones'], item, self.config['clearance_m'], config)
                 estimate = dict(corrected, base_pose=pose)
                 if goal is None:
                     return dict(rounds=round_index + 1, estimate=corrected,
@@ -1125,7 +1125,7 @@ class Control:
                 travel = max(0, remaining)
                 path_goal = goal if turning else dict(x_m=actual['x_m'] + direction*travel*math.cos(actual_yaw),
                     y_m=actual['y_m'] + direction*travel*math.sin(actual_yaw), yaw_rad=actual_yaw)
-                validate_approach_path(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
+                validate_approach_path(self.robot.grid, self.robot.zones['zones'],
                     dict(actual, yaw_rad=actual_yaw), path_goal, self.config['clearance_m'])
                 self.base_enabled = True
                 speed = 0 if turning else direction*min(.03, max(.01, travel))

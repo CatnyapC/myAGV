@@ -185,7 +185,7 @@ def approach_result(result, photo, grid, item, config):
     return estimates[0]
 
 
-def approach_step(result, photo, grid, zones, costmap, item, radius, config):
+def approach_step(result, photo, grid, zones, item, radius, config):
     estimate = approach_result(result, photo, grid, item, config)
     pose = photo['base_pose']
     goal_box, current_box = result['goal'], result['current']
@@ -211,12 +211,12 @@ def approach_step(result, photo, grid, zones, costmap, item, radius, config):
     yaw = pose['yaw_rad'] + math.radians(turn)
     goal = dict(x_m=pose['x_m'] + forward * math.cos(yaw), y_m=pose['y_m'] + forward * math.sin(yaw),
                 yaw_rad=math.atan2(math.sin(yaw), math.cos(yaw)))
-    validate_approach_path(grid, zones, costmap, pose, goal, radius)
+    validate_approach_path(grid, zones, pose, goal, radius)
     return goal, estimate
 
 
-def validate_approach_path(grid, zones, costmap, pose, goal, radius):
-    # Validate the full swept footprint without inflating the entire room.
+def validate_approach_path(grid, zones, pose, goal, radius):
+    # Visual approach ignores sensed obstacles; retain no-go zones and map bounds.
     points = [world_to_local([p['x_m'], p['y_m']], grid['origin']) for p in (pose, goal)]
     r, margin = grid['resolution_m'], radius + 3 * grid['resolution_m']
     lo = [max(0, math.floor((min(p[axis] for p in points) - margin) / r)) for axis in (0, 1)]
@@ -227,12 +227,12 @@ def validate_approach_path(grid, zones, costmap, pose, goal, radius):
     x, y = local_to_world([lo[0] * r, lo[1] * r], grid['origin'])
     local = {**grid, 'width': hi[0] - lo[0], 'height': hi[1] - lo[1],
              'origin': dict(x_m=x, y_m=y, yaw_rad=grid['origin']['yaw_rad']),
-             'cells': [c for row in range(lo[1], hi[1]) for c in grid['cells'][row * grid['width'] + lo[0]:row * grid['width'] + hi[0]]]}
-    _, safe = approach_grid(local, zones, costmap, radius)
+             'cells': [0] * ((hi[0] - lo[0]) * (hi[1] - lo[1]))}
+    _, safe = approach_grid(local, zones, None, radius)
     cell_index(safe, pose, 'Start pose')
     cell_index(safe, goal, 'Goal pose')
     if not segment_clear(safe, [pose['x_m'], pose['y_m']], [goal['x_m'], goal['y_m']]):
-        raise ValueError('Item approach path blocked by obstacle, unknown space or no-go zone')
+        raise ValueError('Item approach path blocked by no-go zone or map boundary')
 
 
 async def refine_approach(value, key, config, reference, goal, trace=None, model=None, fast_mode=True, session=None, effort='low'):

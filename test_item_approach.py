@@ -34,6 +34,17 @@ def result(**values):
 
 
 class ApproachTest(unittest.IsolatedAsyncioTestCase):
+    def test_only_approach_skips_occupied_goal_guard(self):
+        c = fake_control()
+        c.robot.validate_goal.side_effect = ValueError('Goal clearance intersects an obstacle')
+        c.phase = 'approaching_item'
+        c.travel_guard(POSE)
+        c.robot.validate_goal.assert_not_called()
+        for phase in ('navigating', 'calibrating'):
+            c.phase = phase
+            with self.subTest(phase=phase), self.assertRaisesRegex(ValueError, 'Goal clearance'):
+                c.travel_guard(POSE)
+
     def test_stale_approach_sensors_pause_without_cancelling_task(self):
         c = fake_control()
         c.phase, c.base_enabled, c.task_id = 'approaching_item', True, 'same-task'
@@ -58,35 +69,35 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
     def test_bounded_corrections_and_visible_off_center_item_can_finish(self):
         grid = open_map()
         goal, _ = approach_step({**result(), 'forward_m': .25, 'turn_deg': 15, 'bearing_deg': 40},
-                                dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+                                dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)
         self.assertAlmostEqual(goal['x_m'], 2 + .25*math.cos(math.radians(15)))
         self.assertAlmostEqual(goal['yaw_rad'], math.radians(15))
         for forward in (.25001, .5, .63):
             with self.subTest(forward=forward):
-                clamped = approach_step({**result(), 'forward_m': forward}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0]
+                clamped = approach_step({**result(), 'forward_m': forward}, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)[0]
                 self.assertAlmostEqual(clamped['x_m'], 2.25)
         for change in (dict(forward_m=.5, turn_deg=24), dict(turn_deg=15.01), dict(turn_deg=-15.01)):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'exceeds bounds'):
-                approach_step({**result(), **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+                approach_step({**result(), **change}, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)
         near = {**result(), 'distance_m': .2, 'current': [310, 0, 690, 1000]}
         self.assertIsNone(approach_step({**near, 'forward_m': .5}, dict(base_pose=POSE),
-                                       grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+                                       grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
         self.assertIsNone(approach_step({**near, 'forward_m': .005}, dict(base_pose=POSE),
-                                       grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+                                       grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
         self.assertIsNone(approach_step({**near, 'forward_m': .001, 'current': near['goal']}, dict(base_pose=POSE),
-                                       grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+                                       grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
         matched = {**result(), 'forward_m': 0, 'turn_deg': 0, 'bearing_deg': 60,
                    'current': [20, 0, 420, 1000]}
-        self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+        self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
 
     def test_visual_match_skips_tiny_final_move_but_small_suggestion_alone_does_not(self):
         grid = open_map()
         near = {**result(), 'forward_m': .009, 'distance_m': .1, 'turn_deg': 15,
                 'current': [30, 100, 374, 900]}
-        self.assertIsNone(approach_step(near, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+        self.assertIsNone(approach_step(near, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
         for change in (dict(distance_m=.5), dict(current=result()['current']), dict(current=[30, 200, 374, 900])):
             with self.subTest(change=change):
-                self.assertIsNotNone(approach_step({**near, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+                self.assertIsNotNone(approach_step({**near, **change}, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
 
     def test_clipped_views_follow_normal_model_turn_handling(self):
         grid = open_map()
@@ -94,7 +105,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             for current, turn in (([0, 0, 200, 1000], 15), ([800, 0, 1000, 1000], -15)):
                 with self.subTest(goal=goal_box, current=current):
                     proposal = {**result(), 'goal': goal_box, 'current': current, 'forward_m': 0, 'turn_deg': turn}
-                    goal, _ = approach_step(proposal, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+                    goal, _ = approach_step(proposal, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)
                     self.assertEqual((goal['x_m'], goal['y_m']), (POSE['x_m'], POSE['y_m']))
                     self.assertAlmostEqual(goal['yaw_rad'], math.radians(turn))
 
@@ -103,9 +114,10 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(action=action):
                 c = fake_control()
                 c.robot.grid, c.robot.zones = open_map(), dict(revision=2, zones=[])
-                c.robot.costmaps = {'global': (0, 2, True, c.robot.grid)}
+                c.robot.costmaps = {}
                 c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
-                if action == 'sensor_pause': c.phase = 'approaching_item'
+                c.phase = 'approaching_item'
+                c.robot.validate_goal.side_effect = AssertionError('Approach must not check occupied goals')
                 c.robot.velocity = (0, 0, 0)
                 c.deadline = .45
                 measured, now, commands = dict(x_m=2, y_m=3, yaw_deg=0), [0.], []
@@ -127,7 +139,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                         measured['yaw_deg'] += math.degrees(velocity[2]*seconds)
                         measured['x_m'] += velocity[0]*seconds*math.cos(math.radians(measured['yaw_deg']))
                         measured['y_m'] += velocity[0]*seconds*math.sin(math.radians(measured['yaw_deg']))
-                    if action == 'stop': c.stop_pending = 'STOP'
+                    if action == 'stop' or (action == 'sensors' and now[0] >= .1): c.stop_pending = 'STOP'
                     if action == 'sensors': c.robot.sensors_ready = lambda: False
                     if action == 'sensor_pause': c.robot.sensors_ready = lambda: now[0] >= 10
                     if action == 'zones': c.robot.zones['revision'] += 1
@@ -138,7 +150,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 goal = dict(x_m=2 if action == 'turn' else 2+distance*math.cos(turn),
                             y_m=3 if action == 'turn' else 3+distance*math.sin(turn), yaw_rad=turn)
                 with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
-                    if action in ('forward', 'reverse', 'reverse_clamp', 'turn', 'clamp', 'drift', 'heading_drift', 'sensor_pause', 'overshoot'):
+                    if action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'obstacle'):
                         c.move_approach(goal, POSE)
                     else:
                         with self.assertRaises((Stopped, RuntimeError, ValueError)):
@@ -147,7 +159,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 if action == 'forward': self.assertGreaterEqual(measured['x_m'], 2.003)
                 if action == 'turn': self.assertLess(abs(measured['yaw_deg']-4.5), .31)
                 if action == 'clamp': self.assertAlmostEqual(measured['x_m'], 2.25, delta=.0031)
-                if action.startswith('reverse') and action != 'reverse_obstacle':
+                if action.startswith('reverse'):
                     self.assertAlmostEqual(measured['x_m'], 2+max(distance, -.25), delta=.0031)
                     self.assertTrue(any(v[0] < 0 for v in commands))
                 if action == 'drift':
@@ -179,32 +191,32 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
     def test_saved_goal_scale_controls_arrival_instead_of_coarse_stand_off(self):
         grid = open_map()
         close = {**result(), 'forward_m': .1, 'bearing_deg': 18, 'distance_m': .7}
-        goal, _ = approach_step(close, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+        goal, _ = approach_step(close, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
         self.assertAlmostEqual(goal['x_m'], 2.1)
         matched = {**close, 'forward_m': 0, 'arrived': True, 'current': close['goal']}
-        self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)[0])
+        self.assertIsNone(approach_step(matched, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)[0])
         for change, error in ((dict(forward_m=0), 'no useful progress'),
                               (dict(arrived=True, forward_m=0), 'saved front GOAL'),
                               (dict(arrived=True, forward_m=0, current=[300, 200, 700, 1000]), 'saved front GOAL'),
                               (dict(goal=None), 'bounds'), (dict(seen=False), 'lost'),
                               (dict(confidence=.69), 'confidence')):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
-                approach_step({**close, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+                approach_step({**close, **change}, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
 
-    def test_too_close_can_reobserve_then_retreat_with_rear_clearance(self):
+    def test_too_close_can_reobserve_then_retreat_ignoring_occupancy(self):
         grid = open_map()
         close = {**result(), 'distance_m': .2, 'current': [240, 0, 760, 1000]}
         for forward in (0, .2):
-            goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+            goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
             self.assertEqual(goal, POSE)
         for forward in (-.1, -.5):
-            goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], grid, ITEM, .2, DEFAULT_CONFIG)
+            goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
             self.assertAlmostEqual(goal['x_m'], 1.97)
             self.assertEqual(goal['yaw_rad'], 0)
         blocked = deepcopy(grid)
         blocked['cells'][30*80+19] = 100
-        with self.assertRaises(ValueError):
-            approach_step({**close, 'forward_m': -.03}, dict(base_pose=POSE), blocked, [], grid, ITEM, .2, DEFAULT_CONFIG)
+        goal, _ = approach_step({**close, 'forward_m': -.03}, dict(base_pose=POSE), blocked, [], ITEM, .2, DEFAULT_CONFIG)
+        self.assertAlmostEqual(goal['x_m'], 1.97)
 
     def test_missing_front_goal_is_refused_before_capture_or_motion(self):
         c = fake_control()
@@ -217,16 +229,16 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
     def test_bounds_clearance_identity_arrival_and_camera_transform(self):
         grid = open_map()
         proposal = result()
-        goal, estimate = approach_step(proposal, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+        goal, estimate = approach_step(proposal, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)
         self.assertAlmostEqual(goal['x_m'], 2.2)
         self.assertAlmostEqual(estimate['x_m'], 3.5)
         with patch('web_backend.item_locations.global_costmap', wraps=global_costmap) as inflate:
-            approach_step(proposal, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+            approach_step(proposal, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)
             self.assertLess(len(inflate.call_args.args[0]['cells']), 200)
         rotated = {**grid, 'origin': dict(x_m=2, y_m=1, yaw_rad=1.1)}
         x, y = local_to_world([2, 3], rotated['origin'])
         rotated_goal, _ = approach_step(proposal, dict(base_pose=dict(x_m=x, y_m=y, yaw_rad=1.1)),
-                                       rotated, [], rotated, ITEM, .25, DEFAULT_CONFIG)
+                                       rotated, [], ITEM, .25, DEFAULT_CONFIG)
         expected = local_to_world([2.2, 3], rotated['origin'])
         self.assertAlmostEqual(rotated_goal['x_m'], expected[0])
         self.assertAlmostEqual(rotated_goal['y_m'], expected[1])
@@ -234,26 +246,23 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                        dict(confidence=.69), dict(distance_m=float('nan')),
                        dict(arrived=True), dict(forward_m=0), dict(extra='grasp')):
             with self.subTest(change=change), self.assertRaises(ValueError):
-                approach_step({**proposal, **change}, dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+                approach_step({**proposal, **change}, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)
         goal, _ = approach_step({**proposal, 'forward_m': 0, 'turn_deg': 15, 'bearing_deg': 30},
-                               dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+                               dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)
         self.assertAlmostEqual(goal['yaw_rad'], math.radians(15))
         self.assertIsNone(approach_step({**proposal, 'arrived': True, 'forward_m': 0, 'distance_m': .9, 'current': result()['goal']},
-                                       dict(base_pose=POSE), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)[0])
+                                       dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
         for obstacle in (100, -1):
             blocked = deepcopy(grid)
-            blocked['cells'][30 * grid['width'] + 23] = obstacle
-            with self.assertRaises(ValueError):
-                approach_step(proposal, dict(base_pose=POSE), blocked, [], grid, ITEM, .25, DEFAULT_CONFIG)
-        dynamic = deepcopy(grid)
-        dynamic['cells'][30 * grid['width'] + 22] = 100
+            for x in (20, 22, 23):
+                blocked['cells'][30 * grid['width'] + x] = obstacle
+            goal, _ = approach_step(proposal, dict(base_pose=POSE), blocked, [], ITEM, .25, DEFAULT_CONFIG)
+            self.assertAlmostEqual(goal['x_m'], 2.2)
         with self.assertRaises(ValueError):
-            approach_step(proposal, dict(base_pose=POSE), grid, [], dynamic, ITEM, .25, DEFAULT_CONFIG)
-        with self.assertRaises(ValueError):
-            approach_step(proposal, dict(base_pose=POSE), grid, [dict(corners=[[2.2, 2.8], [2.4, 3.2]])], grid, ITEM, .25, DEFAULT_CONFIG)
+            approach_step(proposal, dict(base_pose=POSE), grid, [dict(corners=[[2.2, 2.8], [2.4, 3.2]])], ITEM, .25, DEFAULT_CONFIG)
         edge = dict(x_m=7.95, y_m=3, yaw_rad=0)
         with self.assertRaises(ValueError):
-            approach_step(proposal, dict(base_pose=edge), grid, [], grid, ITEM, .25, DEFAULT_CONFIG)
+            approach_step(proposal, dict(base_pose=edge), grid, [], ITEM, .25, DEFAULT_CONFIG)
 
     def test_hardware_recaptures_and_stops_at_sixteen_without_grasp(self):
         c = fake_control()
@@ -381,7 +390,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             c = fake_control()
             c.directory, c.task_id, c.deadline = bridge, 'task', time.monotonic() + 60
             c.robot.grid, c.robot.zones = grid, dict(revision=0, zones=[])
-            c.robot.costmaps = {'global': (time.monotonic(), 0, True, grid)}
+            c.robot.costmaps = {}
             pose = dict(x_m=2, y_m=3, yaw_deg=0)
             c.robot.nav.get_pose.side_effect = lambda **kw: dict(pose)
             c.move_approach = Mock(side_effect=lambda goal, source: pose.update(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad'])))
@@ -425,7 +434,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 hardware.refresh = Mock(side_effect=lambda: setattr(hardware, 'control', c.snapshot()))
                 hardware.refresh()
                 hardware.cameras = dict(front=dict(stamp_s=time.time()))
-                hardware.costmap = Mock(return_value=grid)
+                hardware.costmap = Mock(side_effect=AssertionError('Approach must not read the ROS costmap'))
                 hardware.command = AsyncMock(return_value=dict(status='accepted'))
                 async with TestClient(TestServer(app)) as client:
                     command = dict(id=str(uuid.uuid4()), type='approach_item', map_id=grid['map_id'], expected_revision=0,
