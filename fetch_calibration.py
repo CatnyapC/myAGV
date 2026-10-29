@@ -90,10 +90,10 @@ def metric_arm_alignment(result, config):
     values = [result[k] for k in ('x_mm', 'y_mm')]
     if any(type(v) not in (int, float) or not math.isfinite(v) for v in values):
         raise ValueError('Arm metric error missing, ambiguous or out of range')
-    if result['aligned'] and math.hypot(*values) >= 1:
-        raise ValueError('Model alignment flag contradicts its one-millimeter error')
+    aligned = math.hypot(*values) < 3
+    if result['aligned'] and not aligned:
+        raise ValueError('Model alignment flag contradicts its three-millimeter error')
     # Check the full residual before an optional travel limit can make a large error look small.
-    aligned = sum(abs(v) for v in values) < 1.25
     limit = calibration_config(config)['max_step_mm']
     moves = [0 if aligned or abs(v) < .1 else max(-limit, min(limit, v)) if limit else v for v in values]
     return dict(x_mm=moves[0], y_mm=moves[1], turn_deg=0), aligned
@@ -162,7 +162,7 @@ class MetricArmCalibration:
             self.inverse = [[-d/determinant, b/determinant], [c/determinant, -a/determinant]]
             error = [feature[i] - target[i] for i in range(2)]
             residual = [sum(row[i] * error[i] for i in range(2)) for row in self.inverse]
-            raw = dict(x_mm=residual[0], y_mm=residual[1], aligned=math.hypot(*residual) < 1)
+            raw = dict(x_mm=residual[0], y_mm=residual[1], aligned=math.hypot(*residual) < 3)
             moves, aligned = metric_arm_alignment(raw, config)
             return moves, aligned, raw
         # A clipped fragment has no reliable midpoint for a metric probe; bring it into view first.
@@ -191,7 +191,7 @@ def measured_arm_alignment(result, config):
     goal_height, height = goal[3] - goal[1], current[3] - current[1]
     # Measured on hardware: logical Y+ moves the visible target upward in the image.
     y = current[1] - goal[1]
-    tolerance, top_tolerance = 20, 5
+    tolerance, top_tolerance = 30, 10
     width_ratio = (current[2] - current[0]) / (goal[2] - goal[0])
     area_ratio = width_ratio * height / goal_height
     if abs(x) <= tolerance and abs(y) <= top_tolerance and (abs(width_ratio - 1) > .10

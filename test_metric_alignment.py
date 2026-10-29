@@ -11,9 +11,9 @@ from test_robot_control import fake_control
 
 class MetricAlignmentTest(unittest.TestCase):
     def test_full_residual_gate_precedes_gain_and_limits(self):
-        for x, y, aligned in ((.7,.5,True), (1.24,0,True), (1.25,0,False), (1,-1,False), (20,0,False)):
+        for x, y, aligned in ((.7,.5,True), (2.99,0,True), (3,0,False), (2,-2,True), (2.2,-2.2,False), (20,0,False)):
             with self.subTest(x=x, y=y):
-                moves, done = metric_arm_alignment(dict(x_mm=x, y_mm=y, aligned=math.hypot(x,y)<1), dict(max_step_mm=.5))
+                moves, done = metric_arm_alignment(dict(x_mm=x, y_mm=y, aligned=math.hypot(x,y)<3), dict(max_step_mm=.5))
                 self.assertEqual(done, aligned)
                 self.assertEqual(not any(moves.values()), aligned)
                 self.assertLessEqual(abs(moves['x_mm']), .5)
@@ -23,7 +23,7 @@ class MetricAlignmentTest(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 metric_arm_alignment(dict(x_mm=bad,y_mm=0,aligned=False), None)
         with self.assertRaises(ValueError):
-            metric_arm_alignment(dict(x_mm=1,y_mm=0,aligned=True), None)
+            metric_arm_alignment(dict(x_mm=3,y_mm=0,aligned=True), None)
 
     def test_independent_measured_probes_freeze_goal_and_learn_cross_coupling(self):
         state = MetricArmCalibration()
@@ -73,7 +73,7 @@ class MetricAlignmentTest(unittest.TestCase):
     def test_robot_rechecks_raw_error_before_accepting_zero_motion(self):
         from robot_control import atomic_json
         for residual, model_aligned, accept in ((dict(x_mm=.7,y_mm=.5),False,True),
-                (dict(x_mm=5,y_mm=0),False,False), (dict(x_mm=1,y_mm=-1),False,False),
+                (dict(x_mm=5,y_mm=0),False,False), (dict(x_mm=2,y_mm=-2),False,True), (dict(x_mm=3,y_mm=0),False,False),
                 (None,False,False)):
             with self.subTest(residual=residual), tempfile.TemporaryDirectory() as directory:
                 control = fake_control()

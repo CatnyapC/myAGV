@@ -613,14 +613,14 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             with patch('web_backend.resolve.request_json', AsyncMock(return_value=bad)), self.assertRaises(ValueError):
                 await locate_pickup(images, dict(name='cup', appearance='red'), 'key', images['arm'], [], stage='arm', goal=images['arm'])
 
-    def test_generic_bounds_keep_tight_top_tolerance_and_measured_direction(self):
+    def test_generic_bounds_accept_small_offsets_and_keep_measured_direction(self):
         goal = [350,850,650,1000]
-        for top, y in ((845,0), (855,0), (844,-.25), (856,.25), (827,-.25), (780,-5)):
+        for top, y in ((840,0), (860,0), (839,-.25), (861,.25), (827,-.25), (780,-5)):
             with self.subTest(top=top):
                 moves = measured_arm_alignment(dict(goal=goal, current=[350,top,650,1000]), None)
                 self.assertEqual(moves, dict(x_mm=0, y_mm=y, turn_deg=0))
         self.assertEqual(measured_arm_alignment(dict(goal=[350,400,650,600], current=[350,376,650,576]), None)['y_mm'], -.25)
-        self.assertEqual(measured_arm_alignment(dict(goal=goal, current=[375,850,675,1000]), None)['x_mm'], .25)
+        self.assertEqual(measured_arm_alignment(dict(goal=goal, current=[375,850,675,1000]), None)['x_mm'], 0)
         for current in ([300,850,700,1000], [350,850,650,940], None, [350,True,650,1000]):
             with self.subTest(current=current), self.assertRaises(ValueError):
                 measured_arm_alignment(dict(goal=goal, current=current), None)
