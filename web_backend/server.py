@@ -24,7 +24,7 @@ from .hardware import Hardware
 from .observation_points import ObservationPoints
 from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, close_codex_session, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
 from .codex_bridge import MODEL as CODEX_MODEL, load_token
-from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, refine_approach
+from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, location_records, refine_approach
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SETTINGS = dict(auto_align=False, manual_angle_deg=0, llm_model=MODEL, reasoning_effort='off', fast_mode=True)
@@ -570,7 +570,12 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Configured LLM and current photo index required for approach')
                     snapshot = photos.snapshot(editor.grid['map_id'])
                     item = next((i for i in snapshot['items'] if i['id'] == data.get('item_id')), None)
-                    estimate = next((e for e in snapshot['locations'] if e['item_id'] == data.get('item_id')), None)
+                    locations = snapshot['locations']
+                    if kind == 'fetch':
+                        # Return to an observation before starting a fresh visual approach.
+                        locations = location_records({**snapshot, 'photos': [p for p in snapshot['photos']
+                            if not p.get('update_key', '').startswith('approach:')]}, editor.grid['map_id'])
+                    estimate = next((e for e in locations if e['item_id'] == data.get('item_id')), None)
                     if not item or not estimate or estimate['confidence'] < .7:
                         raise ValueError('Current confident item location required for approach')
                     goal_id = (item.get('grasp_goal') or {}).get('front')

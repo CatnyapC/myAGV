@@ -360,6 +360,18 @@ class NavigationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'tolerance'):
             self.nav.go_to(POSE, position_tolerance=.10, yaw_tolerance=10)
 
+    def test_fetch_arrival_tolerance_accepts_nearby_pose_and_rejects_excess_error(self):
+        self.nav.client.get_state.return_value = 3
+        for distance, angle, accepted in ((.079, 14.9, True), (.081, 0, False), (0, 15.1, False)):
+            with self.subTest(distance=distance, angle=angle):
+                self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + distance,
+                                                     yaw_deg=POSE['yaw_deg'] + angle)
+                if accepted:
+                    self.nav.go_to(POSE, position_tolerance=.08, yaw_tolerance=15)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, '8 cm / 15 degree tolerance'):
+                        self.nav.go_to(POSE, position_tolerance=.08, yaw_tolerance=15)
+
     def test_web_planner_preserves_arrival_latch_and_turn_limits(self):
         launch = ET.parse(Path(__file__).with_name('web_hardware.launch')).getroot()
         node = launch.find("node[@name='move_base']")

@@ -148,6 +148,11 @@ class MapFetchAPITest(unittest.IsolatedAsyncioTestCase):
                 base_pose=observation_pose), index.value['revision'])
             index.set_locations(observation['id'], dict(status='complete', catalog_signature=catalog_signature(index.value['items']),
                 estimates=[dict(item_id=item['id'], x_m=4.5, y_m=3.5, uncertainty_m=.35, confidence=.9)]), index.value['revision'])
+            approach = index.add(image, dict(kind='observation', source='ros', camera_id='front',
+                map_id=grid['map_id'], map_revision=1, frame='map', captured_at_s=time.time() + 2,
+                base_pose=dict(x_m=4.1, y_m=3.4, yaw_rad=.1), update_key='approach:previous-fetch:0'), index.value['revision'])
+            index.set_locations(approach['id'], dict(status='complete', catalog_signature=catalog_signature(index.value['items']),
+                estimates=[dict(item_id=item['id'], x_m=4.6, y_m=3.6, uncertainty_m=.35, confidence=.9)]), index.value['revision'])
             with patch('web_backend.server.load_key', return_value=('configured', 'private-test-key')):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 hardware = app[EDITOR].hardware
@@ -175,6 +180,8 @@ class MapFetchAPITest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(forwarded['vision_item']['front_goal_photo_id'], cameras['front'])
                     self.assertEqual(forwarded['vision_item']['reference_photo_id'], reference['id'])
                     snapshot = await (await client.get('/api/items')).json()
+                    self.assertEqual(snapshot['locations'][0]['photo_id'], approach['id'])
+                    self.assertEqual(snapshot['locations'][0]['x_m'], 4.6)
                     self.assertTrue(snapshot['items'][0]['fetch_available'])
                     self.assertEqual(snapshot['items'][0]['station_status'], 'none')
                     hardware.command.reset_mock()

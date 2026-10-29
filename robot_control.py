@@ -591,7 +591,7 @@ class Control:
         self.robot.path = []
         self.base_enabled = True
         try:
-            self.robot.nav.go_to(pose, position_tolerance=.03 if precise else .10, yaw_tolerance=5 if precise else 10)
+            self.robot.nav.go_to(pose, position_tolerance=.08 if precise else .10, yaw_tolerance=15 if precise else 10)
         finally:
             self.base_enabled = False
             self.robot.zero()

@@ -258,6 +258,14 @@ class ControlTest(unittest.TestCase):
                     c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=0)))
                 self.assertEqual(c.robot.nav.go_to.call_count, 1)
 
+    def test_fetch_navigation_uses_eight_cm_and_fifteen_degree_tolerance(self):
+        c = fake_control()
+        goal = dict(x_m=1, y_m=2, yaw_deg=90)
+        c.go(goal, precise=True)
+        c.robot.nav.go_to.assert_called_once_with(goal, position_tolerance=.08, yaw_tolerance=15)
+        self.assertFalse(c.base_enabled)
+        self.assertIsNone(c.goal)
+
     def test_manual_arm_step_sets_absolute_mode_before_target(self):
         c = fake_control()
         c.arm.get_coords_info.side_effect = [[200,0,0], [201,0,0]]
