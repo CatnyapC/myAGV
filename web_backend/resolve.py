@@ -203,8 +203,11 @@ async def _locate_pickup(images, item, key, reference, history, prompt=PICKUP_PR
         labels = ['left_large', 'left_medium', 'left_small', 'aligned_perfectly', 'right_small', 'right_medium', 'right_large', 'aligned_stalled', 'unknown']
         instruction = """ACTIVE STAGE: BASE ONLY. Return {"front":label}.
 Judge the item midpoint against the front image horizontal center. Rough alignment
-is enough: within the central 10% of image width (midpoint 45%-55%) => aligned_perfectly. Do not chase
-small residual offsets. Outside that band report left/right and large/medium/small.
+is enough: within the central 30% of image width (midpoint 35%-65%) => aligned_perfectly.
+Return aligned_perfectly immediately inside that band, even on the first observation.
+This label means ready for ARM, not exact centering. Do not spend extra rounds on
+small offsets, symmetry or matching the reference framing; ARM handles fine alignment.
+Outside that band, rotate only enough to enter it; report left/right and large/medium/small.
 Uploaded reference identifies the item only. No arm adjustment in this stage.
 Only after five EXECUTED rotation rounds (five history images), you may return
 aligned_stalled if CURRENT and the five before-move images show no meaningful
