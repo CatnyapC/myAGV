@@ -1064,7 +1064,8 @@ class Control:
                     continue
                 goal, corrected = approach_step(response['result'], dict(base_pose=pose), self.robot.grid,
                     self.robot.zones['zones'], item, self.config['clearance_m'], config)
-                estimate = dict(corrected, base_pose=pose)
+                if corrected is not None:
+                    estimate = dict(corrected, base_pose=pose)
                 if goal is None:
                     return dict(rounds=round_index + 1, estimate=corrected,
                                 outcome='arrived')

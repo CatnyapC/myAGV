@@ -968,8 +968,12 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             async with photo_lock:
                                 if not current(value) or await asyncio.to_thread(load_json, request_path, {}) != value:
                                     raise ValueError('Item approach stopped or catalog changed')
-                                photos.set_locations(photo['id'], dict(status='complete', catalog_signature=value['catalog_signature'], estimates=[corrected]), photos.value['revision'])
-                            entry.update(corrected_location=corrected, base_command={k: result[k] for k in ('forward_m', 'turn_deg')})
+                                photos.set_locations(photo['id'], dict(status='complete', catalog_signature=value['catalog_signature'], estimates=[corrected] if corrected is not None else []), photos.value['revision'])
+                            entry.update(base_command={k: result[k] for k in ('forward_m', 'turn_deg')})
+                            if corrected is not None:
+                                entry['corrected_location'] = corrected
+                            else:
+                                entry['outcome'] = 'recovering_visibility'
                             if goal is None:
                                 entry['outcome'] = 'arrived'
                             await editor.emit('photos')

@@ -109,6 +109,24 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((goal['x_m'], goal['y_m']), (POSE['x_m'], POSE['y_m']))
                     self.assertAlmostEqual(goal['yaw_rad'], math.radians(turn))
 
+    def test_lost_item_only_allows_bounded_rotation_without_new_estimate(self):
+        proposal = {**result(), 'seen': False, 'goal': None, 'current': None,
+                    'forward_m': 0, 'turn_deg': 12}
+        for turn in (-15, 12):
+            goal, estimate = approach_step({**proposal, 'turn_deg': turn}, dict(base_pose=POSE),
+                                          open_map(), [], ITEM, .25, DEFAULT_CONFIG)
+            self.assertEqual((goal['x_m'], goal['y_m']), (POSE['x_m'], POSE['y_m']))
+            self.assertAlmostEqual(goal['yaw_rad'], math.radians(turn))
+            self.assertIsNone(estimate)
+        for change in (dict(forward_m=.1), dict(forward_m=-.1), dict(turn_deg=0),
+                       dict(turn_deg=16), dict(turn_deg=float('nan')), dict(arrived=True),
+                       dict(current=result()['current'])):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                approach_step({**proposal, **change}, dict(base_pose=POSE), open_map(), [], ITEM, .25, DEFAULT_CONFIG)
+        with self.assertRaises(ValueError):
+            approach_step(proposal, dict(base_pose=POSE), open_map(),
+                          [dict(corners=[[1.9, 2.9], [2.1, 3.1]])], ITEM, .25, DEFAULT_CONFIG)
+
     def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
         for action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
             with self.subTest(action=action):
@@ -464,12 +482,15 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             bodies = []
             entered, release = asyncio.Event(), asyncio.Event()
             cancelling = goal_matching = False
+            recovery_answers = []
 
             def compact(measurement):
                 return {k: measurement[k] for k in ('forward_m', 'turn_deg', 'bearing_deg', 'distance_m', 'goal', 'current')}
 
             async def provider(body, key, timeout, fast_mode=True, trace=None):
                 bodies.append(body)
+                if recovery_answers:
+                    return compact(recovery_answers.pop(0))
                 if goal_matching:
                     return compact({**result(), 'forward_m': 0, 'distance_m': .2, 'current': result()['goal']})
                 if cancelling:
@@ -539,6 +560,29 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(len(json.loads(log['rounds'][0]['result_json'])), 6)
                     self.assertAlmostEqual(log['rounds'][-1]['corrected_location']['x_m'], 3.1)
                     self.assertFalse((bridge / 'fetch_vision_response.json').exists())
+                    c.task_id, c.phase = 'recovery-task', 'idle'
+                    c.move_approach.reset_mock()
+                    recovery_answers.extend([result(),
+                        {**result(), 'forward_m': 0, 'turn_deg': 12, 'goal': None, 'current': None},
+                        {**result(), 'forward_m': 0, 'turn_deg': -5, 'goal': None, 'current': None},
+                        {**result(), 'forward_m': 0, 'current': result()['goal']}])
+                    completed = await asyncio.wait_for(asyncio.to_thread(c.approach_item, forwarded), 4)
+                    self.assertEqual(completed['rounds'], 4)
+                    self.assertEqual(c.move_approach.call_count, 3)
+                    for call in c.move_approach.call_args_list[1:]:
+                        target, source = call.args
+                        self.assertEqual((target['x_m'], target['y_m']), (source['x_m'], source['y_m']))
+                    contexts = [json.loads(b['messages'][1]['content'][0]['text']) for b in bodies[-3:]]
+                    self.assertEqual(contexts[0]['prior_estimate'], contexts[1]['prior_estimate'])
+                    self.assertEqual(contexts[1]['prior_estimate'], contexts[2]['prior_estimate'])
+                    self.assertIn('last seen direction', bodies[-1]['messages'][0]['content'])
+                    log = await (await client.get('/api/fetch-log')).json()
+                    self.assertEqual([r.get('outcome') for r in log['rounds'][1:]],
+                                     ['recovering_visibility', 'recovering_visibility', 'arrived'])
+                    self.assertTrue(all(r['status'] == 'returned' for r in log['rounds']))
+                    self.assertNotIn('corrected_location', log['rounds'][1])
+                    photos = await (await client.get('/api/items')).json()
+                    self.assertFalse(any(p.get('location_analysis', {}).get('status') == 'error' for p in photos['photos']))
                     cancelling = True
                     c.task_id, c.phase = 'cancelled-task', 'idle'
                     running = asyncio.create_task(asyncio.to_thread(c.approach_item, forwarded))
@@ -555,7 +599,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(.025)
                     self.assertEqual(log['rounds'][0]['status'], 'discarded')
                     current = await (await client.get('/api/items')).json()
-                    self.assertAlmostEqual(current['locations'][0]['x_m'], 3.1)
+                    self.assertAlmostEqual(current['locations'][0]['x_m'], photos['locations'][0]['x_m'])
                     self.assertEqual(current['photos'][-1]['location_analysis']['status'], 'cancelled')
                     self.assertFalse((bridge / 'fetch_vision_response.json').exists())
                     cancelling, goal_matching = False, True
