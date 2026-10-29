@@ -435,6 +435,8 @@ class Control:
         target, start = validate_angles(angles), self.read_arm()
         if len(target) != len(start):
             raise ValueError('Arm joint counts differ')
+        if self.config.get('grasp_test_hold') and len(target) == 4:
+            target[3] = start[3]  # Keep the held fourth axis, as grasp's coordinate moves do.
         if self.map_update and self.map_update['active']:
             self.wait_update()
         if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):

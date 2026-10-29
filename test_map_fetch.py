@@ -41,10 +41,10 @@ class MapFetchTest(unittest.TestCase):
         def joints(target, speed):
             events.append(('joints', list(target)))
             angles[:] = target
-            coords[:] = [20, 80, 100, 27] if target[0] == 0 else [0, 150, 35, 27] if target[1] == 20 else [1, 160, 35, 27]
+            coords[:] = [20, 80, 100, target[3]] if target[0] == 0 else [0, 150, 35, target[3]] if target[1] == 20 else [1, 160, 35, target[3]]
 
         def coordinates(target, speed):
-            self.assertEqual(target[3], 27)
+            self.assertEqual(target[3], -15)
             events.append(('coords', list(target)))
             coords[:] = target
 
@@ -55,8 +55,8 @@ class MapFetchTest(unittest.TestCase):
         def align(packet, config):
             self.assertFalse(packet['preview'])
             events.append(('align',))
-            angles[:] = [90, 21, 30, 27]
-            coords[:] = [1, 160, 35, 27]
+            angles[:] = [90, 21, 30, -15]
+            coords[:] = [1, 160, 35, -15]
 
         c.arm.set_angles.side_effect, c.arm.set_coords.side_effect = joints, coordinates
         c.grip = Mock(side_effect=lambda value: events.append(('grip', value)))
@@ -70,14 +70,14 @@ class MapFetchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch('robot_control.arm_deadline', return_value=nullcontext()), \
              patch('robot_control.wait_arm', side_effect=lambda *a, **kw: list(angles)):
             c.config_path = Path(folder) / 'robot_config.json'
-            c.execute(dict(fetch_packet(), preview=True))
+            c.execute(dict(fetch_packet(), preview=True, pickup_angles=[90, 20, 30, -15]))
             self.assertNotIn('grasp_test_hold', json.loads(c.config_path.read_text()))
         self.assertEqual([e[0] for e in events], ['joints', 'go', 'approach', 'grip', 'joints', 'align',
             'grip', 'coords', 'grip', 'coords', 'joints', 'go', 'joints', 'coords', 'grip', 'coords', 'joints'])
         self.assertEqual([e[1] for e in events if e[0] == 'joints'],
-            [c.config['transport_angles'], [90, 20, 30, 27], c.config['transport_angles'], [90, 21, 30, 27], c.config['transport_angles']])
+            [c.config['transport_angles'], [90, 20, 30, -15], [0, 10, 20, -15], [90, 21, 30, -15], c.config['transport_angles']])
         self.assertEqual([e[1] for e in events if e[0] == 'coords'],
-            [[1, 160, 12.5, 27], [1, 160, 35, 27], [1, 160, 12.5, 27], [1, 160, 35, 27]])
+            [[1, 160, 12.5, -15], [1, 160, 35, -15], [1, 160, 12.5, -15], [1, 160, 35, -15]])
         self.assertEqual(c.go.call_args.args[0], start)
         self.assertEqual(c.go.call_args_list[0].args[0],
                          dict(x_m=3.2, y_m=2.7, yaw_deg=math.degrees(.4)))
