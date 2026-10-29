@@ -248,7 +248,7 @@ class ControlTest(unittest.TestCase):
                 c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=math.pi / 2)))
                 c.fold.assert_not_called()
                 c.robot.nav.go_to.assert_called_once_with(dict(x_m=1, y_m=2, yaw_deg=90),
-                                                         position_tolerance=.10, yaw_tolerance=10)
+                                                         position_tolerance=.08, yaw_tolerance=15)
                 c.robot.zero.assert_called_once()
                 self.assertEqual(c.robot.path, [])
                 self.assertFalse(c.base_enabled)
@@ -258,10 +258,10 @@ class ControlTest(unittest.TestCase):
                     c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=0)))
                 self.assertEqual(c.robot.nav.go_to.call_count, 1)
 
-    def test_fetch_navigation_uses_eight_cm_and_fifteen_degree_tolerance(self):
+    def test_go_uses_eight_cm_and_fifteen_degree_tolerance(self):
         c = fake_control()
         goal = dict(x_m=1, y_m=2, yaw_deg=90)
-        c.go(goal, precise=True)
+        c.go(goal)
         c.robot.nav.go_to.assert_called_once_with(goal, position_tolerance=.08, yaw_tolerance=15)
         self.assertFalse(c.base_enabled)
         self.assertIsNone(c.goal)

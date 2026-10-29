@@ -585,13 +585,13 @@ class Control:
                     packet = self.queue.get_nowait()
                     self.finish(packet, dict(status='cancelled', error='Cancelled before execution'))
 
-    def go(self, pose, precise=False):
+    def go(self, pose):
         self.travel_guard(pose)
         self.phase, self.status, self.goal = 'navigating', 'Navigating', pose
         self.robot.path = []
         self.base_enabled = True
         try:
-            self.robot.nav.go_to(pose, position_tolerance=.08 if precise else .10, yaw_tolerance=15 if precise else 10)
+            self.robot.nav.go_to(pose, position_tolerance=.08, yaw_tolerance=15)
         finally:
             self.base_enabled = False
             self.robot.zero()
@@ -1392,7 +1392,7 @@ class Control:
         try:
             current()
             self.fold()
-            self.go(goal, precise=True)
+            self.go(goal)
             approached = self.approach_item(packet)
             current()
             if approached['outcome'] != 'arrived':
@@ -1405,7 +1405,7 @@ class Control:
             holding_angles = pickup_angles(wait_arm(self.arm, timeout=5))
             current()
             self.fold()
-            self.go(start_base, precise=True)
+            self.go(start_base)
             current()
             self.move_arm(holding_angles)
             self.test_grasp(dict(grasp, action='place'))

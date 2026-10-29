@@ -48,9 +48,8 @@ class MapFetchTest(unittest.TestCase):
             events.append(('coords', list(target)))
             coords[:] = target
 
-        def go(goal, **kwargs):
+        def go(goal):
             events.append(('go', dict(goal)))
-            self.assertTrue(kwargs['precise'])
             pose.update(goal)
 
         def align(packet, config):
