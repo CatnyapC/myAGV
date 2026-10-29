@@ -150,7 +150,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 goal = dict(x_m=2 if action == 'turn' else 2+distance*math.cos(turn),
                             y_m=3 if action == 'turn' else 3+distance*math.sin(turn), yaw_rad=turn)
                 with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
-                    if action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'obstacle'):
+                    if action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'obstacle', 'timeout'):
                         c.move_approach(goal, POSE)
                     else:
                         with self.assertRaises((Stopped, RuntimeError, ValueError)):
@@ -172,6 +172,9 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(all(v[2] == 0 for v in commands if v[0] != 0))
                 self.assertTrue(all(abs(v[0]) >= .01 for v in commands if v[0] != 0))
                 if action == 'overshoot': self.assertEqual(len(commands), 1)
+                if action == 'timeout':
+                    self.assertIn('taking a fresh approach photo', c.status)
+                    self.assertEqual(measured['x_m'], 2)
                 self.assertEqual(c.robot.velocity, (0, 0, 0))
                 self.assertFalse(c.base_enabled)
                 c.robot.nav.go_to.assert_not_called()
@@ -263,6 +266,58 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         edge = dict(x_m=7.95, y_m=3, yaw_rad=0)
         with self.assertRaises(ValueError):
             approach_step(proposal, dict(base_pose=edge), grid, [], ITEM, .25, DEFAULT_CONFIG)
+
+    def test_approach_motion_timeout_recaptures_with_measured_history(self):
+        c = fake_control()
+        c.robot.grid, c.robot.zones = open_map(), dict(revision=2, zones=[])
+        c.robot.costmaps = {}
+        c.robot.ros = Mock(is_shutdown=Mock(return_value=False))
+        c.deadline = 60
+        now = [0.]
+        pose = dict(x_m=2, y_m=3, yaw_deg=0)
+        c.robot.nav.get_pose.side_effect = lambda **kw: dict(pose)
+        c.robot.nav.get_odom_pose.side_effect = lambda: dict(pose)
+        c.robot.zero.side_effect = lambda: setattr(c.robot, 'velocity', (0, 0, 0))
+
+        def capture(*args, **kwargs):
+            self.assertFalse(c.base_enabled)
+            self.assertEqual(c.robot.velocity, (0, 0, 0))
+            c.robot.nav.wait_stopped.assert_called()
+            return dict(capture_id=str(uuid.uuid4()), image=IMAGE, base_pose=dict(POSE))
+
+        c.capture.side_effect = capture
+        def tick(seconds):
+            now[0] += seconds
+            c.deadline = now[0] + 60
+
+        packet = dict(location_config=DEFAULT_CONFIG, vision_item=ITEM, estimate={}, reference_photo_id='source', catalog_signature='catalog')
+        for converges in (True, False):
+            with self.subTest(converges=converges), tempfile.TemporaryDirectory() as folder:
+                c.directory = Path(folder)
+                requests = []
+
+                def respond(path, value):
+                    requests.append(deepcopy(value))
+                    answer = {**result(), 'forward_m': 0, 'current': result()['goal']} if converges and len(requests) == 2 else result()
+                    atomic_json(c.directory / 'fetch_vision_response.json', dict(id=value['id'], result=answer))
+
+                with patch('robot_control.atomic_json', side_effect=respond), \
+                        patch('robot_control.time.monotonic', side_effect=lambda: now[0]), \
+                        patch('robot_control.time.sleep', side_effect=tick):
+                    if converges:
+                        self.assertEqual(c.approach_item(packet)['outcome'], 'arrived')
+                        self.assertEqual(len(requests), 2)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, '16 rounds'):
+                            c.approach_item(packet)
+                        self.assertEqual(len(requests), 16)
+                self.assertEqual(requests[1]['history'][0]['after_pose']['x_m'], 2)
+                self.assertAlmostEqual(requests[1]['history'][0]['commanded']['forward_m'], .2)
+                self.assertFalse(list(c.directory.iterdir()))
+                self.assertFalse(c.base_enabled)
+                self.assertEqual(c.robot.velocity, (0, 0, 0))
+                c.arm.set_coords.assert_not_called()
+                c.arm.set_gripper_value.assert_not_called()
 
     def test_hardware_recaptures_and_stops_at_sixteen_without_grasp(self):
         c = fake_control()

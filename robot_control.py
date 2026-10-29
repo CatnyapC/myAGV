@@ -1120,7 +1120,9 @@ class Control:
                     print(json.dumps(dict(event='approach_motion_completed', time_s=time.time(), actual_odom=measured, remaining_m=remaining)), flush=True)
                     return
                 if time.monotonic() >= deadline:
-                    raise RuntimeError('Measured approach movement timed out')
+                    self.status = 'Measured approach movement timed out; taking a fresh approach photo'
+                    print(json.dumps(dict(event='approach_motion_timed_out', time_s=time.time(), actual_odom=measured, remaining_m=remaining)), flush=True)
+                    return
                 actual_yaw = math.radians(actual['yaw_deg'])
                 travel = max(0, remaining)
                 path_goal = goal if turning else dict(x_m=actual['x_m'] + direction*travel*math.cos(actual_yaw),
