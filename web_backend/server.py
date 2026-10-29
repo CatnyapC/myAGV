@@ -23,7 +23,7 @@ from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
 from .observation_points import ObservationPoints
 from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, close_codex_session, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
-from .codex_bridge import MODEL as CODEX_MODEL, load_token
+from .codex_bridge import MODELS as CODEX_MODELS, load_token
 from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, location_records, refine_approach
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,10 +161,10 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     codex_status, codex_key = load_token()
 
     def model_key(model=None):
-        return codex_key if (model or editor.settings['values']['llm_model']) == CODEX_MODEL else llm_key
+        return codex_key if (model or editor.settings['values']['llm_model']) in CODEX_MODELS else llm_key
 
     def update_llm_status():
-        editor.llm['status'] = codex_status if editor.settings['values']['llm_model'] == CODEX_MODEL else openrouter_status
+        editor.llm['status'] = codex_status if editor.settings['values']['llm_model'] in CODEX_MODELS else openrouter_status
 
     update_llm_status()
     resolve_lock = asyncio.Lock()  # ponytail: one request; per-user locks if multi-user control is added.
@@ -634,7 +634,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Record the item grasp height before testing grasp / place')
                     data = {**data, 'grasp_z_mm': item['grasp_z_mm']}
                 if kind in ('fetch', 'fetch_test'):
-                    metric_protocol = editor.settings['values']['llm_model'] == CODEX_MODEL
+                    metric_protocol = editor.settings['values']['llm_model'] in CODEX_MODELS
                     if metric_protocol and not editor.hardware.control.get('metric_alignment_available'):
                         raise ValueError('Restart robot controller to enable millimeter alignment')
                     if data.get('index_revision') != photos.value['revision']:
@@ -924,7 +924,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Another LLM request is running; retry fetch explicitly')
                     async with resolve_lock:
                         session = None
-                        if model == CODEX_MODEL:
+                        if model in CODEX_MODELS:
                             identity = value['boot_id'] + ':' + value['task_id'] + ':' + ('approach' if value.get('mode') == 'approach' else value.get('stage', 'base'))
                             if fetch_sessions and identity not in fetch_sessions:
                                 await release_fetch_sessions()
@@ -988,18 +988,18 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             if value.get('stage', 'base') == 'arm':
                                 goal_image = await asyncio.to_thread(photos.reference_image, value['item']['arm_goal_photo_id'])
                                 cache_key = json.dumps([value['item']['arm_goal_photo_id'], value['item']['calibration_z_mm']])
-                                if model == CODEX_MODEL and not value['history']:
+                                if model in CODEX_MODELS and not value['history']:
                                     try:
                                         metric = MetricArmCalibration(metric_cache.get(cache_key))
                                     except (ValueError, KeyError, TypeError):
                                         metric = MetricArmCalibration()
-                            if model == CODEX_MODEL:
+                            if model in CODEX_MODELS:
                                 if metric is None:
                                     metric = MetricArmCalibration()
                             inference = asyncio.create_task(locate_pickup(value['images'], value['item'], key, reference_image, value['history'],
                                 prompt=value.get('prompt') or PICKUP_PROMPT, trace=entry, limits=value.get('limits'), stage=value.get('stage', 'base'), goal=goal_image,
                                 model=model, effort=fetch_log['reasoning_effort'], session=session, fast_mode=fetch_log['fast_mode'],
-                                metric=metric if model == CODEX_MODEL and value.get('stage') == 'arm' else None, position=value.get('arm_position_mm')))
+                                metric=metric if model in CODEX_MODELS and value.get('stage') == 'arm' else None, position=value.get('arm_position_mm')))
                             try:
                                 while not inference.done():
                                     await asyncio.wait({inference}, timeout=.1)
@@ -1012,7 +1012,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                                 await asyncio.gather(inference, return_exceptions=True)
                                 if not current(value):
                                     await release_fetch_sessions()
-                            if value.get('stage') == 'arm' and model == CODEX_MODEL and entry.get('aligned_perfectly') and current(value):
+                            if value.get('stage') == 'arm' and model in CODEX_MODELS and entry.get('aligned_perfectly') and current(value):
                                 metric_cache[cache_key] = metric.context()
                                 await asyncio.to_thread(atomic_json, metric_cache_path, metric_cache)
                             entry.update(correction=alignment_command(result, value.get('limits')))

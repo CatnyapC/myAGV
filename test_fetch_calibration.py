@@ -662,7 +662,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 hardware.refresh = Mock()
                 hardware.control = dict(phase='idle', stamp_s=time.time(), metric_alignment_available=True)
                 async with TestClient(TestServer(app)) as client:
-                    from web_backend.codex_bridge import MODEL as CODEX_MODEL
+                    CODEX_MODEL = 'codex-local/gpt-6-luna'
                     preferences = await (await client.get('/api/settings')).json()
                     response = await client.put('/api/settings', json=dict(expected_revision=preferences['revision'],
                         values={**preferences['values'], 'llm_model': CODEX_MODEL, 'reasoning_effort': 'low'}))

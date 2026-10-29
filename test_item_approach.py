@@ -414,7 +414,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     return compact(result())
                 return compact(result() if len(bodies) == 1 else {**result(), 'forward_m': 0, 'distance_m': .9, 'current': result()['goal']})
 
-            from web_backend.codex_bridge import MODEL as CODEX_MODEL
+            CODEX_MODEL = 'codex-local/gpt-6.1-terra'
             atomic_json(ui / 'settings.json', dict(revision=0, values=dict(auto_align=False, manual_angle_deg=0,
                 llm_model=CODEX_MODEL, reasoning_effort='low', fast_mode=True)))
             with patch('web_backend.server.load_token', return_value=('configured', 'private-key')), \

@@ -14,6 +14,9 @@ from aiohttp import web
 from fetch_calibration import FETCH_VISION_TIMEOUT_S
 
 MODEL = 'codex-local/gpt-6.1-sol'
+MODELS = {MODEL: 'GPT-6.1 Sol · Local Codex',
+          'codex-local/gpt-6.1-terra': 'GPT-6.1 Terra · Local Codex · Balanced',
+          'codex-local/gpt-6-luna': 'GPT-6 Luna · Local Codex · Fastest'}
 EFFORTS = ('low', 'medium', 'high', 'max')
 TIMEOUT_S = FETCH_VISION_TIMEOUT_S - 5
 
@@ -34,7 +37,7 @@ def load_token():
 def inputs(body):
     if body.get('service_tier', 'fast') not in ('fast', 'default'):
         raise ValueError('Unsupported Codex service tier')
-    if body.get('model') != MODEL or body.get('stream') is not False:
+    if body.get('model') not in MODELS or body.get('stream') is not False:
         raise ValueError('Unsupported Codex model or streaming mode')
     messages = body['messages']
     if len(messages) != 2 or [m['role'] for m in messages] != ['system', 'user']:
@@ -103,6 +106,7 @@ class CodexConversation:
         self.directory = None
         self.thread_id = None
         self.instructions = None
+        self.model = None
         self.identity = 0
         self.sequence = None
         self.last_used = 0
@@ -177,6 +181,9 @@ class CodexConversation:
                 self.service_tier = thread.get('serviceTier')
                 self.requested_service_tier = service_tier
                 self.instructions = instructions
+                self.model = body['model']
+            elif body['model'] != self.model:
+                raise ValueError('Session model changed; restart ALIGN')
             elif instructions != self.instructions:
                 raise ValueError('Session instructions changed; restart ALIGN')
             elif service_tier != self.requested_service_tier:

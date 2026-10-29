@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+from itertools import product
 import os
 from pathlib import Path
 import tempfile
@@ -16,8 +17,8 @@ from web_backend.resolve import locate_pickup, request_json
 from web_backend.server import create_app
 
 
-def body():
-    return dict(model=bridge.MODEL, stream=False,
+def body(model=bridge.MODEL):
+    return dict(model=model, stream=False,
         messages=[dict(role='system', content='Measure the supplied images.'),
                   dict(role='user', content=[dict(type='text', text='GOAL'),
                       dict(type='image_url', image_url=dict(url='data:image/png;base64,' + base64.b64encode(demo_frame('arm')).decode()))])],
@@ -29,8 +30,8 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
     async def test_alignment_retries_five_times_and_reseeds_conflicting_session(self):
         image = 'data:image/jpeg;base64,AQ=='
         measurement = dict(goal=[450, 950, 550, 1000], current=[450, 950, 550, 1000])
-        for failures in (5, 6):
-            with self.subTest(failures=failures):
+        for model, failures in product(bridge.MODELS, (5, 6)):
+            with self.subTest(model=model, failures=failures):
                 trace = {}
                 session = dict(id='same-arm-session', sequence=5, start=False)
                 errors = [web.HTTPBadGateway(text='Local Codex request failed (HTTP 409)') for _ in range(failures)]
@@ -39,7 +40,7 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                      patch('web_backend.resolve.asyncio.sleep', new=AsyncMock()):
                     async def align():
                         return await locate_pickup(dict(arm=image), dict(name='Cup', appearance='Red'),
-                            'key', image, [], stage='arm', goal=image, model=bridge.MODEL, session=session, trace=trace)
+                            'key', image, [], stage='arm', goal=image, model=model, session=session, trace=trace)
                     if failures == 5:
                         self.assertFalse(any((await align()).values()))
                     else:
@@ -95,6 +96,10 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sum(m['method']=='thread/start' for m in sent),1)
             self.assertEqual(sum(m['method']=='turn/start' for m in sent),2)
             self.assertEqual(sent[-1]['params']['input'],followup['messages'][1]['content'])
+            for model in bridge.MODELS:
+                if model != bridge.MODEL:
+                    with self.assertRaisesRegex(ValueError, 'Session model changed'):
+                        await conversation.run(dict(followup, model=model))
             followup['service_tier'] = 'default'
             with self.assertRaisesRegex(ValueError, 'Fast mode changed'):
                 await bridge.infer(followup, conversation)
@@ -176,8 +181,8 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(bridge.load_token(), ('unavailable', ''))
 
     async def test_rpc_completion_failure_timeout_and_cancellation_kill_process(self):
-        for mode in ('completed', 'standard', 'slow', 'failed', 'tool', 'timeout', 'cancelled'):
-            with self.subTest(mode=mode):
+        for model, mode in product(bridge.MODELS, ('completed', 'standard', 'slow', 'failed', 'tool', 'timeout', 'cancelled')):
+            with self.subTest(model=model, mode=mode):
                 queue = asyncio.Queue()
                 sent = []
                 process = Mock(returncode=None)
@@ -209,19 +214,21 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                      patch.object(bridge.asyncio, 'create_subprocess_exec', AsyncMock(return_value=process)), \
                      patch.object(bridge, 'TIMEOUT_S', bridge.TIMEOUT_S/1000 if mode=='slow' else .03):
                     if mode in ('completed','standard','slow'):
-                        value = body()
+                        value = body(model)
                         tier = 'default' if mode == 'standard' else 'fast'
                         value['service_tier'] = tier
                         result = await bridge.infer(value)
                         command.assert_called_once_with(tier)
                         self.assertEqual(json.loads(result['choices'][0]['message']['content']), dict(ok=True))
+                        self.assertEqual(sent[3]['params']['model'], model.removeprefix('codex-local/'))
+                        self.assertEqual(sent[4]['params']['effort'], 'low')
                         self.assertTrue(sent[3]['params']['ephemeral'])
                         self.assertEqual(sent[3]['params']['sandbox'], 'read-only')
                         self.assertEqual(sent[3]['params']['serviceTier'], tier)
                         self.assertEqual(sent[4]['params']['serviceTier'], tier)
-                        self.assertEqual(sent[4]['params']['outputSchema'], body()['response_format']['json_schema']['schema'])
+                        self.assertEqual(sent[4]['params']['outputSchema'], body(model)['response_format']['json_schema']['schema'])
                     elif mode == 'cancelled':
-                        task = asyncio.create_task(bridge.infer(body()))
+                        task = asyncio.create_task(bridge.infer(body(model)))
                         while len(sent) < 5:
                             await asyncio.sleep(0)
                         task.cancel()
@@ -229,7 +236,7 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                             await task
                     else:
                         with self.assertRaises(TimeoutError if mode == 'timeout' else RuntimeError):
-                            await bridge.infer(body())
+                            await bridge.infer(body(model))
                 process.kill.assert_called_once()
                 process.wait.assert_awaited_once()
 
@@ -251,8 +258,8 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
         async with TestClient(TestServer(app)) as client:
             url = str(client.make_url('/v1/chat/completions'))
             with patch.dict(os.environ, MYAGV_CODEX_URL=url), patch('web_backend.resolve.API_URL', url):
-                for enabled in (True, False):
-                    await request_json(body(), 'token', 1, fast_mode=enabled)
+                for model, enabled in product(bridge.MODELS, (True, False)):
+                    await request_json(body(model), 'token', 1, fast_mode=enabled)
                     self.assertEqual(received[-1]['service_tier'], 'fast' if enabled else 'default')
                     value = dict(body(), model='deepseek/deepseek-v4.1-flash')
                     await request_json(value, 'token', 1, fast_mode=enabled)
@@ -300,32 +307,37 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
              patch('web_backend.server.load_token', return_value=('configured', 'private-token')):
             async with TestClient(TestServer(create_app(directory, Path(directory) / 'stations.json'))) as client:
                 settings = await (await client.get('/api/settings')).json()
-                values = {**settings['values'], 'llm_model': bridge.MODEL, 'reasoning_effort': 'low'}
-                response = await client.put('/api/settings', json=dict(expected_revision=settings['revision'], values=values))
-                self.assertEqual(response.status, 200)
-                state = await (await client.get('/api/state')).json()
-                self.assertEqual(state['llm']['status'], 'configured')
-                self.assertEqual(state['llm']['model'], bridge.MODEL)
-                self.assertNotIn('private-token', json.dumps(state))
-                values['reasoning_effort'] = 'off'
-                self.assertEqual((await client.put('/api/settings', json=dict(expected_revision=1, values=values))).status, 400)
+                self.assertTrue(set(bridge.MODELS) <= {m['id'] for m in settings['llm_models']})
+                for model in bridge.MODELS:
+                    values = {**settings['values'], 'llm_model': model, 'reasoning_effort': 'low', 'fast_mode': True}
+                    response = await client.put('/api/settings', json=dict(expected_revision=settings['revision'], values=values))
+                    self.assertEqual(response.status, 200)
+                    settings = await response.json()
+                    state = await (await client.get('/api/state')).json()
+                    self.assertEqual(state['llm']['status'], 'configured')
+                    self.assertEqual(state['llm']['model'], model)
+                    self.assertTrue(state['llm']['fast_mode'])
+                    self.assertNotIn('private-token', json.dumps(state))
+                    values['reasoning_effort'] = 'off'
+                    self.assertEqual((await client.put('/api/settings', json=dict(expected_revision=settings['revision'], values=values))).status, 400)
 
     async def test_alignment_passes_selected_model_and_preserves_measurement_guard(self):
-        trace = {}
-        with patch('web_backend.resolve.request_json', AsyncMock(return_value=dict(goal=[350,780,650,1000], current=[400,600,700,1000]))) as request:
-            with self.assertRaisesRegex(ValueError,'persistent session'):
-                await locate_pickup({}, {}, 'private-token', None, [], model=bridge.MODEL)
-            request.assert_not_awaited()
-            moves = await locate_pickup(dict(arm='data:image/jpeg;base64,AQ=='), dict(name='item', appearance='plain'),
-                'private-token', 'data:image/jpeg;base64,AQ==', [], stage='arm', goal='data:image/jpeg;base64,AQ==',
-                model=bridge.MODEL, effort='medium', trace=trace,session=dict(id='boot:test:arm',sequence=1,start=True), fast_mode=False)
-        self.assertFalse(request.call_args.kwargs['fast_mode'])
-        self.assertEqual(request.call_args.args[0]['model'], bridge.MODEL)
-        self.assertEqual(request.call_args.args[0]['reasoning'], dict(effort='medium'))
-        self.assertEqual(trace['model'], bridge.MODEL)
-        self.assertFalse(trace['aligned_perfectly'])
-        self.assertGreater(moves['x_mm'], 0)
-        self.assertLess(moves['y_mm'], 0)
+        for model in bridge.MODELS:
+            trace = {}
+            with patch('web_backend.resolve.request_json', AsyncMock(return_value=dict(goal=[350,780,650,1000], current=[400,600,700,1000]))) as request:
+                with self.assertRaisesRegex(ValueError,'persistent session'):
+                    await locate_pickup({}, {}, 'private-token', None, [], model=model)
+                request.assert_not_awaited()
+                moves = await locate_pickup(dict(arm='data:image/jpeg;base64,AQ=='), dict(name='item', appearance='plain'),
+                    'private-token', 'data:image/jpeg;base64,AQ==', [], stage='arm', goal='data:image/jpeg;base64,AQ==',
+                    model=model, effort='medium', trace=trace,session=dict(id='boot:test:arm',sequence=1,start=True), fast_mode=False)
+            self.assertFalse(request.call_args.kwargs['fast_mode'])
+            self.assertEqual(request.call_args.args[0]['model'], model)
+            self.assertEqual(request.call_args.args[0]['reasoning'], dict(effort='medium'))
+            self.assertEqual(trace['model'], model)
+            self.assertFalse(trace['aligned_perfectly'])
+            self.assertGreater(moves['x_mm'], 0)
+            self.assertLess(moves['y_mm'], 0)
 
 
 if __name__ == '__main__':

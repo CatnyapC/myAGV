@@ -9,15 +9,15 @@ from urllib.parse import urlsplit
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, web
 from .photos import digest_station, validate_png
-from .codex_bridge import MODEL as CODEX_MODEL, EFFORTS as CODEX_EFFORTS, TIMEOUT_S as CODEX_TIMEOUT_S
+from .codex_bridge import MODELS as CODEX_MODELS, EFFORTS as CODEX_EFFORTS, TIMEOUT_S as CODEX_TIMEOUT_S
 
 MODEL = 'deepseek/deepseek-v4.1-flash'
 MODELS = {MODEL: 'DeepSeek V4.1 Flash', 'deepseek/deepseek-v4-pro-0813': 'DeepSeek V4 Pro 0813',
-          CODEX_MODEL: 'GPT-6.1 Sol · Local Codex'}
+          **CODEX_MODELS}
 # Verified against OpenRouter's public model catalog on 2026-10-08.
 # Shared completion budget includes thinking; leave room for the final JSON.
 EFFORT_BUDGETS = {'off': (384, 1), 'low': (2048, 2), 'high': (4096, 4), 'max': (8192, 8), 'medium': (2048, 2)}
-MODEL_OPTIONS = [dict(id=model, name=name, efforts=list(CODEX_EFFORTS) if model == CODEX_MODEL else ['off', 'low', 'high', 'max'])
+MODEL_OPTIONS = [dict(id=model, name=name, efforts=list(CODEX_EFFORTS) if model in CODEX_MODELS else ['off', 'low', 'high', 'max'])
                  for model, name in MODELS.items()]
 API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 TIMEOUT_S = 15
@@ -182,7 +182,7 @@ async def locate_pickup(images, item, key, reference, history, prompt=PICKUP_PRO
             if trace is not None:
                 trace['retry_count'] = retry + 1
                 trace.setdefault('request_errors', []).append(exc.text)
-            if model == CODEX_MODEL and session is not None:
+            if model in CODEX_MODELS and session is not None:
                 await close_codex_session(session['id'], key)
                 # A lost/conflicting session must receive identity, GOAL and metric context again.
                 session = dict(session, start=True)
@@ -194,7 +194,7 @@ async def _locate_pickup(images, item, key, reference, history, prompt=PICKUP_PR
     config = calibration_config(limits)
     if stage not in ('base', 'arm'):
         raise ValueError('Invalid alignment stage')
-    if model == CODEX_MODEL and (not isinstance(session, dict) or set(session) != {'id', 'sequence', 'start'}):
+    if model in CODEX_MODELS and (not isinstance(session, dict) or set(session) != {'id', 'sequence', 'start'}):
         raise ValueError('Local Codex ALIGN requires a persistent session')
     metric_stage = stage == 'arm' and metric is not None
     continuation = session is not None and not session['start']
@@ -277,7 +277,7 @@ Earlier history images are not CURRENT and must not supply its coordinates."""
     body = dict(model=model, messages=[dict(role='system', content=prompt + '\n\n' + instruction),
         dict(role='user', content=content)],
         response_format=dict(type='json_schema', json_schema=dict(name='pickup_alignment', strict=True, schema=schema)),
-        provider=dict(sort='latency', require_parameters=True), reasoning=dict(effort=effort) if model == CODEX_MODEL else dict(enabled=False),
+        provider=dict(sort='latency', require_parameters=True), reasoning=dict(effort=effort) if model in CODEX_MODELS else dict(enabled=False),
         temperature=0, max_tokens=64, stream=False)
     if session is not None:
         body['session'] = session
@@ -325,7 +325,7 @@ Earlier history images are not CURRENT and must not supply its coordinates."""
 
 
 async def request_json(body, key, timeout, trace=None, fast_mode=True):
-    local = body['model'] == CODEX_MODEL
+    local = body['model'] in CODEX_MODELS
     provider = 'Local Codex' if local else 'OpenRouter'
     url = os.environ.get('MYAGV_CODEX_URL', 'http://127.0.0.1:9008/v1/chat/completions') if local else API_URL
     if local:
