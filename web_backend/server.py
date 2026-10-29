@@ -347,7 +347,18 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
         await editor.emit('photos')
         return web.json_response({**await asyncio.to_thread(photos.snapshot, editor.grid['map_id']), 'added_id': added['id']})
 
-    async def ingest_capture(capture_id):
+    def manual_observation(metadata, points):
+        if metadata['map_id'] != editor.grid['map_id'] or metadata['frame'] != editor.grid['frame']:
+            raise web.HTTPConflict(text='Capture belongs to another map')
+        if points != editor.observation_points.load(metadata['map_id']):
+            raise web.HTTPConflict(text='Observation points changed; retry capture')
+        pose = metadata['base_pose']
+        point = min(points['points'], key=lambda p: (p['x_m'] - pose['x_m']) ** 2 + (p['y_m'] - pose['y_m']) ** 2)
+        return {**metadata, 'measured_base_pose': pose, 'observation_point_id': point['id'],
+                'base_pose': {k: point[k] for k in ('x_m', 'y_m', 'yaw_rad')},
+                'location_analysis': dict(status='queued', catalog_signature=catalog_signature(photos.value['items']), estimates=[])}
+
+    async def ingest_capture(capture_id, points=None):
         capture_id = str(uuid.UUID(capture_id))
         existing = next((p for p in photos.value['photos'] if p.get('capture_id') == capture_id), None)
         path = editor.hardware.directory / 'captures' / capture_id
@@ -357,6 +368,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             metadata = json.loads(path.with_suffix('.json').read_text())
             if metadata.get('capture_id') != capture_id or metadata.get('source') != 'ros':
                 raise ValueError('Invalid hardware acquisition')
+            if points is not None:
+                metadata = manual_observation(metadata, points)
             added = await asyncio.to_thread(photos.add, path.with_suffix('.png').read_bytes(), metadata, photos.value['revision'])
         if path.with_suffix('.jpg').is_file():
             await asyncio.to_thread(atomic_bytes, photos.image_path(added['id']).with_suffix('.jpg'), path.with_suffix('.jpg').read_bytes())
@@ -372,17 +385,30 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             if data['map_id'] != editor.grid['map_id'] or data['camera_id'] not in ('front', 'arm'):
                 raise ValueError('Invalid map or camera for Demo capture')
             photos.check(data['expected_revision'])
+            points = None
+            if data.get('nearest_observation_point') is True:
+                if data['camera_id'] != 'front' or editor.state()['phase'] != 'idle':
+                    raise web.HTTPConflict(text='Stop the robot before a manual item update')
+                points = editor.observation_points.load(editor.grid['map_id'])
+                if not points['points']:
+                    raise ValueError('Add an observation point before a manual item update')
+                if not photos.value['items']:
+                    raise ValueError('Add named reference items before a manual item update')
+                if not model_key():
+                    raise web.HTTPServiceUnavailable(text='Selected LLM not configured or unavailable')
             if editor.hardware:
                 command = {**data, 'id': data.get('id', str(uuid.uuid4())), 'type': 'capture',
                            'expected_revision': data['zone_revision']}
                 result = await editor.hardware.command(command, wait=True)
-                added = await ingest_capture(result['capture_id'])
+                added = await ingest_capture(result['capture_id'], points)
                 await editor.emit('photos')
                 return web.json_response({**photos.snapshot(editor.grid['map_id']), 'added_id': added['id']})
             nav = editor.sim.telemetry()  # Freeze acquisition metadata before any await.
             metadata = dict(kind='observation', source='simulation', captured_at_s=nav['stamp_s'],
                             base_pose=nav['pose'], camera_id=data['camera_id'], map_id=nav['map_id'],
                             map_revision=editor.grid['revision'], frame=nav['frame'])
+            if points is not None:
+                metadata = manual_observation(metadata, points)
             image = await asyncio.to_thread(demo_frame, data['camera_id'])
             added = await asyncio.to_thread(photos.add, image, metadata, data['expected_revision'])
         await editor.emit('photos')

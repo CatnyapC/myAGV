@@ -470,14 +470,19 @@ export function App() {
     setSelectedItemId(index.photos.find(p => p.id === id)?.item_id ?? '');
     if (addedId) setPhotoMode(index.photos.find(p => p.id === addedId)?.kind === 'reference' ? 'uploaded' : 'edit');
   }
-  async function capture(camera_id: 'front' | 'arm') {
+  async function capture(camera_id: 'front' | 'arm', nearestObservationPoint = false) {
     if (!canEdit || !packet || !photos || busy) return;
     setBusy(true); setError('');
     try {
       await controlReady();
       const result = await api<PhotoIndex & { added_id: string }>('/api/photos/capture', { method: 'POST',
-        body: JSON.stringify({ id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, camera_id, map_id: packet.info.map_id, expected_revision: photos.revision, zone_revision: zones?.revision }) });
-      photoChanged(result, result.added_id);
+        body: JSON.stringify({ id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, camera_id, map_id: packet.info.map_id, expected_revision: photos.revision, zone_revision: zones?.revision,
+          nearest_observation_point: nearestObservationPoint }) });
+      if (nearestObservationPoint) {
+        setPhotos(result);
+        setSelectedPhotoId(result.added_id);
+        log('Manual item update captured · using nearest observation point · estimating positions', 'info', 'Map');
+      } else photoChanged(result, result.added_id);
     } catch (failure) { reportError((failure as Error).message); await reload().catch(() => {}); }
     finally { setBusy(false); }
   }
@@ -613,6 +618,9 @@ export function App() {
             item_id: selectedItemId, index_revision: photos?.revision,
           })}>Refine approach</Button>
         </div>}
+        <div className="action-line"><Button disabled={!canEdit || busy || pointsSaving || !visiblePoints.length || !photos?.items.length || state?.llm?.status !== 'configured' || (!state?.demo && (!state?.hardware?.localized || !navigation?.pose || !state?.cameras?.front))}
+          title="Capture front camera here without moving. Use nearest saved observation point's position and heading to estimate item locations."
+          onClick={() => void capture('front', true)}><Camera size={15} /> Manual item update</Button></div>
         {state?.demo === false && <MapUpdateControls toolbar={mapToolbar} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand}
           points={visiblePoints} revision={observationPoints?.revision ?? 0} saving={pointsSaving}
           selectedId={selectedPointId} onSelect={setSelectedPointId} onSave={saveObservationPoints} onClearLocations={clearItemLocations} />}

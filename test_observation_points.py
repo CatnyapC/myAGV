@@ -1,4 +1,5 @@
 """Saved camera poses survive restart, stay map-scoped and update individually."""
+import asyncio
 import math
 from pathlib import Path
 import tempfile
@@ -12,8 +13,9 @@ from aiohttp.test_utils import TestClient, TestServer
 from test_robot_control import fake_control
 from web_backend.map_data import demo_map
 from web_backend.observation_points import ObservationPoints
+from web_backend.photos import PhotoIndex, demo_frame
 from web_backend.server import EDITOR, create_app
-from web_backend.storage import atomic_json
+from web_backend.storage import atomic_bytes, atomic_json
 
 
 def point(x=1, y=2, yaw=.5):
@@ -70,6 +72,76 @@ class ObservationPointsTest(unittest.TestCase):
 
 
 class ObservationPointsAPITest(unittest.IsolatedAsyncioTestCase):
+    async def test_manual_update_captures_once_uses_nearest_point_and_estimates_items(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bridge, ui = root / 'ros', root / 'ui'
+            grid = demo_map()
+            atomic_json(bridge / 'map.json', grid)
+            store = PhotoIndex(ui, root / 'stations.json')
+            image = demo_frame('front')
+            reference = store.add(image, dict(kind='reference', source='phone'), 0)
+            store.edit(reference['id'], dict(expected_revision=1, item_id='new', name='Cup', confirmed=True), grid['map_id'])
+            item_id = store.value['items'][0]['id']
+            measured = dict(x_m=3.1, y_m=4.2, yaw_rad=-1)
+            points = [point(1, 2), point(3, 4, .7)]
+            capture_id = str(uuid.uuid4())
+
+            async def capture(command, wait):
+                self.assertTrue(wait)
+                self.assertEqual(command['type'], 'capture')
+                self.assertEqual(command['camera_id'], 'front')
+                self.assertEqual(command['expected_revision'], 0)
+                self.assertEqual(command['session_id'], 'tab')
+                self.assertEqual(command['stop_epoch'], 4)
+                path = bridge / 'captures' / capture_id
+                atomic_bytes(path.with_suffix('.png'), image)
+                atomic_json(path.with_suffix('.json'), dict(capture_id=capture_id, source='ros', kind='observation',
+                    camera_id='front', captured_at_s=time.time(), map_id=grid['map_id'], map_revision=0,
+                    frame=grid['frame'], base_pose=measured))
+                return dict(capture_id=capture_id)
+
+            infer = AsyncMock(return_value=[dict(item_id=item_id, x_m=3.5, y_m=4, confidence=.9, uncertainty_m=.4)])
+            with patch('web_backend.server.load_key', return_value=('configured', 'fake')), \
+                 patch('web_backend.server.estimate_items', infer):
+                app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
+                hardware = app[EDITOR].hardware
+                hardware.refresh = Mock()
+                hardware.control = dict(stamp_s=time.time(), phase='idle')
+                hardware.command = AsyncMock(side_effect=capture)
+                data = dict(id=str(uuid.uuid4()), session_id='tab', stop_epoch=4, map_id=grid['map_id'],
+                    expected_revision=2, zone_revision=0, camera_id='front', nearest_observation_point=True)
+                async with TestClient(TestServer(app)) as client:
+                    response = await client.post('/api/photos/capture', json=data)
+                    self.assertEqual(response.status, 400, await response.text())
+                    hardware.command.assert_not_called()
+                    app[EDITOR].observation_points.save(grid['map_id'], points, 1)
+                    hardware.control['phase'] = 'navigating'
+                    self.assertEqual((await client.post('/api/photos/capture', json=data)).status, 409)
+                    hardware.command.assert_not_called()
+                    hardware.control['phase'] = 'idle'
+                    self.assertEqual((await client.post('/api/photos/capture', json={**data, 'map_id': 'old'})).status, 400)
+                    self.assertEqual((await client.post('/api/photos/capture', json={**data, 'expected_revision': 0})).status, 400)
+                    hardware.command.assert_not_called()
+                    response = await client.post('/api/photos/capture', json=data)
+                    self.assertEqual(response.status, 200, await response.text())
+                    snapshot = await response.json()
+                    observation = next(p for p in snapshot['photos'] if p['id'] == snapshot['added_id'])
+                    self.assertEqual(observation['base_pose'], {k: points[1][k] for k in measured})
+                    self.assertEqual(observation['measured_base_pose'], measured)
+                    self.assertEqual(observation['observation_point_id'], points[1]['id'])
+                    hardware.command.assert_awaited_once()
+                    for _ in range(50):
+                        snapshot = await (await client.get('/api/items')).json()
+                        if snapshot['locations']:
+                            break
+                        await asyncio.sleep(.05)
+                    self.assertEqual(snapshot['locations'][0]['item_id'], item_id)
+                    infer.assert_awaited_once()
+                    self.assertEqual(infer.call_args.args[3]['base_pose'], observation['base_pose'])
+            saved = PhotoIndex(ui, root / 'stations.json').snapshot(grid['map_id'])
+            self.assertEqual(saved['locations'][0]['item_id'], item_id)
+
     async def test_save_restart_conflict_and_map_switch(self):
         with tempfile.TemporaryDirectory() as directory:
             points = [point(), point(3, 4)]
