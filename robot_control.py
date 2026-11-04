@@ -68,7 +68,7 @@ class Control:
         self.queue = queue.Queue(maxsize=1)
         self.results, self.requests = OrderedDict(), OrderedDict()
         self.config_path = self.directory.parent / 'robot_config.json'
-        self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else dict(transport_angles=None, clearance_m=.23)
+        self.config = json.loads(self.config_path.read_text()) if self.config_path.exists() else dict(transport_angles=None, clearance_m=.21)
         number(self.config['clearance_m'], .15, 1, 'Measured clearance radius')
         number(self.config.get('small_obstacle_m', .15), 0, .5, 'Small obstacle size')
         if self.config['transport_angles'] is not None:
@@ -394,7 +394,7 @@ class Control:
         print(json.dumps(dict(event='vision_sensors_resumed', time_s=time.time(), task_id=self.task_id, phase=self.phase, paused_s=paused)), flush=True)
         return paused
 
-    def travel_guard(self, pose, local_alignment=False):
+    def travel_guard(self, pose, local_alignment=False, *, assume_clear=False):
         if getattr(self.robot, 'map_save_error', ''):
             raise RuntimeError('Map storage failed: ' + self.robot.map_save_error)
         if not lease_valid(self.deadline, time.monotonic()) or self.stop_pending:
@@ -421,7 +421,10 @@ class Control:
         if not self.robot.clearance_ready(self.config['clearance_m']):
             raise RuntimeError('Planner footprint does not match measured clearance')
         if self.phase != 'approaching_item':
-            self.robot.validate_goal(pose, self.config['clearance_m'])
+            if assume_clear or self.phase == 'calibrating':
+                self.robot.validate_goal(pose, self.config['clearance_m'], assume_clear=True)
+            else:
+                self.robot.validate_goal(pose, self.config['clearance_m'])
         return paused
 
     def fold(self):
@@ -589,11 +592,11 @@ class Control:
                     self.finish(packet, dict(status='cancelled', error='Cancelled before execution'))
 
     def go(self, pose, *, require_arrival=True):
-        self.travel_guard(pose)
         self.phase, self.status, self.goal = 'navigating', 'Navigating', pose
         self.robot.path = []
-        self.base_enabled = True
         try:
+            self.travel_guard(pose)
+            self.base_enabled = True
             self.robot.nav.go_to(pose, position_tolerance=.08, yaw_tolerance=15, require_arrival=require_arrival)
         finally:
             self.base_enabled = False
@@ -1086,7 +1089,7 @@ class Control:
             request_path.unlink(missing_ok=True)
             response_path.unlink(missing_ok=True)
 
-    def move_approach(self, goal, source):
+    def move_approach(self, goal, source, *, require_arrival=False):
         forward = math.hypot(goal['x_m']-source['x_m'], goal['y_m']-source['y_m'])
         if forward > .25 and math.isfinite(forward):
             goal = dict(goal, x_m=source['x_m'] + .25*(goal['x_m']-source['x_m'])/forward,
@@ -1121,6 +1124,8 @@ class Control:
                     print(json.dumps(dict(event='approach_motion_completed', time_s=time.time(), actual_odom=measured, remaining_m=remaining)), flush=True)
                     return
                 if time.monotonic() >= deadline:
+                    if require_arrival:
+                        raise TimeoutError('Return retreat did not reach its measured target')
                     self.status = 'Measured approach movement timed out; taking a fresh approach photo'
                     print(json.dumps(dict(event='approach_motion_timed_out', time_s=time.time(), actual_odom=measured, remaining_m=remaining)), flush=True)
                     return
@@ -1139,6 +1144,15 @@ class Control:
             self.base_enabled = False
             self.robot.zero()
             self.robot.nav.wait_stopped()
+
+    def retreat_from_item(self):
+        pose = self.robot.nav.get_pose()
+        yaw = math.radians(pose['yaw_deg'])
+        source = dict(pose, yaw_rad=yaw)
+        goal = dict(x_m=pose['x_m'] - .10*math.cos(yaw),
+                    y_m=pose['y_m'] - .10*math.sin(yaw), yaw_rad=yaw)
+        self.phase, self.status = 'approaching_item', 'Backing away 10 cm before return'
+        self.move_approach(goal, source, require_arrival=True)
 
     def turn_fetch(self, degrees, config=None, local_alignment=False):
         config = calibration_config(config)
@@ -1374,10 +1388,10 @@ class Control:
         config = location_config(packet['location_config'])
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
 
-        def current():
+        def current(*, assume_clear=False):
             if self.robot.grid['map_id'] != map_id or self.robot.zones['revision'] != revision:
                 raise ValueError('Map or no-go zones changed during fetch')
-            self.travel_guard(self.robot.nav.get_pose())
+            self.travel_guard(self.robot.nav.get_pose(), assume_clear=assume_clear)
 
         current()
         self.robot.nav.wait_stopped()
@@ -1399,22 +1413,23 @@ class Control:
             self.fold()
             self.go(goal, require_arrival=False)
             approached = self.approach_item(packet)
-            current()
+            current(assume_clear=True)
             if approached['outcome'] != 'arrived':
                 raise RuntimeError('Item approach stopped inside conservative stand-off distance; fetch blocked')
             self.grip(100)
             self.move_arm(target)
             self.calibrate_fetch(dict(packet, preview=False), calibration)
-            current()
+            current(assume_clear=True)
             self.test_grasp(dict(grasp, action='grasp'))
             holding_angles = pickup_angles(wait_arm(self.arm, timeout=5))
-            current()
+            current(assume_clear=True)
             self.fold()
+            self.retreat_from_item()
             self.go(start_base, require_arrival=False)
-            current()
+            current(assume_clear=True)
             self.move_arm(holding_angles)
             self.test_grasp(dict(grasp, action='place'))
-            current()
+            current(assume_clear=True)
             self.fold()
         finally:
             self.base_enabled = False

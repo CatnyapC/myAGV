@@ -356,10 +356,16 @@ The base stops for a fresh photo after each adjustment. It executes at slow spee
 against measured odometry and stops when it reaches or passes the target, including small
 targets that move_base's arrival tolerance would otherwise skip. STOP, leases,
 fresh sensors, map bounds and swept no-go checks stay active during travel.
-Visual Approach ignores occupancy-map obstacles, unknown cells and ROS costmap
-collision costs, including at the starting pose. Camera observations guide each
-bounded adjustment; this phase has no automatic obstacle collision stop.
-Navigation to the observation point and back retains the recorded clearance checks.
+Visual Approach, base/arm ALIGN and pickup-stage checks assume sensed obstacles
+are clear, including at the current pose: the item itself may be in the LiDAR map.
+Map bounds, swept no-go zones, STOP, leases, sensor freshness and arm workspace
+checks remain enforced. These local phases have no sensed-obstacle collision stop.
+After grasping and folding the arm, Fetch retreats 10 cm along the current backward
+axis using the same bounded odometry-controlled approach executor. This retreat
+must finish and stop before return navigation; a timeout aborts the return.
+Navigation to the observation point and back retains normal obstacle checks.
+The default collision radius is 0.21 m; the configured hardware radius is applied
+to both ROS costmaps and application clearance checks.
 Only an explicit LLM turn produces angular velocity. Forward travel never adds
 endpoint steering or heading corrections; its current forward path is checked for no-go zones live.
 Necessary translations use at least 0.01 m/s, the driver's representable speed
@@ -492,10 +498,10 @@ keeps its arrival tolerance check.
 After **Go** reaches the observation point, select the item pin and use **Refine
 approach** in the map panel. The item must be visible in the front camera. This
 base-only task makes at most 16 stopped camera checks, with at most 15 adjustments:
-each moves forward by at most 0.20 m and turns by at most 15 degrees. Every step
-uses fresh localization, LiDAR, odometry and ROS costmaps, and checks the entire
-short segment against inflated obstacles, unknown space and no-go zones. It keeps
-the configured stand-off plus uncertainty and movement tolerance.
+each moves forward or backward by at most 0.25 m and turns by at most 15 degrees.
+Every step uses fresh localization, LiDAR and odometry, and checks the swept path
+against no-go zones and map bounds. Sensed occupancy is assumed clear during these
+local corrections, base/arm ALIGN and the measured 10 cm retreat before return.
 
 Refinement shares Fetch's compressed-camera acquisition, vision request/response
 channel, provider and **LLM ROUNDS** log. It sends the original item observation, all executed movement records,

@@ -11,6 +11,7 @@ from map_persistence import load_saved_map, map_digest, map_matches, save_map
 from obstacle_filter import filter_grid, filter_scan
 from robot_safety import fresh, footprint_clear, lease_valid, zones_visible
 from web_backend.map_data import local_to_world
+from web_backend.item_locations import validate_approach_path
 from web_backend.simulation import navigation_grid
 from web_backend.storage import atomic_json
 
@@ -277,9 +278,12 @@ class RobotROS:
         return any(math.isfinite(r) and scan[1].range_min <= r <= scan[1].range_max
                    for r in scan[1].ranges)
 
-    def validate_goal(self, pose, radius):
+    def validate_goal(self, pose, radius, *, assume_clear=False):
         if not self.zones_ready():
             raise RuntimeError('Waiting for both ROS costmaps to apply no-go zones')
+        if assume_clear:
+            validate_approach_path(self.grid, self.zones['zones'], pose, pose, radius)
+            return
         # ROS costmaps already inflate obstacles; move_base checks those costs.
         if not footprint_clear(self.derived, pose, radius):
             raise ValueError('Goal clearance intersects an obstacle, no-go zone or map boundary')

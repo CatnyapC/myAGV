@@ -62,6 +62,15 @@ class MapFetchTest(unittest.TestCase):
         c.arm.set_angles.side_effect, c.arm.set_coords.side_effect = joints, coordinates
         c.grip = Mock(side_effect=lambda value: events.append(('grip', value)))
         c.go = Mock(side_effect=go)
+        def retreat(goal, source, *, require_arrival):
+            self.assertTrue(require_arrival)
+            self.assertEqual(c.phase, 'approaching_item')
+            self.assertAlmostEqual(goal['x_m'], source['x_m'] - .1*math.cos(source['yaw_rad']))
+            self.assertAlmostEqual(goal['y_m'], source['y_m'] - .1*math.sin(source['yaw_rad']))
+            self.assertEqual(goal['yaw_rad'], source['yaw_rad'])
+            events.append(('retreat', dict(goal)))
+            pose.update(x_m=goal['x_m'], y_m=goal['y_m'])
+        c.move_approach = Mock(side_effect=retreat)
         def approach(packet):
             self.assertEqual(pose, dict(x_m=3.2, y_m=2.7, yaw_deg=math.degrees(.4)))
             events.append(('approach',))
@@ -74,7 +83,7 @@ class MapFetchTest(unittest.TestCase):
             c.execute(dict(fetch_packet(), preview=True, pickup_angles=[90, 20, 30, -15]))
             self.assertNotIn('grasp_test_hold', json.loads(c.config_path.read_text()))
         self.assertEqual([e[0] for e in events], ['joints', 'go', 'approach', 'grip', 'joints', 'align',
-            'grip', 'coords', 'grip', 'coords', 'joints', 'go', 'joints', 'coords', 'grip', 'coords', 'joints'])
+            'grip', 'coords', 'grip', 'coords', 'joints', 'retreat', 'go', 'joints', 'coords', 'grip', 'coords', 'joints'])
         self.assertEqual([e[1] for e in events if e[0] == 'joints'],
             [c.config['transport_angles'], [90, 20, 30, -15], [0, 10, 20, -15], [90, 21, 30, -15], c.config['transport_angles']])
         self.assertEqual([e[1] for e in events if e[0] == 'coords'],
@@ -87,7 +96,7 @@ class MapFetchTest(unittest.TestCase):
         c.robot.nav.go_to_pickup.assert_not_called()
 
     def test_fetch_preflight_and_stage_failures_stop_subsequent_actions(self):
-        for failure in ('camera', 'joints', 'height', 'confidence', 'approach', 'stand_off', 'align', 'return', 'stop', 'map'):
+        for failure in ('camera', 'joints', 'height', 'confidence', 'approach', 'stand_off', 'align', 'retreat', 'return', 'stop', 'map'):
             with self.subTest(failure=failure):
                 c, packet = fake_control(), fetch_packet()
                 c.config['transport_angles'] = [0, 10, 20, 27]
@@ -103,20 +112,23 @@ class MapFetchTest(unittest.TestCase):
                 if failure == 'approach': c.approach_item.side_effect = RuntimeError('item lost')
                 if failure == 'stand_off': c.approach_item.return_value = dict(outcome='stand_off')
                 if failure == 'align': c.calibrate_fetch.side_effect = RuntimeError('alignment failed')
+                c.retreat_from_item = Mock()
+                if failure == 'retreat': c.retreat_from_item.side_effect = TimeoutError('retreat blocked')
                 if failure == 'return': c.go.side_effect = [None, RuntimeError('return blocked')]
                 if failure == 'stop': c.approach_item.side_effect = lambda packet: setattr(c, 'stop_pending', 'STOP')
                 if failure == 'map': c.approach_item.side_effect = lambda packet: c.robot.zones.update(revision=3)
-                with patch('robot_control.wait_arm', return_value=[90, 20, 30, 27]), self.assertRaises((ValueError, RuntimeError, Stopped)):
+                with patch('robot_control.wait_arm', return_value=[90, 20, 30, 27]), self.assertRaises((ValueError, RuntimeError, TimeoutError, Stopped)):
                     c.fetch(packet)
                 if failure in ('camera', 'joints', 'height', 'confidence'):
                     c.fold.assert_not_called()
                     c.go.assert_not_called()
-                if failure != 'return': c.test_grasp.assert_not_called()
+                if failure not in ('retreat', 'return'): c.test_grasp.assert_not_called()
                 else: self.assertEqual([call.args[0]['action'] for call in c.test_grasp.call_args_list], ['grasp'])
                 if failure == 'stand_off':
                     c.calibrate_fetch.assert_not_called()
                     c.grip.assert_not_called()
                     c.move_arm.assert_not_called()
+                if failure == 'retreat': self.assertEqual(c.go.call_count, 1)
                 self.assertFalse(c.base_enabled)
 
 

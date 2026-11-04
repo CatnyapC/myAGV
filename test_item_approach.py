@@ -34,16 +34,32 @@ def result(**values):
 
 
 class ApproachTest(unittest.IsolatedAsyncioTestCase):
-    def test_only_approach_skips_occupied_goal_guard(self):
+    def test_local_fetch_stages_assume_clear_but_navigation_checks_occupancy(self):
         c = fake_control()
-        c.robot.validate_goal.side_effect = ValueError('Goal clearance intersects an obstacle')
+        def validate(pose, radius, *, assume_clear=False):
+            if not assume_clear:
+                raise ValueError('Goal clearance intersects an obstacle')
+        c.robot.validate_goal.side_effect = validate
         c.phase = 'approaching_item'
         c.travel_guard(POSE)
         c.robot.validate_goal.assert_not_called()
-        for phase in ('navigating', 'calibrating'):
+        c.phase = 'calibrating'
+        c.travel_guard(POSE)
+        c.robot.validate_goal.assert_called_with(POSE, .25, assume_clear=True)
+        c.phase = 'grasp_testing'
+        c.travel_guard(POSE, assume_clear=True)
+        c.phase = 'navigating'
+        with self.assertRaisesRegex(ValueError, 'Goal clearance'):
+            c.travel_guard(POSE)
+        for phase in ('approaching_item', 'calibrating'):
             c.phase = phase
             with self.subTest(phase=phase), self.assertRaisesRegex(ValueError, 'Goal clearance'):
-                c.travel_guard(POSE)
+                c.go(POSE)
+            c.robot.nav.go_to.assert_not_called()
+            self.assertFalse(c.base_enabled)
+        c.stop_pending = 'STOP'
+        with self.assertRaises(Stopped):
+            c.travel_guard(POSE, assume_clear=True)
 
     def test_stale_approach_sensors_pause_without_cancelling_task(self):
         c = fake_control()
@@ -128,7 +144,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                           [dict(corners=[[1.9, 2.9], [2.1, 3.1]])], ITEM, .25, DEFAULT_CONFIG)
 
     def test_measured_approach_executes_small_targets_and_stops_on_guard_failures(self):
-        for action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout'):
+        for action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'stop', 'sensors', 'zones', 'obstacle', 'timeout', 'return_timeout'):
             with self.subTest(action=action):
                 c = fake_control()
                 c.robot.grid, c.robot.zones = open_map(), dict(revision=2, zones=[])
@@ -153,7 +169,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                         measured['x_m'] += .01
                     if action == 'heading_drift' and len(commands) == 1:
                         measured['yaw_deg'] += 3
-                    if action != 'timeout':
+                    if action not in ('timeout', 'return_timeout'):
                         measured['yaw_deg'] += math.degrees(velocity[2]*seconds)
                         measured['x_m'] += velocity[0]*seconds*math.cos(math.radians(measured['yaw_deg']))
                         measured['y_m'] += velocity[0]*seconds*math.sin(math.radians(measured['yaw_deg']))
@@ -170,6 +186,9 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                 with patch('robot_control.time.monotonic', side_effect=lambda: now[0]), patch('robot_control.time.sleep', side_effect=tick):
                     if action in ('forward', 'reverse', 'reverse_clamp', 'reverse_obstacle', 'turn', 'clamp', 'drift', 'drift_obstacle', 'heading_drift', 'sensor_pause', 'overshoot', 'obstacle', 'timeout'):
                         c.move_approach(goal, POSE)
+                    elif action == 'return_timeout':
+                        with self.assertRaisesRegex(TimeoutError, 'Return retreat'):
+                            c.move_approach(goal, POSE, require_arrival=True)
                     else:
                         with self.assertRaises((Stopped, RuntimeError, ValueError)):
                             c.move_approach(goal, POSE)

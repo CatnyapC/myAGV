@@ -512,6 +512,28 @@ class ControlTest(unittest.TestCase):
         self.assertEqual(patch_driver(result),result)
         with self.assertRaises(ValueError): patch_driver('unknown driver')
 
+    def test_assume_clear_ignores_item_occupancy_but_keeps_no_go_and_bounds(self):
+        from test_item_locations import open_map
+        robot = RobotROS.__new__(RobotROS)
+        robot.grid = open_map()
+        robot.grid['cells'] = [100] * len(robot.grid['cells'])
+        robot.derived = robot.grid
+        robot.zones = dict(zones=[])
+        robot.zones_ready = lambda: True
+        pose = dict(x_m=2, y_m=3, yaw_rad=0)
+        with self.assertRaisesRegex(ValueError, 'Goal clearance'):
+            robot.validate_goal(pose, .21)
+        robot.validate_goal(pose, .21, assume_clear=True)
+        robot.zones['zones'] = [dict(corners=[[1.8, 2.8], [2.2, 2.8], [2.2, 3.2], [1.8, 3.2]])]
+        with self.assertRaises(ValueError):
+            robot.validate_goal(pose, .21, assume_clear=True)
+        robot.zones['zones'] = []
+        with self.assertRaises(ValueError):
+            robot.validate_goal(dict(pose, x_m=-1), .21, assume_clear=True)
+        robot.zones_ready = lambda: False
+        with self.assertRaises(RuntimeError):
+            robot.validate_goal(pose, .21, assume_clear=True)
+
     def test_goal_clearance_does_not_apply_robot_radius_to_ros_inflation_twice(self):
         robot = RobotROS.__new__(RobotROS)
         robot.zones_ready = lambda: True
