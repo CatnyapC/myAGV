@@ -35,11 +35,13 @@ pm2 restart myagv-api --update-env
 
 The driver patch uses a wall-clock loop and makes commands expire after 0.5 seconds.
 The subscriber keeps only the latest command. At the serial writer, all callers
-(navigation, Approach and keyboard teleop) share a motion gate: changes in active
-axes or direction first send zero repeatedly and require 0.5 seconds of continuous
-fresh stationary feedback before applying the latest request. Cancellation never
-queues a later restart. Stop confirmation times out after 5 seconds and latches off.
-This can add a stop interval to short manual inputs and navigation transitions.
+(navigation, Approach and keyboard teleop) share a motion gate. Continuous forward
+or backward travel passes speed and steering corrections directly, including turn
+sign changes and crossing zero. Changing translation axes/direction, entering or
+leaving pure rotation, and reversing pure rotation send zero first and require
+0.5 seconds of continuous fresh stationary feedback. An already confirmed idle
+stop is reused for startup without a second delay. Cancellation never queues a
+later restart. Stop confirmation times out after 5 seconds and latches off.
 
 One 150 ms deadline covers an entire feedback frame, including header search and
 partial reads. Invalid or timed-out feedback immediately commands zero and latches

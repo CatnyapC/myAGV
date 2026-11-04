@@ -34,11 +34,11 @@ void stopped(MyAGVMotionSafety &g, double start) {
     }
 }
 int main() {
-    for (V next : {reverse, turn, V{{0,.03,0}}, V{{.03,0,.03}}}) {
+    for (V next : {reverse, turn, V{{0,.03,0}}}) {
         MyAGVMotionSafety g;
         stopped(g,0);
-        // First start also requires a full stop interval after the transition.
-        assert(g.command(forward,.7)==zero);
+        // An already confirmed stop does not incur a second start delay.
+        assert(g.command(forward,.7)==forward);
         for (int i=0; i<6; ++i) { g.observe(zero,true,.7+i*.1); g.command(forward,.7+i*.1); }
         assert(g.command(forward,1.21)==forward);
         g.observe(forward,true,1.22);
@@ -67,7 +67,7 @@ int main() {
         if(scenario==0) bad.observe(zero,false,.7);
         if(scenario==1) bad.command(V{{0,0,std::numeric_limits<double>::quiet_NaN()}},.7);
         if(scenario==2) bad.observe(V{{0,0,std::numeric_limits<double>::infinity()}},true,.7);
-        if(scenario==3) {bad.command(turn,.7);bad.command(turn,6);}
+        if(scenario==3) {bad.command(turn,.7);bad.command(zero,.8);bad.observe(turn,true,.9);bad.command(turn,6);}
         assert(bad.fault);
         bad.observe(zero,true,7);
         assert(bad.command(forward,7)==zero);
@@ -158,6 +158,46 @@ int main() {
             g.observe(zero,true,4+i*.1);
         }
         assert(!g.fault);
+    }
+}
+''')
+
+    def test_forward_and_reverse_steering_are_continuous(self):
+        self.run_cpp(r'''
+#include "myagv_motion_safety.h"
+#include <cassert>
+int main() {
+    using V=MyAGVMotionSafety::Velocity;
+    const V zero{{0,0,0}};
+    for (double sign : {-1.,1.}) {
+        MyAGVMotionSafety g;
+        for(int i=0;i<8;++i){g.command(zero,i*.1);g.observe(zero,true,i*.1);}
+        double now=.8;
+        // Replay the forward steering changes that previously inserted repeated stops.
+        for (V request : {V{{sign*.02,0,-.1}}, V{{sign*.029,0,0}},
+                          V{{sign*.05,0,-.089}}, V{{sign*.02,0,.047}},
+                          V{{sign*.046,0,-.058}}, V{{sign*.05,0,.089}},
+                          V{{sign*.02,0,-.047}}, V{{sign*.01,0,0}}}) {
+            assert(g.command(request,now)==request);
+            assert(!g.braking && !g.fault);
+            g.observe(V{{sign*.08,0,.02}},true,now);
+            now+=.1;
+        }
+        // Entering a pure rotation still requires a measured stop.
+        assert(g.command(V{{0,0,.1}},now)==zero);
+        assert(g.braking);
+        g.observe(V{{sign*.08,0,.02}},true,now);
+        assert(g.command(V{{0,0,.1}},now+.1)==zero);
+        // STOP cancels the pending rotation; it must never be replayed.
+        for(int i=1;i<=8;++i) {
+            assert(g.command(zero,now+i*.1)==zero);
+            g.observe(zero,true,now+i*.1);
+        }
+        assert(g.command(V{{sign*.03,0,0}},now+.9)==V({{sign*.03,0,0}}));
+        assert(!g.braking && !g.fault);
+        // A true forward/back reversal remains gated.
+        assert(g.command(V{{-sign*.03,0,0}},now+1)==zero);
+        assert(g.braking);
     }
 }
 ''')
