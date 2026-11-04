@@ -13,7 +13,7 @@ import xml.etree.ElementTree as ET
 
 import fetch_demo
 from install_navigation_turn import patch as patch_navigation_turn
-from install_navigation_turn import patch_goal_stop
+from install_navigation_turn import patch_goal_stop, patch_global, patch_header
 import navigation
 from teleop_control import Controller, parse_args, record_station
 
@@ -23,11 +23,18 @@ STATION = {"base": POSE, "arm_angles_deg": [90, 20, 30]}
 
 
 class NavigationTurnPatchTest(unittest.TestCase):
-    scoring = ('      //the point is legal... add it to the trajectory\n'
+    support = ('#include <base_local_planner/trajectory_planner.h>\n'
+               '    global_plan_.resize(new_plan.size());\n'
+               '    //we want to sample the velocity space regularly\n'
+               '    for(int i = 0; i < vtheta_samples_; ++i) {\n'
+               '  double TrajectoryPlanner::headingDiff(){ global_plan_.size() - 1; lineCost(); mapToWorld(); }\n'
+               '  //calculate the cost of a ray-traced line\n')
+    scoring = support + ('      //the point is legal... add it to the trajectory\n'
                'cost = path_distance_bias_ * path_dist + goal_dist * goal_distance_bias_ + occdist_scale_ * occ_cost;\n'
                "    //and finally, if we can't do anything else, we want to generate trajectories that move backwards slowly\n"
                'if(best_traj->cost_ == -1.0)\n      best_traj->cost_ = 1.0;\n')
-    goal_stop = ('  bool TrajectoryPlannerROS::stopWithAccLimits(const Pose& global_pose, const Pose& robot_vel, Twist& cmd_vel){\n'
+    goal_stop = ('    global_plan_ = orig_global_plan;\n'
+                 '  bool TrajectoryPlannerROS::stopWithAccLimits(const Pose& global_pose, const Pose& robot_vel, Twist& cmd_vel){\n'
                  '    double vx = sign(robot_vel.pose.position.x) * std::max(0.0, fabs(robot_vel.pose.position.x) - acc_lim_x_ * sim_period_);\n'
                  '    double vth = sign(vel_yaw) * std::max(0.0, fabs(vel_yaw) - acc_lim_theta_ * sim_period_);\n'
                  '    bool valid_cmd = tc_->checkTrajectory(x, y, yaw, vx, vy, vth);\n'
@@ -60,9 +67,16 @@ class NavigationTurnPatchTest(unittest.TestCase):
         self.assertIn('if (heading_diff == DBL_MAX) { traj.cost_ = -2.0; return; }', updated)
         self.assertIn('occ_cost + 0.3 * heading_diff;', updated)
         self.assertIn('i == 0 && vx_samp > 0.0', updated)
-        self.assertIn('headingDiff(cell_x, cell_y, x_i, y_i, theta_i) > M_PI / 6.0', updated)
-        v3 = updated.replace('30 degrees', '20 degrees').replace('M_PI / 6.0', 'M_PI / 9.0')
-        self.assertEqual(patch_navigation_turn(v3), updated)
+        self.assertIn('!myagv_following_', updated)
+        self.assertIn('!keep_forward &&', updated)
+        self.assertIn('myagv::segmentEnd', updated)
+        gate = ('      // MYAGV_TURN_FIRST: use the measured-pose hysteresis for every forward candidate.\n'
+                '      if (i == 0 && vx_samp > 0.0 && !myagv_following_) {\n')
+        for degrees, divisor in ((20, 9), (30, 6)):
+            legacy = (f'      // MYAGV_TURN_FIRST: reject forward motion until the visible path is within {degrees} degrees.\n'
+                      '      if (i == 0 && vx_samp > 0.0 &&\n'
+                      f'          headingDiff(cell_x, cell_y, x_i, y_i, theta_i) > M_PI / {divisor}.0) {{\n')
+            self.assertEqual(patch_navigation_turn(updated.replace(gate, legacy)), updated)
         self.assertIn('MYAGV_COLLISION_STOP', updated)
         self.assertIn('if (backup_vel_ >= 0.0)', updated)
         escape_start = updated.index('    // MYAGV_NO_ESCAPE')
@@ -87,7 +101,14 @@ class NavigationTurnPatchTest(unittest.TestCase):
                   'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;\n'
                   '//do we have a legal trajectory\n')
         with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / 'trajectory_planner.cpp'
+            path = Path(folder) / 'base_local_planner/src/trajectory_planner.cpp'
+            path.parent.mkdir(parents=True)
+            header = path.parents[1] / 'include/base_local_planner/trajectory_planner.h'
+            header.parent.mkdir(parents=True)
+            header.write_text('      bool escaping_;')
+            global_path = Path(folder) / 'global_planner/src/planner_core.cpp'
+            global_path.parent.mkdir(parents=True)
+            global_path.write_text('#include <global_planner/planner_core.h>\n    // add orientations if needed')
             path.write_text(source)
             wrapper = path.with_name('trajectory_planner_ros.cpp')
             wrapper.write_text(self.goal_stop)
@@ -104,9 +125,13 @@ class NavigationTurnPatchTest(unittest.TestCase):
                 subprocess.run(command, check=True, capture_output=True, text=True)
             self.assertEqual(path.read_text(), patch_navigation_turn(source))
             self.assertEqual(wrapper.read_text(), patch_goal_stop(self.goal_stop))
-            backup = path.with_suffix('.cpp.before-shortest-turn-v5')
+            self.assertIn('myagv_following_', header.read_text())
+            self.assertIn('myagv::simplify', global_path.read_text())
+            self.assertEqual((path.parent/'myagv_polyline.h').read_text(),
+                             (global_path.parent/'myagv_polyline.h').read_text())
+            backup = path.with_suffix('.cpp.before-shortest-turn-v6')
             self.assertEqual(backup.read_text(), source)
-            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v5').read_text(), self.goal_stop)
+            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v6').read_text(), self.goal_stop)
             self.assertEqual(old_backup.read_text(), 'original upstream source')
             self.assertEqual(v2_backup.read_text(), 'previous patch backup')
             self.assertEqual(v3_backup.read_text(), '20 degree patch backup')
@@ -123,14 +148,21 @@ class NavigationTurnPatchTest(unittest.TestCase):
                                  'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;\n'
                                  '//do we have a legal trajectory\n')
         with tempfile.TemporaryDirectory() as folder:
-            path = Path(folder) / 'trajectory_planner.cpp'
+            path = Path(folder) / 'base_local_planner/src/trajectory_planner.cpp'
+            path.parent.mkdir(parents=True)
+            header = path.parents[1] / 'include/base_local_planner/trajectory_planner.h'
+            header.parent.mkdir(parents=True)
+            header.write_text('      bool escaping_;')
+            global_path = Path(folder) / 'global_planner/src/planner_core.cpp'
+            global_path.parent.mkdir(parents=True)
+            global_path.write_text('#include <global_planner/planner_core.h>\n    // add orientations if needed')
             path.write_text(source)
             path.with_name('trajectory_planner_ros.cpp').write_text('unknown source')
             result = subprocess.run([sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')),
                                      str(path)], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(path.read_text(), source)
-            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v5').exists())
+            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v6').exists())
 
 
 class FakeArm:
@@ -385,28 +417,28 @@ class NavigationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'tolerance'):
             self.nav.go_to(POSE, position_tolerance=.10, yaw_tolerance=10)
 
-    def test_twelve_cm_arrival_tolerance_accepts_nearby_pose_and_rejects_excess_error(self):
+    def test_fifteen_cm_arrival_tolerance_accepts_nearby_pose_and_rejects_excess_error(self):
         self.nav.client.get_state.return_value = 3
-        for distance, angle, accepted in ((.119, 14.9, True), (.121, 0, False), (0, 15.1, False)):
+        for distance, angle, accepted in ((.149, 29.9, True), (.151, 0, False), (0, 30.1, False)):
             with self.subTest(distance=distance, angle=angle):
                 self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + distance,
                                                      yaw_deg=POSE['yaw_deg'] + angle)
                 if accepted:
-                    self.nav.go_to(POSE, position_tolerance=.12, yaw_tolerance=15)
+                    self.nav.go_to(POSE, position_tolerance=.15, yaw_tolerance=30)
                 else:
-                    with self.assertRaisesRegex(RuntimeError, '12 cm / 15 degree tolerance'):
-                        self.nav.go_to(POSE, position_tolerance=.12, yaw_tolerance=15)
+                    with self.assertRaisesRegex(RuntimeError, '15 cm / 30 degree tolerance'):
+                        self.nav.go_to(POSE, position_tolerance=.15, yaw_tolerance=30)
 
     def test_optional_arrival_check_logs_error_and_completes_one_goal(self):
         self.nav.client.get_state.return_value = 3
-        for distance, angle in ((.139, 4.8), (0, 15.1)):
+        for distance, angle in ((.169, 4.8), (0, 30.1)):
             with self.subTest(distance=distance, angle=angle):
                 self.nav.client.send_goal.reset_mock()
                 self.nav.wait_stopped.reset_mock()
                 self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + distance,
                                                      yaw_deg=POSE['yaw_deg'] + angle)
                 with patch('navigation.print') as output:
-                    self.nav.go_to(POSE, position_tolerance=.12, yaw_tolerance=15, require_arrival=False)
+                    self.nav.go_to(POSE, position_tolerance=.15, yaw_tolerance=30, require_arrival=False)
                 self.nav.client.send_goal.assert_called_once()
                 self.nav.wait_stopped.assert_called_once()
                 self.nav.client.cancel_goal.assert_not_called()
@@ -442,8 +474,8 @@ class NavigationTest(unittest.TestCase):
                         2 * float(params['yaw_goal_tolerance']))
         self.assertEqual(float(params['max_vel_x']), .05)
         self.assertLessEqual(float(params['min_vel_x']), float(params['max_vel_x']))
-        self.assertEqual(float(params['xy_goal_tolerance']), .12)
-        self.assertAlmostEqual(float(params['yaw_goal_tolerance']), math.radians(15))
+        self.assertEqual(float(params['xy_goal_tolerance']), .15)
+        self.assertAlmostEqual(float(params['yaw_goal_tolerance']), math.radians(30))
         self.assertEqual(params['recovery_behavior_enabled'], 'false')
         self.assertEqual(params['clearing_rotation_allowed'], 'false')
         self.assertEqual(float(params['escape_vel']), 0)

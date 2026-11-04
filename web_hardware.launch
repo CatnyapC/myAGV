@@ -50,9 +50,9 @@
         holonomic_robot: false
         # Score in-place turns at the chassis center, not inside a nearby inflated obstacle.
         heading_lookahead: 0.0
-        # 15 degrees, matching the caller's arrival check.
-        yaw_goal_tolerance: 0.2617993877991494
-        xy_goal_tolerance: 0.12
+        # 30 degrees, matching the caller's arrival check.
+        yaw_goal_tolerance: 0.5235987755982988
+        xy_goal_tolerance: 0.15
         trans_stopped_vel: 0.005
         theta_stopped_vel: 0.01
         latch_xy_goal_tolerance: true

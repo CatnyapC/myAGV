@@ -5,6 +5,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <iomanip>
 
 int main(int argc, char** argv) {
   ros::init(argc, argv, "myagv_navigation_regression", ros::init_options::AnonymousName);
@@ -45,7 +46,7 @@ int main(int argc, char** argv) {
     }
     for (double offset : {0., .025}) {
       for (double bearing : {0., M_PI_2, M_PI, -M_PI_2}) {
-        for (int error : {-170, -135, -90, -45, -31, -29, -21, -19, 0, 19, 21, 29, 31, 45, 90, 135, 170}) {
+        for (int error : {-170, -135, -90, -45, -61, -59, -46, -44, -31, -29, -19, 0, 19, 29, 31, 44, 46, 59, 61, 45, 90, 135, 170}) {
           // Match web_hardware.launch; meter_scoring scales distance biases by .05.
           base_local_planner::TrajectoryPlanner planner(
               world, map, footprint, .2, .2, .3, 1.5, .025, 8, 20,
@@ -80,16 +81,20 @@ int main(int argc, char** argv) {
           if (blocked) {
             assert(trajectory.cost_ < 0);
           } else {
-            if (error != 0 && trajectory.thetav_ * error >= 0)
+            if (error != 0 && trajectory.thetav_ * error > 1e-9)
               std::cerr << "Wrong turn: bearing=" << bearing << " error=" << error
                         << " offset=" << offset << " wz=" << trajectory.thetav_ << '\n';
             assert(trajectory.cost_ >= 0);
-            if (error != 0) assert(trajectory.thetav_ * error < 0);
-            if (std::abs(error) > 30) assert(trajectory.xv_ == 0);
-            else assert(planner.checkTrajectory(offset, offset, yaw, 0, 0, 0, .03, 0, 0));
+            if (error != 0) assert(trajectory.thetav_ * error <= 1e-9);
+            if (std::abs(error) > 45) assert(trajectory.thetav_ * error < 0);
+            if (std::abs(error) > 45) assert(trajectory.xv_ == 0);
+            else {
+              if (!planner.myagv_following_) std::cerr << "Heading gate: " << bearing << " " << error << " " << offset << " heading=" << std::setprecision(17) << planner.headingDiff(60, 60, offset, offset, yaw) << '\n';
+              assert(planner.checkTrajectory(offset, offset, yaw, 0, 0, 0, .03, 0, 0));
+            }
             // Heading tolerance also applies while already translating.
             assert(planner.checkTrajectory(offset, offset, yaw, .08, 0, 0, .03, 0, 0)
-                   == (std::abs(error) <= 30));
+                   == (std::abs(error) <= 45));
             assert(std::abs(trajectory.xv_) <= .050001);
             assert(std::abs(trajectory.thetav_) <= .100001);
           }
@@ -97,8 +102,45 @@ int main(int argc, char** argv) {
       }
     }
   }
-  // A virtual lookahead point can be blocked while the actual rotating footprint is clear.
   map.resetMap(0, 0, 120, 120);
+  {
+    base_local_planner::TrajectoryPlanner planner(world, map, footprint,
+        .2, .2, .3, 1.5, .025, 8, 20, .6*.05, .8*.05, .01,
+        0., .05, .1, M_PI_2, false, .05, .02, .1, -.1, .03, 0.0);
+    std::vector<geometry_msgs::PoseStamped> plan(41);
+    for (size_t i = 0; i < plan.size(); ++i) {
+      plan[i].pose.position.x = i*.05;
+      plan[i].pose.orientation.w = 1;
+    }
+    planner.updatePlan(plan);
+    geometry_msgs::PoseStamped pose, velocity, output;
+    velocity.pose.orientation.w = 1;
+    bool following = false;
+    // Drift around the old threshold must not repeatedly insert pure rotations.
+    for (int degrees : {-44, -47, -52, -59, -61, -58, -47, -44}) {
+      pose.pose.orientation.z = sin(degrees*M_PI/360);
+      pose.pose.orientation.w = cos(degrees*M_PI/360);
+      if (std::abs(degrees) > 60) following = false;
+      else if (std::abs(degrees) <= 45) following = true;
+      auto t = planner.findBestPath(pose, velocity, output);
+      assert(t.cost_ >= 0 && (t.xv_ > 0) == following);
+    }
+    pose.pose.orientation.z = 0; pose.pose.orientation.w = 1;
+    for (double vx : {0., .3}) for (double wz : {-.82, 0., .68}) {
+      velocity.pose.position.x = vx;
+      velocity.pose.orientation.z = sin(wz/2);
+      velocity.pose.orientation.w = cos(wz/2);
+      auto t = planner.findBestPath(pose, velocity, output);
+      assert(t.cost_ >= 0);
+      assert(std::abs(t.xv_) <= .050001 && std::abs(t.thetav_) <= .100001);
+    }
+    for (auto& p : plan) { p.pose.position.y = p.pose.position.x; p.pose.position.x = 0; }
+    planner.updatePlan(plan);
+    assert(planner.myagv_following_);  // A shifted local window must not reset hysteresis.
+    planner.updatePlan({});
+    assert(!planner.myagv_following_);
+  }
+  // A virtual lookahead point can be blocked while the actual rotating footprint is clear.
   for (unsigned x = 0; x < 120; ++x)
     for (unsigned y = 0; y < 120; ++y) {
       double wx, wy;

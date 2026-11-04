@@ -22,6 +22,7 @@ python3 install_navigation_turn.py ~/myagv_ros/src/navigation/base_local_planner
 cd ~/myagv_ros
 catkin_make --pkg myagv_odometry -j2
 catkin_make --pkg base_local_planner -j1
+catkin_make --pkg global_planner -j1
 cd ~/myAGV
 uv sync --locked --extra web
 npm --prefix web ci
@@ -85,17 +86,23 @@ The patch also scores the endpoint heading of forward arcs: grid distance alone
 can tie at low speeds and choose a turn away from the path. It reuses the existing
 0.3 heading weight without increasing simulation steps, and rejects a trajectory
 when no path point is visible. Collision checks still cover every simulated point.
-Forward candidates are rejected when the current heading differs from the visible
-path direction by more than 30 degrees. Legal in-place turns remain available;
-the wider tolerance permits continuous steering through moderate heading errors.
+The global planner merges safely visible path nodes into straight segments while
+checking every crossed inflated costmap cell, including diagonal corner contacts.
+It retains dense samples for ROS distance fields. Local heading tracks the current
+segment's endpoint and advances to the next segment within 15 cm of a corner.
+Forward tracking starts within 45 degrees and continues until heading error exceeds
+60 degrees. Legal forward trajectories take priority over in-place turns; a blocked
+forward trajectory still permits collision-checked rotation and replanning.
+Velocity sampling stays within configured limits even when measured feedback is
+outside those limits. The driver still requires a measured stop for drive-mode changes.
 The upstream escape fallback's collision override is removed: a blocked reverse
 trajectory stays invalid instead of being relabeled as a valid motion command.
 Arrival braking sends zero velocity and retains the planner's measured-odometry
 stop gate before final rotation. Feedback-minus-acceleration braking can keep
 driving on this chassis when its low-speed response exceeds the command.
-Web Go and Fetch use 12 cm / 15 degree arrival tolerances in both the ROS planner
+Web Go and Fetch use 15 cm / 30 degree arrival tolerances in both the ROS planner
 and the caller's completion check. The position latch retains arrival during final rotation.
-The installer refuses unknown source layouts and keeps `.before-shortest-turn-v5`,
+The installer refuses unknown source layouts and keeps `.before-shortest-turn-v6`,
 preserving earlier backups when upgrading.
 Web navigation caps turns at 0.1 rad/s and forward travel at 0.05 m/s;
 automatic reverse escape is disabled. When no legal trajectory exists, the local
@@ -509,7 +516,7 @@ chassis and estimate uncertainty. Low-confidence estimates cannot provide a goal
 **Resolve** can also select this approach. **Fetch** automatically navigates to
 the approach, refines with the front camera, aligns, grasps, returns and places.
 For both outbound and return navigation, Fetch advances after move_base reports
-success and measured standstill is confirmed, even outside the 12 cm / 15 degree
+success and measured standstill is confirmed, even outside the 15 cm / 30 degree
 arrival tolerance. The measured error is logged. Camera approach and alignment
 still gate pickup; placement uses the actual return position. Navigation failures,
 timeouts, STOP, lease loss and sensor checks still stop the task. Standalone Go
