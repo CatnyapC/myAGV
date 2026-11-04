@@ -603,6 +603,8 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(instruction.startswith('Previously saved prompt'))
             self.assertIn('camera is mounted on the gripper', instruction)
             self.assertIn('x=500, bottom=1000', instruction)
+            self.assertIn('random rotation about their own axis', instruction)
+            self.assertIn('Measure the outer silhouette, never printed features', instruction)
             self.assertTrue(any('GOAL:' in p.get('text', '') for p in trace['messages'][1]['content']))
             self.assertEqual(trace['measurement']['current'], box)
             self.assertEqual([v['bounds'] for v in trace['measured_images']], [[360,840,640,1000], box])

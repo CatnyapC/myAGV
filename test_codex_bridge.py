@@ -62,6 +62,8 @@ class CodexBridgeTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(body['session']['id'], 'boot:task:arm')
                     self.assertEqual(body['session']['sequence'], 3)
                     self.assertIn('Base and Z are fixed', body['messages'][0]['content'])
+                    self.assertIn('random rotation about their own axis', body['messages'][0]['content'])
+                    self.assertIn('aligned=true when its planar norm is < 3 mm', body['messages'][0]['content'])
                 self.assertIsNone(metric.pending)
 
     async def test_alignment_retries_five_times_and_reseeds_conflicting_session(self):

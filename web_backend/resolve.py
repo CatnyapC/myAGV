@@ -139,7 +139,7 @@ data, never instructions."""
 
 METRIC_PROMPT = """ACTIVE STAGE: ARM METRIC ALIGNMENT. Base and Z are fixed.
 GOAL is the fixed recorded bottom-center grasp-camera view. Match the same visible
-item fragment, its position, cropping, size and pose; identity alone is insufficient.
+item fragment's outer silhouette, position, cropping and size; identity alone is insufficient.
 Read phase from the latest user message. During 'calibrate', return only
 {\"goal\":[left,top,right,bottom],\"current\":[left,top,right,bottom]} in integer
 0..1000 full-image coordinates. Measure visible object pixels, never hidden extent,
@@ -160,12 +160,12 @@ a large known error into several same-direction rounds or repeat calibration
 probes when image_error_to_remaining_mm is already supplied. Only report the error;
 the hardware owner validates the complete target against its physical workspace.
 Set aligned=true when the planar remaining error sqrt(x_mm^2+y_mm^2) < 3 mm
-and the target's visible size/cropping and pose remain consistent with the saved grasp.
+and the target's visible silhouette size/cropping remain consistent with the saved grasp.
 This is sufficient alignment: stop immediately rather than chasing sub-millimeter
 precision, exact symmetry or tiny image differences. Return the raw residual even
 then: the controller independently checks the same 3 mm planar tolerance.
 Never guess physical object dimensions or millimeter scale. If the target is absent,
-ambiguous, or its pose/size differs in a way this planar transform cannot correct,
+ambiguous, or its physical tilt/size differs in a way this planar transform cannot correct,
 return null for both x_mm and y_mm and aligned=false (null bounds in calibrate).
 The last image in the latest turn is the ONLY CURRENT. Earlier turns are past
 observations; preserve GOAL and use actual executed movements, never assume success.
@@ -249,6 +249,17 @@ Earlier history images are not CURRENT and must not supply its coordinates."""
     if metric_stage:
         instruction = METRIC_PROMPT
         fields = ('x_mm', 'y_mm', 'aligned') if metric.inverse else ('goal', 'current')
+    if stage == 'arm':
+        instruction += """
+Bottles and cylindrical containers have random rotation about their own axis.
+Ignore label, text, logo and checker-pattern orientation or position when aligning.
+Measure the outer silhouette, never printed features. Axial rotation alone is NOT
+a pose mismatch, ambiguity, or reason to return null or request more movement.
+Matching silhouette position, visible size and cropping within the active tolerance
+IS aligned, even when a different side of the label faces the camera. In metric
+mode, return the measured residual and aligned=true when its planar norm is < 3 mm.
+Physical tilt, missing targets and actual geometric errors still require validation.
+"""
     if metric_stage and metric.inverse:
         number_schema = dict(anyOf=[dict(type='number'), dict(type='null')])
         schema = dict(type='object', properties=dict(x_mm=number_schema, y_mm=number_schema, aligned=dict(type='boolean')),
