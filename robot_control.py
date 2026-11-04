@@ -597,7 +597,7 @@ class Control:
         try:
             self.travel_guard(pose)
             self.base_enabled = True
-            self.robot.nav.go_to(pose, position_tolerance=.08, yaw_tolerance=15, require_arrival=require_arrival)
+            self.robot.nav.go_to(pose, position_tolerance=.12, yaw_tolerance=15, require_arrival=require_arrival)
         finally:
             self.base_enabled = False
             self.robot.zero()

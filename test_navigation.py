@@ -376,17 +376,17 @@ class NavigationTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'tolerance'):
             self.nav.go_to(POSE, position_tolerance=.10, yaw_tolerance=10)
 
-    def test_eight_cm_arrival_tolerance_accepts_nearby_pose_and_rejects_excess_error(self):
+    def test_twelve_cm_arrival_tolerance_accepts_nearby_pose_and_rejects_excess_error(self):
         self.nav.client.get_state.return_value = 3
-        for distance, angle, accepted in ((.079, 14.9, True), (.081, 0, False), (0, 15.1, False)):
+        for distance, angle, accepted in ((.119, 14.9, True), (.121, 0, False), (0, 15.1, False)):
             with self.subTest(distance=distance, angle=angle):
                 self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + distance,
                                                      yaw_deg=POSE['yaw_deg'] + angle)
                 if accepted:
-                    self.nav.go_to(POSE, position_tolerance=.08, yaw_tolerance=15)
+                    self.nav.go_to(POSE, position_tolerance=.12, yaw_tolerance=15)
                 else:
-                    with self.assertRaisesRegex(RuntimeError, '8 cm / 15 degree tolerance'):
-                        self.nav.go_to(POSE, position_tolerance=.08, yaw_tolerance=15)
+                    with self.assertRaisesRegex(RuntimeError, '12 cm / 15 degree tolerance'):
+                        self.nav.go_to(POSE, position_tolerance=.12, yaw_tolerance=15)
 
     def test_optional_arrival_check_logs_error_and_completes_one_goal(self):
         self.nav.client.get_state.return_value = 3
@@ -397,7 +397,7 @@ class NavigationTest(unittest.TestCase):
                 self.nav.get_pose.return_value = dict(POSE, x_m=POSE['x_m'] + distance,
                                                      yaw_deg=POSE['yaw_deg'] + angle)
                 with patch('navigation.print') as output:
-                    self.nav.go_to(POSE, position_tolerance=.08, yaw_tolerance=15, require_arrival=False)
+                    self.nav.go_to(POSE, position_tolerance=.12, yaw_tolerance=15, require_arrival=False)
                 self.nav.client.send_goal.assert_called_once()
                 self.nav.wait_stopped.assert_called_once()
                 self.nav.client.cancel_goal.assert_not_called()
@@ -433,8 +433,8 @@ class NavigationTest(unittest.TestCase):
                         2 * float(params['yaw_goal_tolerance']))
         self.assertEqual(float(params['max_vel_x']), .05)
         self.assertLessEqual(float(params['min_vel_x']), float(params['max_vel_x']))
-        self.assertLess(float(params['xy_goal_tolerance']), .10)
-        self.assertLess(float(params['yaw_goal_tolerance']), math.radians(10))
+        self.assertEqual(float(params['xy_goal_tolerance']), .12)
+        self.assertAlmostEqual(float(params['yaw_goal_tolerance']), math.radians(15))
         self.assertEqual(params['recovery_behavior_enabled'], 'false')
         self.assertEqual(params['clearing_rotation_allowed'], 'false')
 

@@ -91,6 +91,8 @@ trajectory stays invalid instead of being relabeled as a valid motion command.
 Arrival braking sends zero velocity and retains the planner's measured-odometry
 stop gate before final rotation. Feedback-minus-acceleration braking can keep
 driving on this chassis when its low-speed response exceeds the command.
+Web Go and Fetch use 12 cm / 15 degree arrival tolerances in both the ROS planner
+and the caller's completion check. The position latch retains arrival during final rotation.
 The installer refuses unknown source layouts and keeps `.before-shortest-turn-v4`,
 preserving earlier backups when upgrading.
 Web navigation caps turns at 0.1 rad/s and forward travel at 0.05 m/s;
@@ -491,7 +493,7 @@ chassis and estimate uncertainty. Low-confidence estimates cannot provide a goal
 **Resolve** can also select this approach. **Fetch** automatically navigates to
 the approach, refines with the front camera, aligns, grasps, returns and places.
 For both outbound and return navigation, Fetch advances after move_base reports
-success and measured standstill is confirmed, even outside the 8 cm / 15 degree
+success and measured standstill is confirmed, even outside the 12 cm / 15 degree
 arrival tolerance. The measured error is logged. Camera approach and alignment
 still gate pickup; placement uses the actual return position. Navigation failures,
 timeouts, STOP, lease loss and sensor checks still stop the task. Standalone Go
