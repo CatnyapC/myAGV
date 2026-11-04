@@ -61,14 +61,13 @@ int main() {
     assert(g.command(zero,1.21)==zero);
     assert(!g.fault);
     // Missing/invalid feedback latches; a later good sample cannot unlock it.
-    for (int scenario=0;scenario<5;++scenario) {
+    for (int scenario=0;scenario<4;++scenario) {
         MyAGVMotionSafety bad;
         stopped(bad,0);
         if(scenario==0) bad.observe(zero,false,.7);
-        if(scenario==1) bad.observe(V{{0,0,.8}},true,.7);
-        if(scenario==2) bad.command(V{{0,0,std::numeric_limits<double>::quiet_NaN()}},.7);
-        if(scenario==3) bad.observe(V{{0,0,std::numeric_limits<double>::infinity()}},true,.7);
-        if(scenario==4) {bad.command(turn,.7);bad.command(turn,6);}
+        if(scenario==1) bad.command(V{{0,0,std::numeric_limits<double>::quiet_NaN()}},.7);
+        if(scenario==2) bad.observe(V{{0,0,std::numeric_limits<double>::infinity()}},true,.7);
+        if(scenario==3) {bad.command(turn,.7);bad.command(turn,6);}
         assert(bad.fault);
         bad.observe(zero,true,7);
         assert(bad.command(forward,7)==zero);
@@ -79,7 +78,7 @@ int main() {
     assert(gap.command(turn,.6)==zero);
     gap.observe(zero,true,.6);
     assert(gap.command(turn,.7)==zero);
-    // Rotation after a zero command is still checked.
+    // A brief coast after zero does not latch; failure to stop still times out.
     MyAGVMotionSafety brake;
     stopped(brake,0);
     brake.command(V{{0,0,.3}},.7);
@@ -88,7 +87,12 @@ int main() {
     brake.observe(V{{0,0,.3}},true,1.22);
     assert(brake.command(zero,1.23)==zero);
     brake.observe(V{{0,0,.3}},true,1.3); assert(!brake.fault);
-    brake.observe(V{{0,0,.3}},true,1.5); assert(brake.fault);
+    brake.observe(V{{0,0,.3}},true,1.5); assert(!brake.fault);
+    for (int i=0;i<51;++i) {
+        assert(brake.command(zero,1.6+i*.1)==zero);
+        brake.observe(V{{0,0,.3}},true,1.6+i*.1);
+    }
+    assert(brake.fault);
 }
 ''')
 
@@ -111,9 +115,49 @@ int main() {
         }
         assert(g.command(zero,3)==zero);
         g.observe(V{{0,0,sign*.47}},true,3.1);assert(!g.fault);
-        g.observe(V{{0,0,sign*.47}},true,3.3);assert(g.fault);
-        g.observe(zero,true,3.4);
-        assert(g.command(turn,3.5)==zero);
+        g.observe(V{{0,0,sign*.47}},true,3.3);assert(!g.fault);
+        assert(g.command(turn,3.4)==zero); // Cannot resume until measured stop.
+        for (int i=0;i<6;++i) {
+            g.observe(zero,true,3.4+i*.1);
+            g.command(turn,3.4+i*.1);
+        }
+        assert(g.command(turn,3.91)==turn);
+        assert(!g.fault);
+    }
+}
+''')
+
+    def test_translation_with_slip_keeps_stop_and_reversal_gates(self):
+        self.run_cpp(r'''
+#include "myagv_motion_safety.h"
+#include <cassert>
+int main() {
+    using V=MyAGVMotionSafety::Velocity;
+    const V zero{{0,0,0}};
+    for (V move : {V{{0,-.05,0}}, V{{0,.05,0}}, V{{.05,0,0}}, V{{-.05,0,0}}}) {
+        MyAGVMotionSafety g;
+        for (int i=0;i<8;++i) {g.command(move,i*.1);g.observe(zero,true,i*.1);}
+        for (int i=8;i<30;++i) {
+            assert(g.command(move,i*.1)==move);
+            g.observe(V{{.21,-.27,-.96}},true,i*.1); // Reported right-move sample.
+            assert(!g.fault);
+        }
+        V reverse{{-move[0],-move[1],0}};
+        assert(g.command(reverse,3)==zero);
+        g.observe(V{{.21,-.27,-.96}},true,3.3);assert(!g.fault);
+        assert(g.command(reverse,3.4)==zero);
+        for (int i=0;i<6;++i) {
+            g.observe(zero,true,3.4+i*.1);
+            g.command(reverse,3.4+i*.1);
+        }
+        assert(g.command(reverse,3.91)==reverse);
+        assert(!g.fault);
+        // Release/STOP cancels any pending request; no old movement is replayed.
+        for (int i=0;i<10;++i) {
+            assert(g.command(zero,4+i*.1)==zero);
+            g.observe(zero,true,4+i*.1);
+        }
+        assert(!g.fault);
     }
 }
 ''')

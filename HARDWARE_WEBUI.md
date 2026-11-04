@@ -44,10 +44,13 @@ This can add a stop interval to short manual inputs and navigation transitions.
 One 150 ms deadline covers an entire feedback frame, including header search and
 partial reads. Invalid or timed-out feedback immediately commands zero and latches
 off instead of blocking command processing indefinitely. Command values have not
-been calibrated against MCU speed feedback, so their ratio is not an overspeed
-criterion during a requested turn. When the encoded turn command is zero, angular
-feedback above 0.15 for a sample more than 250 ms after the last turn command latches
-off as unexpected rotation. Non-finite feedback or invalid commands also latch off.
+been calibrated against MCU speed feedback, and translation on a slippery floor
+can include angular drift. No angular-speed threshold or command/feedback ratio
+latches motion during travel or a brief coast after zero. STOP and lease expiry
+still send zero; a new motion mode or direction must wait for measured stop. If
+stop confirmation fails for 5 seconds, the driver latches off. Non-finite feedback
+or invalid commands also latch off. These checks do not enforce a calibrated
+physical speed limit during requested motion.
 The existing `angular_speed_fault` parameter reports
 all these motion faults; the WebUI stops and disables motion. Logs include requested
 and sent velocities, encoded velocity bytes, feedback and the fault reason.
