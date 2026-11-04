@@ -79,7 +79,7 @@ int main() {
     assert(gap.command(turn,.6)==zero);
     gap.observe(zero,true,.6);
     assert(gap.command(turn,.7)==zero);
-    // Overspeed during straight travel and after zero is checked too.
+    // Rotation after a zero command is still checked.
     MyAGVMotionSafety brake;
     stopped(brake,0);
     brake.command(V{{0,0,.3}},.7);
@@ -89,6 +89,32 @@ int main() {
     assert(brake.command(zero,1.23)==zero);
     brake.observe(V{{0,0,.3}},true,1.3); assert(!brake.fault);
     brake.observe(V{{0,0,.3}},true,1.5); assert(brake.fault);
+}
+''')
+
+    def test_manual_turn_does_not_assume_command_feedback_gain(self):
+        self.run_cpp(r'''
+#include "myagv_motion_safety.h"
+#include <cassert>
+int main() {
+    using V=MyAGVMotionSafety::Velocity;
+    const V zero{{0,0,0}};
+    for (double sign : {-1., 1.}) {
+        MyAGVMotionSafety g;
+        V turn{{0,0,sign*.15}};
+        for (int i=0;i<8;++i) {g.command(turn,i*.1);g.observe(zero,true,i*.1);}
+        // Reproduce the grounded manual trace for longer than the original fault delay.
+        for (int i=8;i<30;++i) {
+            assert(g.command(turn,i*.1)==turn);
+            g.observe(V{{0,-.04,sign*.47}},true,i*.1);
+            assert(!g.fault);
+        }
+        assert(g.command(zero,3)==zero);
+        g.observe(V{{0,0,sign*.47}},true,3.1);assert(!g.fault);
+        g.observe(V{{0,0,sign*.47}},true,3.3);assert(g.fault);
+        g.observe(zero,true,3.4);
+        assert(g.command(turn,3.5)==zero);
+    }
 }
 ''')
 
@@ -158,7 +184,9 @@ int main(){
     MyAGV d;
     for(int i=0;i<8;++i){d.execute(0,0,.03);std::this_thread::sleep_for(std::chrono::milliseconds(100));}
     assert(d.commands.back()[2]==.03);
-    d.vtheta=.8;d.execute(0,0,.03);
+    d.vtheta=.47;d.execute(0,0,.15);
+    assert(!d.n.fault && d.commands.back()[2]==.15);
+    d.fresh=false;d.execute(0,0,.15);
     assert(d.n.fault && d.commands.back()[2]==0);
     d.vtheta=0;d.execute(.03,0,0);
     assert(d.commands.back()[0]==0);

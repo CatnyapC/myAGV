@@ -1,6 +1,5 @@
 #ifndef MYAGV_WEB_MOTION_SAFETY_H
 #define MYAGV_WEB_MOTION_SAFETY_H
-#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -11,7 +10,7 @@ struct MyAGVMotionSafety {
     bool braking = true;
     const char* fault = nullptr;
     double lastFeedback = -1, quietSince = -1, brakeSince = -1;
-    double angularLimit = .15, previousLimit = .15, limitUntil = -1;
+    double lastTurnCommand = -1;
 
     static int direction(double value) {
         int raw = static_cast<int>(value * 100);
@@ -41,12 +40,7 @@ struct MyAGVMotionSafety {
             }
         }
         if (fault) requested = {{0, 0, 0}};
-        double limit = std::max(.15, 2 * std::abs(requested[2]) + .05);
-        if (limit < angularLimit && now > limitUntil) {
-            previousLimit = angularLimit;
-            limitUntil = now + .25;
-        }
-        angularLimit = limit;
+        if (direction(requested[2]) != 0) lastTurnCommand = now;
         return sent = requested;
     }
     void observe(Velocity measured, bool fresh, double now) {
@@ -54,9 +48,9 @@ struct MyAGVMotionSafety {
         for (double value : measured)
             if (!std::isfinite(value)) fault = "non-finite chassis feedback";
         if (fault) { quietSince = -1; return; }
-        // Allow only a bounded deceleration transient after reducing the command.
-        double limit = now <= limitUntil ? std::max(angularLimit, previousLimit) : angularLimit;
-        if (std::abs(measured[2]) > limit) fault = "angular overspeed";
+        // Command units are not calibrated to feedback; only check rotation without a turn command.
+        if (direction(sent[2]) == 0 && now - lastTurnCommand > .25 && std::abs(measured[2]) > .15)
+            fault = "rotation without a turn command";
         bool quiet = std::hypot(measured[0], measured[1]) <= .01 && std::abs(measured[2]) <= .02;
         if (!quiet || (lastFeedback >= 0 && now - lastFeedback > .15)) quietSince = -1;
         if (braking && quiet && quietSince < 0) quietSince = now;
