@@ -121,7 +121,7 @@ class NavigationTurnPatchTest(unittest.TestCase):
                                      str(path)], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(path.read_text(), source)
-            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v3').exists())
+            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v4').exists())
 
 
 class FakeArm:
