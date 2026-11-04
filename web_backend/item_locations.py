@@ -206,7 +206,7 @@ def approach_step(result, photo, grid, zones, item, radius, config):
         if result['forward_m'] or result['turn_deg'] or not matched:
             raise ValueError('Item approach arrival does not match saved front GOAL')
         return None, estimate
-    if matched:
+    if matched or (result['forward_m'] == 0 and result['turn_deg'] == 0):
         return None, estimate
     forward, turn = max(-.25, min(result['forward_m'], .25)), result['turn_deg']
     remaining = .5 * result['distance_m'] * (1 - scale)

@@ -225,12 +225,20 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
                 approach_step({**close, **change}, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
 
+    def test_zero_model_motion_finishes_with_unmatched_goal(self):
+        for current in ([425, 500, 575, 1000], [108, 0, 548, 1000], [240, 0, 760, 1000]):
+            with self.subTest(current=current):
+                proposal = {**result(), 'forward_m': 0, 'goal': [378, 0, 747, 1000],
+                            'current': current, 'distance_m': .342}
+                goal, estimate = approach_step(proposal, dict(base_pose=POSE), open_map(), [], ITEM, .2, DEFAULT_CONFIG)
+                self.assertIsNone(goal)
+                self.assertEqual(estimate['item_id'], ITEM['id'])
+
     def test_too_close_can_reobserve_then_retreat_ignoring_occupancy(self):
         grid = open_map()
         close = {**result(), 'distance_m': .2, 'current': [240, 0, 760, 1000]}
-        for forward in (0, .2):
-            goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
-            self.assertEqual(goal, POSE)
+        goal, _ = approach_step(close, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
+        self.assertEqual(goal, POSE)
         for forward in (-.1, -.5):
             goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
             self.assertAlmostEqual(goal['x_m'], 1.97)
@@ -264,7 +272,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         expected = local_to_world([2.2, 3], rotated['origin'])
         self.assertAlmostEqual(rotated_goal['x_m'], expected[0])
         self.assertAlmostEqual(rotated_goal['y_m'], expected[1])
-        for change in (dict(seen=False), dict(forward_m=-.1), dict(turn_deg=float('inf')), dict(forward_m=True),
+        for change in (dict(seen=False), dict(turn_deg=float('inf')), dict(forward_m=True),
                        dict(confidence=.69), dict(distance_m=float('nan')),
                        dict(arrived=True), dict(extra='grasp')):
             with self.subTest(change=change), self.assertRaises(ValueError):
