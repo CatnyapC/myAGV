@@ -61,6 +61,7 @@ class RobotROS:
         self.velocity_at = 0
         self.control = None
         self.driver_watchdog = False
+        self.angular_speed_fault = False
         self.exclusive = False
         self.last_check = 0
         self.clearance = None
@@ -338,7 +339,11 @@ class RobotROS:
 
     def check_publishers(self):
         import rosgraph
-        self.driver_watchdog = self.ros.get_param('/myagv_web/driver_watchdog', 0) == 1
+        fault = self.ros.get_param('/myagv_web/angular_speed_fault', False) is True
+        if fault and not self.angular_speed_fault and self.control:
+            self.control.request_stop('Chassis angular overspeed; driver locked until calibration is repaired')
+        self.angular_speed_fault = fault
+        self.driver_watchdog = self.ros.get_param('/myagv_web/driver_watchdog', 0) == 1 and not fault
         master = rosgraph.Master(self.ros.get_name())
         amcl_uri = master.lookupNode('/gmapping' if (self.directory.parent / 'mapping.json').exists() else '/amcl')
         if self.amcl_uri and amcl_uri != self.amcl_uri and self.control:

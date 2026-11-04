@@ -16,6 +16,11 @@ def patch(source):
     n.setParam("/myagv_web/motor_restore_requested", false); // MYAGV_WEB_MOTOR_RECOVERY
     n.setParam("/myagv_web/motor_overcurrent", false);
     n.setParam("/myagv_web/driver_recovery", 1);''')
+    if '"/myagv_web/angular_speed_fault"' not in source:
+        old = 'n.setParam("/myagv_web/driver_watchdog", 1);'
+        if source.count(old) != 1:
+            raise ValueError('Unexpected driver watchdog declaration')
+        source = source.replace(old, old + '\n    n.setParam("/myagv_web/angular_speed_fault", false);')
     return source
 
 
@@ -41,7 +46,7 @@ def patch_recovery(source):
     if 'MYAGV_WEB_MOTOR_RECOVERY' in source:
         return source
     start = source.index('void MyAGV::restoreRun()')
-    end = source.index('bool MyAGV::readSpeed()', start)
+    end = source.index('\n}', start) + 2
     original = source[start:end]
     if original.count('std::cin') != 1 or original.count('restore();') != 1:
         raise ValueError('Unexpected motor recovery source; refused patch')
@@ -68,11 +73,52 @@ def patch_recovery(source):
 ''' + source[end:]
 
 
+def patch_speed_guard(source):
+    if 'MYAGV_WEB_ANGULAR_SPEED_GUARD' in source:
+        return source
+    old = '''    writeSpeed(linearX, linearY, angularZ);
+    readSpeed(); // easy to report error'''
+    preflight = '''    // MYAGV_WEB_ANGULAR_SPEED_GUARD: raw MCU commands are not calibrated SI speeds.
+    static bool speedFault = false;
+    if (!std::isfinite(linearX) || !std::isfinite(linearY) || !std::isfinite(angularZ)) {
+        speedFault = true;
+        n.setParam("/myagv_web/angular_speed_fault", true);
+    }
+'''
+    condition = '''!speedFault && angularZ != 0 &&
+            std::abs(vtheta) > std::max(0.15, 2 * std::abs(angularZ) + 0.05)'''
+    latch = '''
+        ROS_ERROR("Chassis angular overspeed: requested %.3f rad/s, measured %.3f rad/s; motion locked", angularZ, vtheta);
+        speedFault = true;
+        n.setParam("/myagv_web/angular_speed_fault", true);
+'''
+    new = preflight + '''    if (speedFault) linearX = linearY = angularZ = 0;
+    writeSpeed(linearX, linearY, angularZ);
+    bool fresh = readSpeed();
+    if (fresh && ''' + condition + ') {' + latch + '''    }
+    if (!fresh || speedFault) writeSpeed(0, 0, 0);'''
+    if source.count(old) != 1:
+        old = '''        writeSpeed(linearX, linearY, angularZ);
+        publisherOdom(dt);'''
+        new = preflight + '    if (' + condition + ') {' + latch + '''    }
+    if (speedFault) linearX = linearY = angularZ = 0;
+    writeSpeed(linearX, linearY, angularZ);
+        publisherOdom(dt);'''
+        closing = '    lastTime = currentTime;\n}'
+        if source.count(closing) != 1:
+            raise ValueError('Unexpected driver feedback loop; refused partial patch')
+        source = source.replace(closing, '    else { writeSpeed(0, 0, 0); }\n' + closing)
+    if source.count(old) != 1 or source.count('#include "myagv_odometry/myAGV.h"') != 1:
+        raise ValueError('Unexpected driver velocity source; refused partial patch')
+    return source.replace('#include "myagv_odometry/myAGV.h"',
+                          '#include "myagv_odometry/myAGV.h"\n#include <algorithm>\n#include <cmath>').replace(old, new)
+
+
 if __name__ == '__main__':
     path = Path(sys.argv[1])
     library = path.with_name('myAGV.cpp')
     changes = [(path, path.read_text()), (library, library.read_text())]
-    updates = [patch(changes[0][1]), patch_recovery(changes[1][1])]
+    updates = [patch(changes[0][1]), patch_speed_guard(patch_recovery(changes[1][1]))]
     for (path, original), updated in zip(changes, updates):
         if updated == original:
             continue
@@ -82,4 +128,4 @@ if __name__ == '__main__':
         if not backup.exists():
             backup.write_text(original)
         path.write_text(updated)
-    print('Driver watchdog and motor recovery source ready; rebuild and restart chassis driver')
+    print('Driver watchdog, angular speed guard and motor recovery ready; rebuild and restart chassis driver')

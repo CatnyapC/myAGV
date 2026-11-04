@@ -37,6 +37,17 @@ The driver patch uses a wall-clock loop and makes commands expire after 0.5 seco
 It also patches the adjacent `myAGV.cpp` to latch wheel overcurrent until an explicit
 WebUI recovery, replacing the manufacturer's blocking terminal input. It refuses
 unknown source layouts and saves `.before-web-watchdog` beside each changed source.
+The same patch latches chassis output off if fresh MCU angular feedback exceeds
+`max(0.15, 2 * abs(requested_angular_speed) + 0.05)` rad/s during a turn, or a
+command contains a non-finite value. The WebUI then stops and disables motion.
+Repair the drive calibration before restarting the driver; a new motion command
+does not clear the latch. This guard does not calibrate legacy MCU speed units.
+MCU v1.0 uses legacy motion packets and 27-byte telemetry. Firmware v1.2 and later
+require the matching vendor driver with motion opcode `0x010B`, 43-byte telemetry,
+and automatic reporting enabled. Update those together. The manufacturer's
+[firmware catalog](https://download-elephantrobotics.oss-cn-shenzhen.aliyuncs.com/software/mystudio/firmware_json_files/myAGV2023Pi.json)
+lists v1.3 (an alpha image) as fixing inconsistent wheel speeds after
+forward/rotation/forward movement; flashing remains a separate hardware action.
 The ROS launch initially starts map_server, AMCL and move_base. Both costmaps consume
 `/navigation_map`. The move_base output is remapped to `/myagv/input_vel`; only
 the bridge publishes `/cmd_vel`. Fresh LiDAR/odometry, exclusive publishers and
