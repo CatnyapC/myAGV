@@ -700,7 +700,8 @@ class Control:
     def execute(self, packet):
         kind = packet['type']
         if self.config.get('grasp_test_hold') and kind not in ('grasp_test', 'gripper', 'capture',
-                'capture_grasp_height', 'capture_grasp_goal', 'confirm_homed', 'recover_stop', 'connect_arm', 'map_refresh'):
+                'capture_grasp_height', 'capture_grasp_goal', 'confirm_homed', 'recover_stop', 'connect_arm',
+                'map_refresh', 'confirm_localization', 'navigate'):
             raise ValueError('Place the test item or open the gripper before another action')
         if kind == 'teleop_acquire':
             self.robot.zero()
@@ -890,6 +891,13 @@ class Control:
         elif kind == 'navigate':
             pose = validate_pose(packet['goal'])
             pose = dict(x_m=pose['x_m'], y_m=pose['y_m'], yaw_deg=math.degrees(pose['yaw_rad']))
+            if self.config.get('grasp_test_hold'):
+                self.require_arm()
+                angles = wait_arm(self.arm, timeout=3)
+                transport = self.config['transport_angles']
+                if (transport is None or len(angles) != len(transport)
+                        or any(abs(a-b) > 1 for a, b in zip(angles[:3], transport[:3]))):
+                    raise ValueError('Fold arm before navigating with a held item')
             self.go(pose)
         elif kind == 'fetch':
             self.fetch(packet)

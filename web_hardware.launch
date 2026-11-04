@@ -48,6 +48,8 @@
         acc_lim_y: 0.2
         acc_lim_theta: 0.3
         holonomic_robot: false
+        # Score in-place turns at the chassis center, not inside a nearby inflated obstacle.
+        heading_lookahead: 0.0
         # 15 degrees, matching the caller's arrival check.
         yaw_goal_tolerance: 0.2617993877991494
         xy_goal_tolerance: 0.12

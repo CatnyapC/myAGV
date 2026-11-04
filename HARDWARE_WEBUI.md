@@ -76,6 +76,8 @@ the driver watchdog are required for motion.
 
 The navigation patch ranks legal in-place turns by the shortest angle toward a
 visible path point, using the planner's existing `headingDiff` calculation.
+`heading_lookahead: 0.0` scores turns at the chassis center. The previous 32.5 cm
+virtual point could enter an inflated obstacle and reject collision-free rotation.
 The upstream grid-distance score can tie at 0.1 rad/s and prefer the clockwise
 sample even when counterclockwise is shorter. Collision checks, speed limits,
 oscillation checks and final goal-heading alignment stay in the planner.
@@ -378,6 +380,9 @@ Both costmaps must confirm the snapshot before motion. STOP, leases and fresh
 LiDAR/odometry checks remain active. Completion, failure or cancellation restores
 the normal map and live obstacle layers; bridge restart also restores live layers.
 The local planner cannot add automatic reverse escape movements to the retreat.
+After a failed Fetch, Go can return with the item held only when measured arm joints
+match the recorded transport pose within one degree. It preserves the gripper and
+fourth axis; normal navigation guards still apply.
 Navigation to the observation point and back retains normal obstacle checks.
 The default collision radius is 0.21 m; the configured hardware radius is applied
 to both ROS costmaps and application clearance checks.

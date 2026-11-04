@@ -447,6 +447,7 @@ class NavigationTest(unittest.TestCase):
         self.assertEqual(params['recovery_behavior_enabled'], 'false')
         self.assertEqual(params['clearing_rotation_allowed'], 'false')
         self.assertEqual(float(params['escape_vel']), 0)
+        self.assertEqual(float(params['heading_lookahead']), 0)
 
     def test_timeout_cancels_and_waits_for_ack(self):
         self.nav.client.get_state.return_value = 1

@@ -259,6 +259,28 @@ class ControlTest(unittest.TestCase):
                     c.execute(dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=0)))
                 self.assertEqual(c.robot.nav.go_to.call_count, 1)
 
+    def test_held_item_go_requires_measured_fold_and_preserves_gripper(self):
+        for measured, homed, allowed in (([0,10,20,-40], True, True),
+                                         ([0,12,20,-40], True, False),
+                                         ([0,10,20,-40], False, False)):
+            c = fake_control()
+            c.arm_homed = homed
+            hold = dict(item_id='held')
+            c.config.update(grasp_test_hold=hold, transport_angles=[0,10,20,90])
+            c.go, c.grip = Mock(), Mock()
+            with patch('robot_control.wait_arm', return_value=measured):
+                command = dict(type='navigate', goal=dict(x_m=1, y_m=2, yaw_rad=0))
+                if allowed:
+                    c.execute(command)
+                    c.go.assert_called_once()
+                else:
+                    with self.assertRaises((RuntimeError, ValueError)):
+                        c.execute(command)
+                    c.go.assert_not_called()
+            c.grip.assert_not_called()
+            c.arm.set_angles.assert_not_called()
+            self.assertEqual(c.config['grasp_test_hold'], hold)
+
     def test_go_forwards_arrival_requirement_and_cleans_up(self):
         goal = dict(x_m=1, y_m=2, yaw_deg=90)
         for required in (True, False):

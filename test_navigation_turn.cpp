@@ -49,7 +49,7 @@ int main(int argc, char** argv) {
           // Match web_hardware.launch; meter_scoring scales distance biases by .05.
           base_local_planner::TrajectoryPlanner planner(
               world, map, footprint, .2, .2, .3, 1.5, .025, 8, 20,
-              .6 * .05, .8 * .05, .01, .325, .05, .1, M_PI_2,
+              .6 * .05, .8 * .05, .01, 0.0, .05, .1, M_PI_2,
               false, .05, .02, .1, -.1, .03, 0.0);
           std::vector<geometry_msgs::PoseStamped> plan;
           for (int i = 0; i <= 40; ++i) {
@@ -97,5 +97,35 @@ int main(int argc, char** argv) {
       }
     }
   }
-  std::cout << "Measured-stop, turn-first, shortest-turn and collision regressions passed\n";
+  // A virtual lookahead point can be blocked while the actual rotating footprint is clear.
+  map.resetMap(0, 0, 120, 120);
+  for (unsigned x = 0; x < 120; ++x)
+    for (unsigned y = 0; y < 120; ++y) {
+      double wx, wy;
+      map.mapToWorld(x, y, wx, wy);
+      if (std::hypot(wx + .23, wy + .23) < .1)
+        map.setCost(x, y, costmap_2d::INSCRIBED_INFLATED_OBSTACLE);
+    }
+  for (double lookahead : {.325, 0.0}) {
+    base_local_planner::TrajectoryPlanner planner(world, map, footprint,
+        .2, .2, .3, 1.5, .025, 8, 20, .6*.05, .8*.05, .01,
+        lookahead, .05, .1, M_PI_2, false, .05, .02, .1, -.1, .03, 0.0);
+    std::vector<geometry_msgs::PoseStamped> plan;
+    for (int i = 0; i <= 20; ++i) {
+      geometry_msgs::PoseStamped p;
+      p.pose.position.x = i * .05;
+      p.pose.orientation.w = 1;
+      plan.push_back(p);
+    }
+    planner.updatePlan(plan);
+    geometry_msgs::PoseStamped pose, velocity, output;
+    pose.pose.orientation.z = sin(-3*M_PI/8);
+    pose.pose.orientation.w = cos(-3*M_PI/8);
+    velocity.pose.orientation.w = 1;
+    auto trajectory = planner.findBestPath(pose, velocity, output);
+    assert(planner.checkTrajectory(0, 0, -3*M_PI/4, 0, 0, 0, 0, 0, .1));
+    assert((trajectory.cost_ >= 0) == (lookahead == 0));
+    if (lookahead == 0) assert(trajectory.xv_ == 0 && trajectory.thetav_ > 0);
+  }
+  std::cout << "Measured-stop, turn-first, shortest-turn, nearby-obstacle and collision regressions passed\n";
 }
