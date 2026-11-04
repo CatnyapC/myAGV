@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 from robot_ros import RobotROS
+from robot_safety import zones_visible
 
 
 class SensorFreshnessTest(unittest.TestCase):
@@ -85,6 +86,9 @@ class FetchMapFreezeTest(unittest.TestCase):
         self.robot.freeze_fetch_map()
         self.assertEqual(self.robot.fetch_map['cells'], [100, 0, 100, -1])
         self.assertEqual(self.robot.maps.publish.call_args.args[0].data, [100, 0, 100, 0])
+        # The first fresh costmap may still contain the previous static layer.
+        self.assertFalse(zones_visible({**self.robot.grid, 'cells': [100, 0, 99, 0]}, self.robot.zone_points))
+        self.assertTrue(zones_visible(self.robot.derived, self.robot.zone_points))
         self.assertEqual(self.robot.costmaps, {})
         self.observed[:] = [0, 100, 100, 0]
         self.robot.apply_zones(self.robot.zones)

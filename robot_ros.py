@@ -207,7 +207,8 @@ class RobotROS:
             raise ValueError('No-go zones belong to a different map')
         planning_map = getattr(self, 'fetch_map', None) or self.grid
         derived = navigation_grid(planning_map, zones['zones'])
-        mask = navigation_grid({**self.grid, 'cells': [0] * len(self.grid['cells'])}, zones['zones'])
+        mask = (derived if getattr(self, 'fetch_map', None) is not None else
+                navigation_grid({**self.grid, 'cells': [0] * len(self.grid['cells'])}, zones['zones']))
         r, width = self.grid['resolution_m'], self.grid['width']
         points = [local_to_world([((i % width)+.5)*r, ((i//width)+.5)*r], self.grid['origin'])
                   for i, value in enumerate(mask['cells']) if value == 100]
@@ -215,10 +216,6 @@ class RobotROS:
         message.data = derived['cells']
         message.header.stamp = self.ros.Time.now()
         message.header.seq = zones['revision']
-        if getattr(self, 'fetch_map', None) is not None:
-            points.extend(local_to_world([((i % width)+.5)*r, ((i//width)+.5)*r], self.grid['origin'])
-                          for i, cell in enumerate(planning_map['cells'])
-                          if cell == 100 and self.grid['cells'][i] != 100)
         with self.lock:
             zones_changed = self.zones != zones
             self.costmap_after = message.header.stamp.to_sec()
