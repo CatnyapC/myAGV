@@ -199,9 +199,9 @@ def approach_step(result, photo, grid, zones, item, radius, config):
         return goal, None
     goal_box, current_box = result['goal'], result['current']
     scale = (current_box[2] - current_box[0]) / (goal_box[2] - goal_box[0])
-    matched = (.80 <= scale <= 1.20
-               and abs(current_box[1] - goal_box[1]) <= 150 and abs(current_box[3] - goal_box[3]) <= 150
-               and abs(result['distance_m'] * (1 - scale)) <= .03 + 1e-9)
+    matched = (.60 <= scale <= 1.60
+               and abs(current_box[1] - goal_box[1]) <= 300 and abs(current_box[3] - goal_box[3]) <= 300
+               and abs(result['distance_m'] * (1 - scale)) <= .12 + 1e-9)
     if result['arrived']:
         if result['forward_m'] or result['turn_deg'] or not matched:
             raise ValueError('Item approach arrival does not match saved front GOAL')
@@ -280,14 +280,14 @@ Return only six JSON fields: forward_m, turn_deg, bearing_deg, distance_m, goal,
 Each round: forward_m must be -0.25..0.25 meters; positive moves forward, negative moves backward. turn_deg must be -15..15 degrees.
 0.25 meters is the maximum travel in either direction per round, never a default step. The controller clamps larger requests or reduces them near GOAL.
 Stop after each bounded adjustment and reassess the new CURRENT photo; never request the entire remaining travel at once.
-Prioritize forward distance. Center the item when useful, but keeping it in view is enough.
+Prioritize reaching the coarse distance band. Keeping the item identifiable in view is enough; do not turn merely to center it or match GOAL's viewing angle.
 No heading or centering tolerance is an arrival requirement; ALIGN fixes angle later.
 Turn only when needed to keep the item visible. Prefer turn-only, then reassess, if its direction is uncertain.
 Use GOAL/CURRENT target width ratio and measured executed poses to estimate remaining range.
 Travel magnitude must also be at most half of distance_m*abs(1-current_width/goal_width); reduce it further when uncertain.
 GOAL/current are visible target boxes [left,top,right,bottom], integers normalized to 0..1000.
-Measure independently; retain clipping. At 80..120% of GOAL width, similar vertical cropping and estimated remaining range within 0.03 meters, return zero motion: Approach is ready for ALIGN.
-Do not chase millimeter-level differences or exact framing. ALIGN handles the remaining 1..3 cm, angle and centering; do not request a tiny final move when the visual distance already matches.
+Measure independently; retain clipping. At 60..160% of GOAL width, top and bottom edges each within 300 normalized units of GOAL, and estimated remaining range abs(distance_m*(1-current_width/goal_width)) within 0.12 meters, return zero motion: Approach is ready for ALIGN.
+This is a coarse handoff, not the final grasp pose. Within this band, accept a closer, off-center or oblique view and return forward_m=0 and turn_deg=0 even if an adjustment could improve the match. ALIGN handles the remaining distance, angle and centering under its own workspace checks; do not retreat merely because CURRENT is larger than GOAL within this band.
 If the item is identified but no useful forward/turn correction remains, return zero motion to finish Approach and proceed to ALIGN instead of repeating tiny corrections.
 Never advance when CURRENT width is at least GOAL width. Outside the arrival tolerance, if CURRENT is too large, request a small negative forward_m to retreat, then reassess; being too close is recoverable.
 If identity is absent/ambiguous, return null boxes and forward_m=0. Recover visibility with a nonzero turn_deg toward the last seen direction, bounded to -15..15 degrees.

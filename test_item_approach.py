@@ -111,9 +111,29 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         near = {**result(), 'forward_m': .009, 'distance_m': .1, 'turn_deg': 15,
                 'current': [30, 100, 374, 900]}
         self.assertIsNone(approach_step(near, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
-        for change in (dict(distance_m=.5), dict(current=result()['current']), dict(current=[30, 200, 374, 900])):
+        for change in (dict(distance_m=1), dict(current=result()['current']), dict(current=[30, 301, 374, 900])):
             with self.subTest(change=change):
                 self.assertIsNotNone(approach_step({**near, **change}, dict(base_pose=POSE), grid, [], ITEM, .25, DEFAULT_CONFIG)[0])
+
+    def test_coarse_handoff_accepts_near_far_and_off_center_without_corrections(self):
+        for current, distance in (([20, 300, 260, 700], .3), ([20, 300, 660, 700], .2)):
+            for forward in (-.25, .25):
+                with self.subTest(current=current, forward=forward):
+                    proposal = {**result(), 'current': current, 'distance_m': distance,
+                                'bearing_deg': 60, 'forward_m': forward, 'turn_deg': 15}
+                    goal, estimate = approach_step(proposal, dict(base_pose=POSE), open_map(), [], ITEM, .25, DEFAULT_CONFIG)
+                    self.assertIsNone(goal)
+                    self.assertEqual(estimate['item_id'], ITEM['id'])
+
+    def test_coarse_handoff_keeps_scale_crop_and_distance_boundaries(self):
+        near = {**result(), 'current': [20, 300, 660, 700], 'distance_m': .2,
+                'forward_m': -.25, 'turn_deg': 15}
+        for change in (dict(current=[20, 300, 661, 700]), dict(current=[20, 300, 259, 700]),
+                       dict(current=[20, 301, 660, 700]), dict(current=[20, 300, 660, 699]),
+                       dict(distance_m=.201)):
+            with self.subTest(change=change):
+                self.assertIsNotNone(approach_step({**near, **change}, dict(base_pose=POSE),
+                                                 open_map(), [], ITEM, .25, DEFAULT_CONFIG)[0])
 
     def test_clipped_views_follow_normal_model_turn_handling(self):
         grid = open_map()
@@ -238,7 +258,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(approach_step({**close, 'forward_m': 0}, dict(base_pose=POSE),
                                        grid, [], ITEM, .2, DEFAULT_CONFIG)[0])
         for change, error in ((dict(arrived=True, forward_m=0), 'saved front GOAL'),
-                              (dict(arrived=True, forward_m=0, current=[300, 200, 700, 1000]), 'saved front GOAL'),
+                              (dict(arrived=True, forward_m=0, current=[300, 301, 700, 1000]), 'saved front GOAL'),
                               (dict(goal=None), 'bounds'), (dict(seen=False), 'lost'),
                               (dict(confidence=.69), 'confidence')):
             with self.subTest(change=change), self.assertRaisesRegex(ValueError, error):
@@ -255,12 +275,12 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
 
     def test_too_close_can_reobserve_then_retreat_ignoring_occupancy(self):
         grid = open_map()
-        close = {**result(), 'distance_m': .2, 'current': [240, 0, 760, 1000]}
+        close = {**result(), 'distance_m': .2, 'current': [160, 0, 840, 1000]}
         goal, _ = approach_step(close, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
         self.assertEqual(goal, POSE)
         for forward in (-.1, -.5):
             goal, _ = approach_step({**close, 'forward_m': forward}, dict(base_pose=POSE), grid, [], ITEM, .2, DEFAULT_CONFIG)
-            self.assertAlmostEqual(goal['x_m'], 1.97)
+            self.assertAlmostEqual(goal['x_m'], 1.93)
             self.assertEqual(goal['yaw_rad'], 0)
         blocked = deepcopy(grid)
         blocked['cells'][30*80+19] = 100
@@ -581,6 +601,10 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(fields['turn_deg']['maximum'], 15)
                     prompt = bodies[0]['messages'][0]['content']
                     self.assertIn('-0.25..0.25 meters', prompt)
+                    self.assertIn('60..160%', prompt)
+                    self.assertIn('within 300 normalized units', prompt)
+                    self.assertIn('within 0.12 meters', prompt)
+                    self.assertIn('do not turn merely to center it', prompt)
                     self.assertNotIn('full remaining forward distance', prompt)
                     log = await (await client.get('/api/fetch-log')).json()
                     self.assertEqual([r['mode'] for r in log['rounds']], ['approach', 'approach'])
