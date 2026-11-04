@@ -25,6 +25,7 @@ STATION = {"base": POSE, "arm_angles_deg": [90, 20, 30]}
 class NavigationTurnPatchTest(unittest.TestCase):
     scoring = ('      //the point is legal... add it to the trajectory\n'
                'cost = path_distance_bias_ * path_dist + goal_dist * goal_distance_bias_ + occdist_scale_ * occ_cost;\n'
+               "    //and finally, if we can't do anything else, we want to generate trajectories that move backwards slowly\n"
                'if(best_traj->cost_ == -1.0)\n      best_traj->cost_ = 1.0;\n')
     goal_stop = ('  bool TrajectoryPlannerROS::stopWithAccLimits(const Pose& global_pose, const Pose& robot_vel, Twist& cmd_vel){\n'
                  '    double vx = sign(robot_vel.pose.position.x) * std::max(0.0, fabs(robot_vel.pose.position.x) - acc_lim_x_ * sim_period_);\n'
@@ -63,6 +64,11 @@ class NavigationTurnPatchTest(unittest.TestCase):
         v3 = updated.replace('30 degrees', '20 degrees').replace('M_PI / 6.0', 'M_PI / 9.0')
         self.assertEqual(patch_navigation_turn(v3), updated)
         self.assertIn('MYAGV_COLLISION_STOP', updated)
+        self.assertIn('if (backup_vel_ >= 0.0)', updated)
+        escape_start = updated.index('    // MYAGV_NO_ESCAPE')
+        escape_end = updated.index("    //and finally, if we can't", escape_start)
+        v4 = updated[:escape_start] + updated[escape_end:]
+        self.assertEqual(patch_navigation_turn(v4), updated)
         self.assertNotIn('best_traj->cost_ = 1.0;', updated)
         heading_only = source.replace(score, 'double ahead_gdist = headingDiff(cell_x, cell_y, x_r, y_r, th_r); // MYAGV_SHORTEST_TURN', 1)
         self.assertEqual(patch_navigation_turn(heading_only), updated)
@@ -91,17 +97,20 @@ class NavigationTurnPatchTest(unittest.TestCase):
             v2_backup.write_text('previous patch backup')
             v3_backup = path.with_suffix('.cpp.before-shortest-turn-v3')
             v3_backup.write_text('20 degree patch backup')
+            v4_backup = path.with_suffix('.cpp.before-shortest-turn-v4')
+            v4_backup.write_text('30 degree patch backup')
             command = [sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')), str(path)]
             for _ in range(2):
                 subprocess.run(command, check=True, capture_output=True, text=True)
             self.assertEqual(path.read_text(), patch_navigation_turn(source))
             self.assertEqual(wrapper.read_text(), patch_goal_stop(self.goal_stop))
-            backup = path.with_suffix('.cpp.before-shortest-turn-v4')
+            backup = path.with_suffix('.cpp.before-shortest-turn-v5')
             self.assertEqual(backup.read_text(), source)
-            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v4').read_text(), self.goal_stop)
+            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v5').read_text(), self.goal_stop)
             self.assertEqual(old_backup.read_text(), 'original upstream source')
             self.assertEqual(v2_backup.read_text(), 'previous patch backup')
             self.assertEqual(v3_backup.read_text(), '20 degree patch backup')
+            self.assertEqual(v4_backup.read_text(), '30 degree patch backup')
             path.write_text(source)
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
@@ -121,7 +130,7 @@ class NavigationTurnPatchTest(unittest.TestCase):
                                      str(path)], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(path.read_text(), source)
-            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v4').exists())
+            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v5').exists())
 
 
 class FakeArm:
@@ -437,6 +446,7 @@ class NavigationTest(unittest.TestCase):
         self.assertAlmostEqual(float(params['yaw_goal_tolerance']), math.radians(15))
         self.assertEqual(params['recovery_behavior_enabled'], 'false')
         self.assertEqual(params['clearing_rotation_allowed'], 'false')
+        self.assertEqual(float(params['escape_vel']), 0)
 
     def test_timeout_cancels_and_waits_for_ack(self):
         self.nav.client.get_state.return_value = 1

@@ -47,6 +47,7 @@ def fake_control():
     c.robot = SimpleNamespace(grid=dict(map_id='map'), zones=dict(revision=2), zero=Mock(),
             nav=Mock(), costmap_received={}, layers_ok=True, driver_watchdog=True, exclusive=True, sensors_ready=lambda: True,
             zones_ready=lambda: True, clearance_ready=lambda r: True, validate_goal=Mock(), commit_map_update=Mock(),
+            freeze_fetch_map=Mock(), restore_fetch_map=Mock(),
             recover_base_stop=Mock())
     c.robot.recover_base_stop.side_effect = lambda: c.robot.nav.wait_stopped()
     return c

@@ -93,10 +93,12 @@ stop gate before final rotation. Feedback-minus-acceleration braking can keep
 driving on this chassis when its low-speed response exceeds the command.
 Web Go and Fetch use 12 cm / 15 degree arrival tolerances in both the ROS planner
 and the caller's completion check. The position latch retains arrival during final rotation.
-The installer refuses unknown source layouts and keeps `.before-shortest-turn-v4`,
+The installer refuses unknown source layouts and keeps `.before-shortest-turn-v5`,
 preserving earlier backups when upgrading.
 Web navigation caps turns at 0.1 rad/s and forward travel at 0.05 m/s;
-reverse escape stays at 0.02 m/s. Global planning runs on demand:
+automatic reverse escape is disabled. When no legal trajectory exists, the local
+planner stops and requests replanning; it cannot extend Fetch's measured 10 cm retreat.
+Global planning runs on demand:
 periodic replanning resets TrajectoryPlannerROS's accepted-position
 latch and can send the robot back toward the point during final heading alignment.
 Local obstacle checks stay active and a failed local trajectory requests a new plan.
@@ -367,6 +369,15 @@ checks remain enforced. These local phases have no sensed-obstacle collision sto
 After grasping and folding the arm, Fetch retreats 10 cm along the current backward
 axis using the same bounded odometry-controlled approach executor. This retreat
 must finish and stop before return navigation; a timeout aborts the return.
+Before any Fetch motion, the bridge snapshots the accepted map plus lethal
+obstacles in the current global costmap. It disables both live obstacle layers
+and feeds this fixed snapshot to the static layers for the entire Fetch. Inflation
+is applied once; inflation costs are not copied back as obstacles. Existing
+obstacles and no-go zones remain, but new obstacles cannot enter the Fetch plan.
+Both costmaps must confirm the snapshot before motion. STOP, leases and fresh
+LiDAR/odometry checks remain active. Completion, failure or cancellation restores
+the normal map and live obstacle layers; bridge restart also restores live layers.
+The local planner cannot add automatic reverse escape movements to the retreat.
 Navigation to the observation point and back retains normal obstacle checks.
 The default collision radius is 0.21 m; the configured hardware radius is applied
 to both ROS costmaps and application clearance checks.

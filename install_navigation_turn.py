@@ -40,6 +40,17 @@ def patch(source):
         if source.count(heading + anchor) != 1 or 'MYAGV_TURN_FIRST' in source:
             raise ValueError('Unexpected forward heading gate; refused partial patch')
         source = source.replace(heading + anchor, gate + heading + anchor)
+    fallback = "    //and finally, if we can't do anything else, we want to generate trajectories that move backwards slowly"
+    disabled = ('    // MYAGV_NO_ESCAPE: zero escape speed means stop and replan, not a valid stationary trajectory.\n'
+                '    if (backup_vel_ >= 0.0) {\n'
+                '      escaping_ = false;\n'
+                '      best_traj->cost_ = -1.0;\n'
+                '      return *best_traj;\n'
+                '    }\n\n')
+    if source.count(disabled + fallback) != 1:
+        if source.count(fallback) != 1 or 'MYAGV_NO_ESCAPE' in source:
+            raise ValueError('Unexpected escape fallback; refused partial patch')
+        source = source.replace(fallback, disabled + fallback)
     unsafe = 'if(best_traj->cost_ == -1.0)\n      best_traj->cost_ = 1.0;'
     safe = '// MYAGV_COLLISION_STOP: keep failed collision checks invalid.'
     if source.count(safe) == 1 and unsafe not in source:
@@ -76,7 +87,7 @@ if __name__ == '__main__':
         original = source.read_text()
         updated = transform(original)
         if updated != original:
-            backup = source.with_suffix(source.suffix + '.before-shortest-turn-v4')
+            backup = source.with_suffix(source.suffix + '.before-shortest-turn-v5')
             if backup.exists():
                 raise SystemExit('Backup exists; inspect previous installation first')
             changes.append((source, backup, original, updated))

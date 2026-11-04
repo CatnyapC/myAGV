@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
           base_local_planner::TrajectoryPlanner planner(
               world, map, footprint, .2, .2, .3, 1.5, .025, 8, 20,
               .6 * .05, .8 * .05, .01, .325, .05, .1, M_PI_2,
-              false, .05, .02, .1, -.1, .03, -.02);
+              false, .05, .02, .1, -.1, .03, 0.0);
           std::vector<geometry_msgs::PoseStamped> plan;
           for (int i = 0; i <= 40; ++i) {
             geometry_msgs::PoseStamped p;
@@ -66,6 +66,16 @@ int main(int argc, char** argv) {
           pose.pose.orientation.z = sin(yaw / 2);
           pose.pose.orientation.w = cos(yaw / 2);
           velocity.pose.orientation.w = 1;
+          if (!blocked && error == 0) {
+            // A disabled escape must request replanning, not silently keep a zero-speed goal alive.
+            planner.escaping_ = true;
+            planner.stuck_left = planner.stuck_right = true;
+            auto failed = planner.findBestPath(pose, velocity, output);
+            assert(failed.cost_ < 0 && !planner.escaping_);
+            assert(output.pose.position.x == 0 && output.pose.position.y == 0);
+            assert(output.pose.orientation.z == 0 && output.pose.orientation.w == 1);
+            planner.stuck_left = planner.stuck_right = false;
+          }
           auto trajectory = planner.findBestPath(pose, velocity, output);
           if (blocked) {
             assert(trajectory.cost_ < 0);

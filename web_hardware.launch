@@ -43,7 +43,7 @@
         max_vel_theta: 0.1
         min_vel_theta: -0.1
         min_in_place_vel_theta: 0.03
-        escape_vel: -0.02
+        escape_vel: 0.0
         acc_lim_x: 0.2
         acc_lim_y: 0.2
         acc_lim_theta: 0.3

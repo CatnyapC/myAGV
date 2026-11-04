@@ -1,7 +1,8 @@
 """Sensor freshness stays consistent across concurrent ROS callbacks."""
 from types import SimpleNamespace
+import threading
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from robot_ros import RobotROS
 
@@ -59,3 +60,83 @@ class SensorFreshnessTest(unittest.TestCase):
             self.robot.ros.Time.now.return_value.__sub__.return_value.to_sec.return_value = .1
             self.scan.ranges = [float('inf'), float('nan'), .01, 11]
             self.assertFalse(self.robot.sensors_ready())
+
+
+class FetchMapFreezeTest(unittest.TestCase):
+    def setUp(self):
+        self.robot = RobotROS.__new__(RobotROS)
+        self.robot.lock = threading.RLock()
+        self.robot.ros, self.robot.maps = MagicMock(), Mock()
+        self.robot.ros.Time.now.return_value.to_sec.return_value = 100
+        self.robot.source = SimpleNamespace(header=SimpleNamespace())
+        self.robot.grid = dict(frame='map', width=2, height=2, resolution_m=.1,
+                               origin=dict(x_m=0, y_m=0, yaw_rad=0), map_id='map', revision=1,
+                               cells=[0, 0, 100, -1])
+        self.robot.zones = dict(map_id='map', revision=2, zones=[])
+        self.robot.fetch_map = None
+        self.robot.zones_ready = Mock(return_value=True)
+        self.robot.sync_obstacle_layers = Mock()
+        self.observed = [100, 99, 100, 0]
+        self.robot.costmaps = {'global': (10, 2, True, {**self.robot.grid, 'cells': self.observed})}
+
+    def test_snapshot_keeps_initial_obstacles_without_double_inflation_and_restores(self):
+        modes = []
+        self.robot.sync_obstacle_layers.side_effect = lambda: modes.append(self.robot.fetch_map is None)
+        self.robot.freeze_fetch_map()
+        self.assertEqual(self.robot.fetch_map['cells'], [100, 0, 100, -1])
+        self.assertEqual(self.robot.maps.publish.call_args.args[0].data, [100, 0, 100, 0])
+        self.assertEqual(self.robot.costmaps, {})
+        self.observed[:] = [0, 100, 100, 0]
+        self.robot.apply_zones(self.robot.zones)
+        self.assertEqual(self.robot.derived['cells'], [100, 0, 100, 0])
+        self.robot.restore_fetch_map()
+        self.assertIsNone(self.robot.fetch_map)
+        self.assertEqual(self.robot.derived['cells'], [0, 0, 100, 0])
+        self.assertEqual(self.robot.grid['cells'], [0, 0, 100, -1])
+        self.assertEqual(modes, [False, True])
+
+    def test_partial_freeze_can_restore_and_invalid_geometry_never_starts(self):
+        self.robot.sync_obstacle_layers.side_effect = [RuntimeError('layer failed'), None]
+        with self.assertRaisesRegex(RuntimeError, 'layer failed'):
+            self.robot.freeze_fetch_map()
+        self.robot.restore_fetch_map()
+        self.assertIsNone(self.robot.fetch_map)
+        self.assertEqual(self.robot.derived['cells'], [0, 0, 100, 0])
+        self.robot.costmaps = {'global': (10, 2, True, {**self.robot.grid, 'width': 3})}
+        with self.assertRaisesRegex(RuntimeError, 'geometry'):
+            self.robot.freeze_fetch_map()
+        self.assertIsNone(self.robot.fetch_map)
+
+    def test_queued_pre_freeze_costmap_cannot_satisfy_wait(self):
+        self.robot.published_at, self.robot.costmap_after = 10, 100
+        self.robot.costmaps, self.robot.costmap_received, self.robot.zone_points = {}, {}, []
+        self.robot.ros.Time.now.return_value.__sub__.return_value.to_sec.return_value = .1
+        grid = dict(width=2, height=2, resolution_m=.1, cells=[0]*4)
+        for stamp, accepted in ((99.9, False), (100.1, True)):
+            msg = SimpleNamespace(header=SimpleNamespace(frame_id='map', stamp=SimpleNamespace(to_sec=lambda: stamp)),
+                                  info=SimpleNamespace(width=2, height=2))
+            with patch('robot_ros.grid_dict', return_value=grid), \
+                    patch('robot_ros.time.monotonic', return_value=10.5):
+                self.robot.receive_costmap('global', msg)
+            self.assertEqual('global' in self.robot.costmaps, accepted)
+
+    def test_obstacle_layers_recover_after_restart_and_disable_only_during_fetch(self):
+        settings = {side: False for side in ('global', 'local')}
+        self.robot.ros.get_param.side_effect = lambda key, default: settings[key.split('/')[2].split('_')[0]]
+        def client(prefix, **kwargs):
+            side = prefix.split('/')[2].split('_')[0]
+            instance = Mock()
+            def update(values):
+                settings[side] = values['enabled']
+                return values
+            instance.update_configuration.side_effect = update
+            return instance
+        with patch.dict('sys.modules', {'dynamic_reconfigure.client': SimpleNamespace(Client=client)}):
+            RobotROS.sync_obstacle_layers(self.robot)
+            self.assertEqual(settings, {'global': True, 'local': True})
+            self.robot.fetch_map = self.robot.grid
+            RobotROS.sync_obstacle_layers(self.robot)
+            self.assertEqual(settings, {'global': False, 'local': False})
+            self.robot.fetch_map = None
+            RobotROS.sync_obstacle_layers(self.robot)
+            self.assertEqual(settings, {'global': True, 'local': True})

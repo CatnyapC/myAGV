@@ -45,6 +45,7 @@ class RobotROS:
         self.lock = threading.RLock()
         self.source = self.grid = self.derived = None
         self.pending_map = None
+        self.fetch_map = None
         self.zones = None
         self.zone_points = []
         self.published_at = float('inf')
@@ -204,7 +205,8 @@ class RobotROS:
     def apply_zones(self, zones):
         if self.grid is None or zones['map_id'] != self.grid['map_id']:
             raise ValueError('No-go zones belong to a different map')
-        derived = navigation_grid(self.grid, zones['zones'])
+        planning_map = getattr(self, 'fetch_map', None) or self.grid
+        derived = navigation_grid(planning_map, zones['zones'])
         mask = navigation_grid({**self.grid, 'cells': [0] * len(self.grid['cells'])}, zones['zones'])
         r, width = self.grid['resolution_m'], self.grid['width']
         points = [local_to_world([((i % width)+.5)*r, ((i//width)+.5)*r], self.grid['origin'])
@@ -213,8 +215,13 @@ class RobotROS:
         message.data = derived['cells']
         message.header.stamp = self.ros.Time.now()
         message.header.seq = zones['revision']
+        if getattr(self, 'fetch_map', None) is not None:
+            points.extend(local_to_world([((i % width)+.5)*r, ((i//width)+.5)*r], self.grid['origin'])
+                          for i, cell in enumerate(planning_map['cells'])
+                          if cell == 100 and self.grid['cells'][i] != 100)
         with self.lock:
             zones_changed = self.zones != zones
+            self.costmap_after = message.header.stamp.to_sec()
             self.zones, self.derived, self.zone_points = zones, derived, points
             if zones_changed:
                 self.published_at = time.monotonic()
@@ -236,8 +243,54 @@ class RobotROS:
         age = (self.ros.Time.now() - message.header.stamp).to_sec()
         self.costmap_received[name] = dict(age_s=round(age, 3), mask_applied=valid)
         with self.lock:
-            if published == self.published_at and time.monotonic() > published + .4 and -.1 <= age <= 2:
+            if (published == self.published_at and time.monotonic() > published + .4 and -.1 <= age <= 2
+                    and message.header.stamp.to_sec() >= getattr(self, 'costmap_after', 0)):
                 self.costmaps[name] = (time.monotonic(), revision, valid, grid)
+
+    def sync_obstacle_layers(self):
+        from dynamic_reconfigure.client import Client
+        with self.lock:
+            enabled = getattr(self, 'fetch_map', None) is None
+            for side in ('global', 'local'):
+                prefix = '/move_base/%s_costmap/obstacle_layer' % side
+                if self.ros.get_param(prefix + '/enabled', True) == enabled:
+                    continue
+                client = Client(prefix, timeout=2)
+                try:
+                    config = client.update_configuration(dict(enabled=enabled))
+                finally:
+                    client.close()
+                if config['enabled'] != enabled:
+                    raise RuntimeError('ROS obstacle layer rejected Fetch map mode')
+
+    def freeze_fetch_map(self):
+        if not self.zones_ready():
+            raise RuntimeError('Fresh ROS costmaps required to freeze Fetch map')
+        with self.lock:
+            if getattr(self, 'fetch_map', None) is not None:
+                raise RuntimeError('Fetch map already frozen')
+            global_map = self.costmaps['global'][3]
+            if any(global_map[key] != self.grid[key] for key in
+                   ('frame', 'width', 'height', 'resolution_m', 'origin')):
+                raise RuntimeError('Global costmap geometry differs from Fetch map')
+            # Copy lethal observations only; ROS inflates the snapshot once.
+            cells = [100 if observed == 100 else original
+                     for original, observed in zip(self.grid['cells'], global_map['cells'])]
+            self.fetch_map = {**self.grid, 'cells': cells}
+            self.published_at = time.monotonic()
+            self.costmaps = {}
+        self.sync_obstacle_layers()
+        self.apply_zones(self.zones)
+
+    def restore_fetch_map(self):
+        with self.lock:
+            if getattr(self, 'fetch_map', None) is None:
+                return
+            self.fetch_map = None
+            self.published_at = time.monotonic()
+            self.costmaps = {}
+        self.apply_zones(self.zones)
+        self.sync_obstacle_layers()
 
     def write_maps(self):
         with self.lock:
@@ -245,7 +298,7 @@ class RobotROS:
             global_map = self.costmaps.get('global')
             if not grid or not derived or not zones:
                 return
-            key = grid['map_id'], grid['revision'], zones['revision']
+            key = grid['map_id'], grid['revision'], zones['revision'], getattr(self, 'fetch_map', None) is not None
             if self.map_saved != key:
                 atomic_json(self.directory / 'navigation_map.json', {**derived, 'zone_revision': zones['revision']})
                 atomic_json(self.directory / 'map.json', grid)
@@ -357,6 +410,7 @@ class RobotROS:
         publishers = master.getSystemState()[0]
         self.exclusive = all(set(nodes) <= ({self.ros.get_name()} if topic == '/cmd_vel' else {self.ros.get_name(), '/move_base'})
                              for topic, nodes in publishers if topic in ('/cmd_vel', '/myagv/input_vel'))
+        self.sync_obstacle_layers()
         self.layers_ok = True
         for side in ('global', 'local'):
             prefix = '/move_base/%s_costmap/' % side

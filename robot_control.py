@@ -1403,13 +1403,23 @@ class Control:
             raise ValueError('Arm joint counts differ')
         validate_angles(transport)
         self.capture('arm', persist=False)
-        goal = approach_goal(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
-            dict(start_base, yaw_rad=math.radians(start_base['yaw_deg'])), packet['estimate'],
-            self.config['clearance_m'], config)
-        goal = dict(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad']))
         grasp = dict(item_id=packet['item_id'], grasp_z_mm=grasp_z)
         try:
+            self.status = 'Freezing Fetch planning map'
+            self.robot.freeze_fetch_map()
+            deadline = time.monotonic() + 5
+            while not self.robot.zones_ready():
+                self.watchdog()
+                if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+                    raise Stopped('Fetch map freeze cancelled')
+                if time.monotonic() >= deadline:
+                    raise TimeoutError('Frozen Fetch map not applied by both ROS costmaps')
+                time.sleep(.05)
             current()
+            goal = approach_goal(self.robot.grid, self.robot.zones['zones'], self.robot.costmaps['global'][3],
+                dict(start_base, yaw_rad=math.radians(start_base['yaw_deg'])), packet['estimate'],
+                self.config['clearance_m'], config)
+            goal = dict(x_m=goal['x_m'], y_m=goal['y_m'], yaw_deg=math.degrees(goal['yaw_rad']))
             self.fold()
             self.go(goal, require_arrival=False)
             approached = self.approach_item(packet)
@@ -1434,6 +1444,7 @@ class Control:
         finally:
             self.base_enabled = False
             self.robot.zero()
+            self.robot.restore_fetch_map()
 
     def manual_tick(self):
         if not isinstance(self.input, dict):
@@ -1472,6 +1483,7 @@ class Control:
                     mapping_mode=(self.directory.parent / 'mapping.json').exists(),
                     saved_map_revision=getattr(self.robot, 'saved_map_revision', 0),
                     map_save_error=getattr(self.robot, 'map_save_error', ''),
+                    fetch_map_frozen=getattr(self.robot, 'fetch_map', None) is not None,
                     driver_watchdog=self.robot.driver_watchdog, exclusive=self.robot.exclusive,
                     sensors_ready=self.robot.sensors_ready(), motion_available=ready,
                     navigation_ready=ready and self.localized and self.robot.zones_ready() and self.robot.clearance_ready(self.config['clearance_m']),

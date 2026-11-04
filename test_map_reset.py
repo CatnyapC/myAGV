@@ -47,6 +47,24 @@ def robot_at(root):
 
 
 class MapResetTest(unittest.TestCase):
+    def test_map_writer_tracks_fetch_snapshot_without_changing_saved_map(self):
+        with tempfile.TemporaryDirectory() as directory:
+            robot = robot_at(Path(directory))
+            robot.set_map(robot.source, robot.grid, robot.zones)
+            robot.write_maps()
+            original = json.loads((robot.directory / 'map.json').read_text())
+            robot.fetch_map = {**robot.grid, 'cells': [100] * len(robot.grid['cells'])}
+            robot.apply_zones(robot.zones)
+            robot.write_maps()
+            self.assertEqual(json.loads((robot.directory / 'navigation_map.json').read_text())['cells'],
+                             robot.fetch_map['cells'])
+            self.assertEqual(json.loads((robot.directory / 'map.json').read_text()), original)
+            robot.fetch_map = None
+            robot.apply_zones(robot.zones)
+            robot.write_maps()
+            self.assertEqual(json.loads((robot.directory / 'navigation_map.json').read_text())['cells'],
+                             robot.derived['cells'])
+
     def test_map_writer_retains_costmap_sample_age_and_skips_stale_feedback(self):
         with tempfile.TemporaryDirectory() as directory:
             robot = robot_at(Path(directory))

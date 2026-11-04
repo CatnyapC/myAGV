@@ -71,6 +71,14 @@ class MapFetchTest(unittest.TestCase):
             events.append(('retreat', dict(goal)))
             pose.update(x_m=goal['x_m'], y_m=goal['y_m'])
         c.move_approach = Mock(side_effect=retreat)
+        def freeze():
+            self.assertFalse(c.base_enabled)
+            events.append(('freeze',))
+        def restore():
+            self.assertFalse(c.base_enabled)
+            events.append(('restore',))
+        c.robot.freeze_fetch_map.side_effect = freeze
+        c.robot.restore_fetch_map.side_effect = restore
         def approach(packet):
             self.assertEqual(pose, dict(x_m=3.2, y_m=2.7, yaw_deg=math.degrees(.4)))
             events.append(('approach',))
@@ -82,8 +90,8 @@ class MapFetchTest(unittest.TestCase):
             c.config_path = Path(folder) / 'robot_config.json'
             c.execute(dict(fetch_packet(), preview=True, pickup_angles=[90, 20, 30, -15]))
             self.assertNotIn('grasp_test_hold', json.loads(c.config_path.read_text()))
-        self.assertEqual([e[0] for e in events], ['joints', 'go', 'approach', 'grip', 'joints', 'align',
-            'grip', 'coords', 'grip', 'coords', 'joints', 'retreat', 'go', 'joints', 'coords', 'grip', 'coords', 'joints'])
+        self.assertEqual([e[0] for e in events], ['freeze', 'joints', 'go', 'approach', 'grip', 'joints', 'align',
+            'grip', 'coords', 'grip', 'coords', 'joints', 'retreat', 'go', 'joints', 'coords', 'grip', 'coords', 'joints', 'restore'])
         self.assertEqual([e[1] for e in events if e[0] == 'joints'],
             [c.config['transport_angles'], [90, 20, 30, -15], [0, 10, 20, -15], [90, 21, 30, -15], c.config['transport_angles']])
         self.assertEqual([e[1] for e in events if e[0] == 'coords'],
@@ -96,7 +104,7 @@ class MapFetchTest(unittest.TestCase):
         c.robot.nav.go_to_pickup.assert_not_called()
 
     def test_fetch_preflight_and_stage_failures_stop_subsequent_actions(self):
-        for failure in ('camera', 'joints', 'height', 'confidence', 'approach', 'stand_off', 'align', 'retreat', 'return', 'stop', 'map'):
+        for failure in ('camera', 'joints', 'height', 'confidence', 'approach', 'stand_off', 'align', 'freeze', 'freeze_stop', 'retreat', 'return', 'stop', 'map'):
             with self.subTest(failure=failure):
                 c, packet = fake_control(), fetch_packet()
                 c.config['transport_angles'] = [0, 10, 20, 27]
@@ -114,6 +122,12 @@ class MapFetchTest(unittest.TestCase):
                 if failure == 'align': c.calibrate_fetch.side_effect = RuntimeError('alignment failed')
                 c.retreat_from_item = Mock()
                 if failure == 'retreat': c.retreat_from_item.side_effect = TimeoutError('retreat blocked')
+                if failure == 'freeze': c.robot.freeze_fetch_map.side_effect = RuntimeError('freeze failed')
+                if failure == 'freeze_stop':
+                    def stop_during_freeze():
+                        c.robot.zones_ready = lambda: False
+                        c.stop_pending = 'Stopped'
+                    c.robot.freeze_fetch_map.side_effect = stop_during_freeze
                 if failure == 'return': c.go.side_effect = [None, RuntimeError('return blocked')]
                 if failure == 'stop': c.approach_item.side_effect = lambda packet: setattr(c, 'stop_pending', 'STOP')
                 if failure == 'map': c.approach_item.side_effect = lambda packet: c.robot.zones.update(revision=3)
@@ -129,6 +143,8 @@ class MapFetchTest(unittest.TestCase):
                     c.grip.assert_not_called()
                     c.move_arm.assert_not_called()
                 if failure == 'retreat': self.assertEqual(c.go.call_count, 1)
+                if failure in ('freeze', 'freeze_stop', 'retreat', 'return'):
+                    c.robot.restore_fetch_map.assert_called_once()
                 self.assertFalse(c.base_enabled)
 
 

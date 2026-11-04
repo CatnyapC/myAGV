@@ -34,6 +34,7 @@ class MotorRecoveryTest(unittest.TestCase):
         robot.ros.get_param.side_effect = lambda key, default=None: params.get(key, default)
         robot.ros.get_name.return_value = '/myagv_web_control'
         robot.control = Mock()
+        robot.sync_obstacle_layers = Mock()
         robot.directory = Path('/tmp/myagv-test')
         robot.angular_speed_fault, robot.amcl_uri, robot.clearance = False, None, None
         master = Mock()
