@@ -875,10 +875,17 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             handled = None
             metric = None
 
-            def current(value):
+            async def current(value):
+                # Retry missing feedback without cancelling an otherwise live inference.
+                end = time.monotonic() + 2
+                while (not editor.hardware.control and generation == editor.hardware.generation
+                       and (value['boot_id'], value['task_id']) != stopped_fetch_task
+                       and time.time() < value['expires_at_s'] and time.monotonic() < end):
+                    await asyncio.sleep(.1)
                 control = editor.hardware.control
                 approach = value.get('mode') == 'approach'
-                return ((value['boot_id'], value['task_id']) != stopped_fetch_task
+                return (generation == editor.hardware.generation
+                        and (value['boot_id'], value['task_id']) != stopped_fetch_task
                         and control.get('phase') == ('approaching_item' if approach else 'calibrating') and control.get('boot_id') == value['boot_id']
                         and control.get('task_id') == value['task_id'] and control.get('stop_epoch') == value['stop_epoch']
                         and editor.grid['map_id'] == value['map_id'] and time.time() < value['expires_at_s']
@@ -895,7 +902,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     await release_fetch_sessions()
                 try:
                     value = await asyncio.to_thread(load_json, request_path, {})
-                    if not value or value['id'] == handled or not current(value):
+                    generation = editor.hardware.generation
+                    if not value or value['id'] == handled or not await current(value):
                         continue
                 except (OSError, ValueError, KeyError, TypeError):
                     continue
@@ -929,7 +937,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         if value.get('mode') == 'approach':
                             async with photo_lock:
                                 photo = await ingest_capture(value['capture_id'])
-                                if photo['base_pose'] != value['base_pose'] or not current(value):
+                                if photo['base_pose'] != value['base_pose'] or not await current(value):
                                     raise ValueError('Item approach acquisition or task changed')
                                 photos.set_locations(photo['id'], dict(status='running', catalog_signature=value['catalog_signature'], estimates=[]), photos.value['revision'])
                             reference = next((p for p in photos.value['photos'] if p['id'] == value['reference_photo_id']
@@ -951,22 +959,22 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             try:
                                 while not inference.done():
                                     await asyncio.wait({inference}, timeout=.1)
-                                    if not current(value):
+                                    if not await current(value):
                                         raise ValueError('Approach stopped or changed during inference')
                                 result = await inference
                             finally:
                                 if not inference.done():
                                     inference.cancel()
                                 await asyncio.gather(inference, return_exceptions=True)
-                                if not current(value):
+                                if not await current(value):
                                     await release_fetch_sessions()
                             await asyncio.to_thread(editor.hardware.refresh)
-                            if not current(value):
+                            if not await current(value):
                                 raise ValueError('Item approach stopped or changed during vision request')
                             goal, corrected = await asyncio.to_thread(approach_step, result, photo, editor.grid, editor.zones['zones'],
                                 value['item'], value['clearance_m'], location_calibration)
                             async with photo_lock:
-                                if not current(value) or await asyncio.to_thread(load_json, request_path, {}) != value:
+                                if not await current(value) or await asyncio.to_thread(load_json, request_path, {}) != value:
                                     raise ValueError('Item approach stopped or catalog changed')
                                 photos.set_locations(photo['id'], dict(status='complete', catalog_signature=value['catalog_signature'], estimates=[corrected] if corrected is not None else []), photos.value['revision'])
                             entry.update(base_command={k: result[k] for k in ('forward_m', 'turn_deg')})
@@ -1003,16 +1011,16 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             try:
                                 while not inference.done():
                                     await asyncio.wait({inference}, timeout=.1)
-                                    if not current(value):
+                                    if not await current(value):
                                         raise ValueError('Alignment stopped or changed during inference')
                                 result = await inference
                             finally:
                                 if not inference.done():
                                     inference.cancel()
                                 await asyncio.gather(inference, return_exceptions=True)
-                                if not current(value):
+                                if not await current(value):
                                     await release_fetch_sessions()
-                            if value.get('stage') == 'arm' and model in CODEX_MODELS and entry.get('aligned_perfectly') and current(value):
+                            if value.get('stage') == 'arm' and model in CODEX_MODELS and entry.get('aligned_perfectly') and await current(value):
                                 metric_cache[cache_key] = metric.context()
                                 await asyncio.to_thread(atomic_json, metric_cache_path, metric_cache)
                             entry.update(correction=alignment_command(result, value.get('limits')))
@@ -1031,14 +1039,14 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                     if photo is not None:
                         async with photo_lock:
                             if any(p['id'] == photo['id'] for p in photos.value['photos']):
-                                photos.set_locations(photo['id'], dict(status='error' if current(value) else 'cancelled',
+                                photos.set_locations(photo['id'], dict(status='error' if await current(value) else 'cancelled',
                                     catalog_signature=value['catalog_signature'], estimates=[], error=str(exc)[:300]), photos.value['revision'])
                         await editor.emit('photos')
                 finally:
                     entry['elapsed_s'] = round(time.monotonic() - started, 2)
                     fetch_log['revision'] += 1
                 try:
-                    if current(value) and await asyncio.to_thread(load_json, request_path, {}) == value:
+                    if await current(value) and await asyncio.to_thread(load_json, request_path, {}) == value:
                         await asyncio.to_thread(atomic_json, response_path, response)
                     else:
                         entry.update(status='discarded', error='Task stopped or changed; response not applied')

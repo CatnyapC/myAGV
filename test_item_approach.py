@@ -529,7 +529,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
             c.capture.side_effect = capture
             bodies = []
             entered, release = asyncio.Event(), asyncio.Event()
-            cancelling = goal_matching = False
+            cancelling = goal_matching = missing_control = False
             recovery_answers = []
 
             def compact(measurement):
@@ -555,7 +555,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                  patch('web_backend.resolve.request_json', side_effect=provider):
                 app = create_app(ui, root / 'stations.json', hardware_dir=bridge)
                 hardware = app[EDITOR].hardware
-                hardware.refresh = Mock(side_effect=lambda: setattr(hardware, 'control', c.snapshot()))
+                hardware.refresh = Mock(side_effect=lambda: setattr(hardware, 'control', {} if missing_control else c.snapshot()))
                 hardware.refresh()
                 hardware.cameras = dict(front=dict(stamp_s=time.time()))
                 hardware.costmap = Mock(side_effect=AssertionError('Approach must not read the ROS costmap'))
@@ -636,9 +636,45 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     photos = await (await client.get('/api/items')).json()
                     self.assertFalse(any(p.get('location_analysis', {}).get('status') == 'error' for p in photos['photos']))
                     cancelling = True
+                    c.task_id, c.phase = 'feedback-gap-task', 'idle'
+                    c.move_approach.reset_mock()
+                    calls_before = len(bodies)
+                    running = asyncio.create_task(asyncio.to_thread(c.approach_item, forwarded))
+                    try:
+                        await asyncio.wait_for(entered.wait(), 2)
+                        missing_control = True
+                        hardware.refresh()
+                        await asyncio.sleep(.25)
+                        release.set()
+                        await asyncio.sleep(.25)
+                        self.assertFalse(running.done())
+                        self.assertFalse((bridge / 'fetch_vision_response.json').exists())
+                        c.move_approach.assert_not_called()
+                        missing_control, goal_matching = False, True
+                        hardware.refresh()
+                        completed = await asyncio.wait_for(running, 4)
+                        self.assertEqual(completed['rounds'], 2)
+                        self.assertEqual(len(bodies) - calls_before, 2)
+                        self.assertEqual(c.move_approach.call_count, 1)
+                        log = await (await client.get('/api/fetch-log')).json()
+                        self.assertTrue(all(r['status'] == 'returned' for r in log['rounds']))
+                    finally:
+                        missing_control = False
+                        release.set()
+                        if not running.done():
+                            c.stop_pending = 'STOP'
+                            await asyncio.gather(running, return_exceptions=True)
+                    entered.clear()
+                    release.clear()
+                    goal_matching = False
+                    photos = await (await client.get('/api/items')).json()
                     c.task_id, c.phase = 'cancelled-task', 'idle'
                     running = asyncio.create_task(asyncio.to_thread(c.approach_item, forwarded))
                     await asyncio.wait_for(entered.wait(), 2)
+                    missing_control = True
+                    hardware.refresh()
+                    await asyncio.sleep(.15)
+                    hardware.generation += 1
                     c.stop_pending, c.phase = 'STOP', 'fault'
                     c.stop_epoch += 1
                     with self.assertRaises(Stopped):
@@ -654,7 +690,7 @@ class ApproachTest(unittest.IsolatedAsyncioTestCase):
                     self.assertAlmostEqual(current['locations'][0]['x_m'], photos['locations'][0]['x_m'])
                     self.assertEqual(current['photos'][-1]['location_analysis']['status'], 'cancelled')
                     self.assertFalse((bridge / 'fetch_vision_response.json').exists())
-                    cancelling, goal_matching = False, True
+                    cancelling, goal_matching, missing_control = False, True, False
                     c.stop_pending, c.phase, c.task_id = None, 'idle', 'goal-matched-task'
                     c.move_approach.reset_mock()
                     stopped = await asyncio.wait_for(asyncio.to_thread(c.approach_item, forwarded), 4)
