@@ -82,7 +82,12 @@ class FetchMapFreezeTest(unittest.TestCase):
 
     def test_snapshot_keeps_initial_obstacles_without_double_inflation_and_restores(self):
         modes = []
-        self.robot.sync_obstacle_layers.side_effect = lambda: modes.append(self.robot.fetch_map is None)
+        def sync():
+            modes.append(self.robot.fetch_map is None)
+            if self.robot.fetch_map is not None:
+                # A callback can arrive while dynamic reconfigure is still in flight.
+                self.robot.costmaps['global'] = (11, 2, True, self.robot.grid)
+        self.robot.sync_obstacle_layers.side_effect = sync
         self.robot.freeze_fetch_map()
         self.assertEqual(self.robot.fetch_map['cells'], [100, 0, 100, -1])
         self.assertEqual(self.robot.maps.publish.call_args.args[0].data, [100, 0, 100, 0])

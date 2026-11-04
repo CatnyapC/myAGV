@@ -217,12 +217,10 @@ class RobotROS:
         message.header.stamp = self.ros.Time.now()
         message.header.seq = zones['revision']
         with self.lock:
-            zones_changed = self.zones != zones
             self.costmap_after = message.header.stamp.to_sec()
             self.zones, self.derived, self.zone_points = zones, derived, points
-            if zones_changed:
-                self.published_at = time.monotonic()
-                self.costmaps = {}
+            self.published_at = time.monotonic()
+            self.costmaps = {}
         self.maps.publish(message)
 
     def receive_costmap(self, name, message):
