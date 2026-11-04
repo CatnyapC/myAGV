@@ -341,7 +341,7 @@ class RobotROS:
         import rosgraph
         fault = self.ros.get_param('/myagv_web/angular_speed_fault', False) is True
         if fault and not self.angular_speed_fault and self.control:
-            self.control.request_stop('Chassis angular overspeed; driver locked until calibration is repaired')
+            self.control.request_stop('Chassis motion safety fault; driver locked until the cause is repaired')
         self.angular_speed_fault = fault
         self.driver_watchdog = self.ros.get_param('/myagv_web/driver_watchdog', 0) == 1 and not fault
         master = rosgraph.Master(self.ros.get_name())

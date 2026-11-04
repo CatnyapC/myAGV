@@ -1,6 +1,7 @@
 """Patch the installed ROS1 chassis source; rebuild/restart it after this command."""
 from pathlib import Path
 import sys
+import re
 
 
 def patch(source):
@@ -21,6 +22,7 @@ def patch(source):
         if source.count(old) != 1:
             raise ValueError('Unexpected driver watchdog declaration')
         source = source.replace(old, old + '\n    n.setParam("/myagv_web/angular_speed_fault", false);')
+    source = source.replace('n.subscribe("cmd_vel", 50, cmdCallback)', 'n.subscribe("cmd_vel", 1, cmdCallback)')
     return source
 
 
@@ -74,58 +76,94 @@ def patch_recovery(source):
 
 
 def patch_speed_guard(source):
-    if 'MYAGV_WEB_ANGULAR_SPEED_GUARD' in source:
+    if 'MYAGV_WEB_MOTION_V2' in source:
         return source
-    old = '''    writeSpeed(linearX, linearY, angularZ);
-    readSpeed(); // easy to report error'''
-    preflight = '''    // MYAGV_WEB_ANGULAR_SPEED_GUARD: raw MCU commands are not calibrated SI speeds.
-    static bool speedFault = false;
-    if (!std::isfinite(linearX) || !std::isfinite(linearY) || !std::isfinite(angularZ)) {
-        speedFault = true;
+    # Remove the earlier angular-only guard before installing the shared gate.
+    if 'MYAGV_WEB_ANGULAR_SPEED_GUARD' in source:
+        legacy = re.compile(r'    // MYAGV_WEB_ANGULAR_SPEED_GUARD:.*?    if \(!fresh \|\| speedFault\) writeSpeed\(0, 0, 0\);', re.S)
+        source, replaced = legacy.subn('    writeSpeed(linearX, linearY, angularZ);\n    readSpeed(); // easy to report error', source)
+        if replaced != 1:
+            raise ValueError('Unexpected previous angular guard; refused upgrade')
+    anchor = '#include "myagv_odometry/myAGV.h"'
+    if source.count(anchor) != 1:
+        raise ValueError('Unexpected driver includes')
+    legacy = '    writeSpeed(linearX, linearY, angularZ);\n    readSpeed(); // easy to report error'
+    modern = re.compile(r'    if \(true ==\s+readSpeed\(\)\)\s*\{\s*writeSpeed\(linearX, linearY, angularZ\);')
+    block = '''    // MYAGV_WEB_MOTION_V2
+    static MyAGVMotionSafety safety;
+    const auto clockNow = []() {
+        return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    };
+    const auto previous = safety.sent;
+    const bool wasBraking = safety.braking;
+    const bool wasFault = safety.fault != nullptr;
+    auto output = safety.command({{linearX, linearY, angularZ}}, clockNow());
+    writeSpeed(output[0], output[1], output[2]);
+    bool fresh = readSpeed();
+    safety.observe({{vx, vy, vtheta}}, fresh, clockNow());
+    if (safety.fault) {
+        writeSpeed(0, 0, 0);
         n.setParam("/myagv_web/angular_speed_fault", true);
+        if (!wasFault) ROS_ERROR("Chassis motion locked: %s; requested %.3f %.3f %.3f; feedback %.3f %.3f %.3f",
+            safety.fault, linearX, linearY, angularZ, vx, vy, vtheta);
+    }
+    if (output != previous || safety.braking != wasBraking) {
+        ROS_INFO("Chassis command requested %.3f %.3f %.3f; sent %.3f %.3f %.3f; encoded %d %d %d; feedback %.3f %.3f %.3f; braking %d",
+            linearX, linearY, angularZ, output[0], output[1], output[2],
+            static_cast<int>(output[0]*100)+128, static_cast<int>(output[1]*100)+128,
+            static_cast<int>(output[2]*100)+128, vx, vy, vtheta, safety.braking);
     }
 '''
-    condition = '''!speedFault && angularZ != 0 &&
-            std::abs(vtheta) > std::max(0.15, 2 * std::abs(angularZ) + 0.05)'''
-    latch = '''
-        ROS_ERROR("Chassis angular overspeed: requested %.3f rad/s, measured %.3f rad/s; motion locked", angularZ, vtheta);
-        speedFault = true;
-        n.setParam("/myagv_web/angular_speed_fault", true);
-'''
-    new = preflight + '''    if (speedFault) linearX = linearY = angularZ = 0;
-    writeSpeed(linearX, linearY, angularZ);
-    bool fresh = readSpeed();
-    if (fresh && ''' + condition + ') {' + latch + '''    }
-    if (!fresh || speedFault) writeSpeed(0, 0, 0);'''
-    if source.count(old) != 1:
-        old = '''        writeSpeed(linearX, linearY, angularZ);
-        publisherOdom(dt);'''
-        new = preflight + '    if (' + condition + ') {' + latch + '''    }
-    if (speedFault) linearX = linearY = angularZ = 0;
-    writeSpeed(linearX, linearY, angularZ);
-        publisherOdom(dt);'''
-        closing = '    lastTime = currentTime;\n}'
-        if source.count(closing) != 1:
-            raise ValueError('Unexpected driver feedback loop; refused partial patch')
-        source = source.replace(closing, '    else { writeSpeed(0, 0, 0); }\n' + closing)
-    if source.count(old) != 1 or source.count('#include "myagv_odometry/myAGV.h"') != 1:
+    if source.count(legacy) == 1:
+        source = source.replace(legacy, block + '    if (!fresh) return;')
+    elif len(modern.findall(source)) == 1:
+        source = modern.sub(lambda _: block + '    if (fresh) {', source)
+    else:
         raise ValueError('Unexpected driver velocity source; refused partial patch')
-    return source.replace('#include "myagv_odometry/myAGV.h"',
-                          '#include "myagv_odometry/myAGV.h"\n#include <algorithm>\n#include <cmath>').replace(old, new)
+    return source.replace(anchor, anchor + '\n#include "myagv_motion_safety.h"\n#include <chrono>')
+
+
+def patch_serial_timeout(source):
+    if 'MYAGV_WEB_SERIAL_DEADLINE' in source:
+        return source
+    start = source.index('bool MyAGV::readSpeed()')
+    end = source.index('\n}', start) + 2
+    body = source[start:end]
+    body = body.replace('{', '{\n    // MYAGV_WEB_SERIAL_DEADLINE\n    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(150);', 1)
+    pattern = r'ret = boost::asio::read\(sp, boost::asio::buffer\((buf_header|buf)\), er2\);'
+    body, count = re.subn(pattern, lambda m:
+        'ret = myagvReadExact(sp.native_handle(), %s, sizeof(%s), deadline);\n    if (ret != sizeof(%s)) return false;' % (m[1], m[1], m[1]), body)
+    if count != 3 or 'boost::asio::read(' in body:
+        raise ValueError('Unexpected serial reader; refused partial patch')
+    # A header must consist of adjacent bytes; a payload FE is not a second header.
+    body = body.replace('            if (buf_header[0] != header[0]) {\n                continue;\n            }', '            if (buf_header[0] != header[0]) break;')
+    body = body.replace('        header_found = true;', '        header_found = header_2_found;')
+    return (source[:start] + body + source[end:]).replace(
+        '#include "myagv_odometry/myAGV.h"', '#include "myagv_odometry/myAGV.h"\n#include "myagv_serial_read.h"')
+
+
+def install(path):
+    library = path.with_name('myAGV.cpp')
+    changes = [(path, path.read_text()), (library, library.read_text())]
+    updates = [patch(changes[0][1]), patch_serial_timeout(patch_speed_guard(patch_recovery(changes[1][1])))]
+    # Validate every backup before writing anything; never overwrite earlier backups.
+    for (target, original), updated in zip(changes, updates):
+        backup = target.with_suffix(target.suffix + '.before-web-motion-v2')
+        if original != updated and backup.exists() and backup.read_text() != original:
+            raise ValueError('Motion backup differs; inspect previous installation first: ' + str(backup))
+    headers = {name: Path(__file__).with_name(name).read_text()
+               for name in ('myagv_motion_safety.h', 'myagv_serial_read.h')}
+    for name, content in headers.items():
+        path.with_name(name).write_text(content)
+    for (target, original), updated in zip(changes, updates):
+        if updated == original:
+            continue
+        backup = target.with_suffix(target.suffix + '.before-web-motion-v2')
+        if not backup.exists():
+            backup.write_text(original)
+        target.write_text(updated)
 
 
 if __name__ == '__main__':
-    path = Path(sys.argv[1])
-    library = path.with_name('myAGV.cpp')
-    changes = [(path, path.read_text()), (library, library.read_text())]
-    updates = [patch(changes[0][1]), patch_speed_guard(patch_recovery(changes[1][1]))]
-    for (path, original), updated in zip(changes, updates):
-        if updated == original:
-            continue
-        backup = path.with_suffix(path.suffix + '.before-web-watchdog')
-        if backup.exists() and 'MYAGV_WEB_WATCHDOG' not in original:
-            raise SystemExit('Backup exists; inspect previous installation first')
-        if not backup.exists():
-            backup.write_text(original)
-        path.write_text(updated)
-    print('Driver watchdog, angular speed guard and motor recovery ready; rebuild and restart chassis driver')
+    install(Path(sys.argv[1]))
+    print('Chassis motion gate, bounded feedback and recovery ready; rebuild before restart')

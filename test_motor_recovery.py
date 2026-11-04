@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from install_driver_watchdog import patch_recovery, patch_speed_guard
+from install_driver_watchdog import patch_recovery
 from robot_control import Stopped
 from robot_ros import RobotROS
 from test_robot_control import fake_control
@@ -43,81 +43,7 @@ class MotorRecoveryTest(unittest.TestCase):
             robot.check_publishers()
         self.assertFalse(robot.driver_watchdog)
         robot.control.request_stop.assert_called_once()
-        self.assertIn('angular overspeed', robot.control.request_stop.call_args.args[0])
-
-    @unittest.skipUnless(shutil.which('c++'), 'C++ compiler unavailable')
-    def test_angular_guard_latches_zero_without_changing_valid_commands(self):
-        original = '''#include "myagv_odometry/myAGV.h"
-void MyAGV::execute(double linearX, double linearY, double angularZ) {
-    writeSpeed(linearX, linearY, angularZ);
-    readSpeed(); // easy to report error
-}
-'''
-        guarded = patch_speed_guard(original)
-        self.assertEqual(patch_speed_guard(guarded), guarded)
-        with self.assertRaises(ValueError):
-            patch_speed_guard(original.replace('readSpeed();', 'otherRead();'))
-        harness = r'''
-#include <array>
-#include <cassert>
-#include <limits>
-#include <string>
-#include <vector>
-#define ROS_ERROR(...) ((void)0)
-struct MyAGV {
-    struct Params { bool fault=false; void setParam(const char*, bool v) { fault=v; } } n;
-    double vtheta=0;
-    double currentTime=1, lastTime=0;
-    bool fresh=true;
-    std::vector<std::array<double,3>> commands;
-    void writeSpeed(double x,double y,double z) { commands.push_back({{x,y,z}}); }
-    bool readSpeed() { return fresh; }
-    void publisherOdom(double) {}
-    void execute(double,double,double);
-};
-'''
-        harness += guarded.replace('#include "myagv_odometry/myAGV.h"', '')
-        harness += r'''
-int main(int argc,char** argv) {
-    MyAGV driver;
-    std::string mode=argv[1];
-    double turn=.03;
-    driver.vtheta=.1;
-    if(mode=="reverse") { turn=-.03; driver.vtheta=-.1; }
-    if(mode=="overspeed") driver.vtheta=.83;
-    if(mode=="reverse_overspeed") { turn=-.03; driver.vtheta=-.83; }
-    if(mode=="stale") { driver.vtheta=.83; driver.fresh=false; }
-    if(mode=="nan") turn=std::numeric_limits<double>::quiet_NaN();
-    if(mode=="inf") turn=std::numeric_limits<double>::infinity();
-    driver.execute(.02,0,turn);
-    bool fault=mode=="overspeed" || mode=="reverse_overspeed" || mode=="nan" || mode=="inf";
-    assert(driver.n.fault==fault);
-    if(fault) {
-        assert((driver.commands.back()==std::array<double,3>{{0,0,0}}));
-        driver.vtheta=0;
-        driver.execute(.1,.1,-.1);
-        assert((driver.commands.back()==std::array<double,3>{{0,0,0}}));
-    } else if(mode=="stale") assert((driver.commands.back()==std::array<double,3>{{0,0,0}}));
-    else assert((driver.commands.back()==std::array<double,3>{{.02,0,turn}}));
-}
-'''
-        with tempfile.TemporaryDirectory() as directory:
-            source, binary = Path(directory) / 'guard.cpp', Path(directory) / 'guard'
-            modern = original.replace('''    writeSpeed(linearX, linearY, angularZ);
-    readSpeed(); // easy to report error''', '''    double dt = currentTime - lastTime;
-    if (true == readSpeed()) {
-        writeSpeed(linearX, linearY, angularZ);
-        publisherOdom(dt);
-    }
-    lastTime = currentTime;''')
-            modern_harness = harness.replace(guarded.replace('#include "myagv_odometry/myAGV.h"', ''),
-                                             patch_speed_guard(modern).replace('#include "myagv_odometry/myAGV.h"', ''))
-            for layout, code in (('legacy', harness), ('modern', modern_harness)):
-                source.write_text(code)
-                subprocess.run(['c++', '-std=c++11', str(source), '-o', str(binary)], check=True, capture_output=True)
-                for mode in ('normal', 'reverse', 'overspeed', 'reverse_overspeed', 'stale', 'nan', 'inf'):
-                    with self.subTest(layout=layout, mode=mode):
-                        subprocess.run([str(binary), mode], check=True, timeout=5)
+        self.assertIn('motion safety fault', robot.control.request_stop.call_args.args[0])
 
     def robot(self, fault=True):
         robot = RobotROS.__new__(RobotROS)

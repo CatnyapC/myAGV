@@ -34,14 +34,29 @@ pm2 restart myagv-api --update-env
 ```
 
 The driver patch uses a wall-clock loop and makes commands expire after 0.5 seconds.
-It also patches the adjacent `myAGV.cpp` to latch wheel overcurrent until an explicit
-WebUI recovery, replacing the manufacturer's blocking terminal input. It refuses
-unknown source layouts and saves `.before-web-watchdog` beside each changed source.
-The same patch latches chassis output off if fresh MCU angular feedback exceeds
-`max(0.15, 2 * abs(requested_angular_speed) + 0.05)` rad/s during a turn, or a
-command contains a non-finite value. The WebUI then stops and disables motion.
-Repair the drive calibration before restarting the driver; a new motion command
-does not clear the latch. This guard does not calibrate legacy MCU speed units.
+The subscriber keeps only the latest command. At the serial writer, all callers
+(navigation, Approach and keyboard teleop) share a motion gate: changes in active
+axes or direction first send zero repeatedly and require 0.5 seconds of continuous
+fresh stationary feedback before applying the latest request. Cancellation never
+queues a later restart. Stop confirmation times out after 5 seconds and latches off.
+This can add a stop interval to short manual inputs and navigation transitions.
+
+One 150 ms deadline covers an entire feedback frame, including header search and
+partial reads. Invalid or timed-out feedback immediately commands zero and latches
+off instead of blocking command processing indefinitely. Angular feedback is checked
+during rotation, straight travel and zero commands against
+`max(0.15, 2 * abs(sent_angular_speed) + 0.05)` rad/s. A reduction allows the preceding
+limit for at most 250 ms to accommodate deceleration. Non-finite feedback or invalid
+commands also latch off. The existing `angular_speed_fault` parameter now reports
+all these motion faults; the WebUI stops and disables motion. Logs include requested
+and sent velocities, encoded velocity bytes, feedback and the fault reason.
+
+The patch preserves the explicit wheel-overcurrent recovery gate. Installation
+validates both source changes before writing and preserves earlier backups; this
+upgrade saves `.before-web-motion-v2` beside changed sources and installs two helper
+headers. Rebuild before restarting. A later valid command or feedback sample cannot
+clear a safety latch. Diagnose the cause before restarting the driver. These guards
+do not calibrate legacy MCU speed units or prove a firmware cause.
 MCU v1.0 uses legacy motion packets and 27-byte telemetry. Firmware v1.2 and later
 require the matching vendor driver with motion opcode `0x010B`, 43-byte telemetry,
 and automatic reporting enabled. Update those together. The manufacturer's
