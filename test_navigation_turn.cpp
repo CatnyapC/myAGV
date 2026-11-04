@@ -45,7 +45,7 @@ int main(int argc, char** argv) {
     }
     for (double offset : {0., .025}) {
       for (double bearing : {0., M_PI_2, M_PI, -M_PI_2}) {
-        for (int error : {-170, -135, -90, -45, -21, -19, 0, 19, 21, 45, 90, 135, 170}) {
+        for (int error : {-170, -135, -90, -45, -31, -29, -21, -19, 0, 19, 21, 29, 31, 45, 90, 135, 170}) {
           // Match web_hardware.launch; meter_scoring scales distance biases by .05.
           base_local_planner::TrajectoryPlanner planner(
               world, map, footprint, .2, .2, .3, 1.5, .025, 8, 20,
@@ -75,8 +75,11 @@ int main(int argc, char** argv) {
                         << " offset=" << offset << " wz=" << trajectory.thetav_ << '\n';
             assert(trajectory.cost_ >= 0);
             if (error != 0) assert(trajectory.thetav_ * error < 0);
-            if (std::abs(error) > 20) assert(trajectory.xv_ == 0);
+            if (std::abs(error) > 30) assert(trajectory.xv_ == 0);
             else assert(planner.checkTrajectory(offset, offset, yaw, 0, 0, 0, .03, 0, 0));
+            // Heading tolerance also applies while already translating.
+            assert(planner.checkTrajectory(offset, offset, yaw, .08, 0, 0, .03, 0, 0)
+                   == (std::abs(error) <= 30));
             assert(std::abs(trajectory.xv_) <= .050001);
             assert(std::abs(trajectory.thetav_) <= .100001);
           }

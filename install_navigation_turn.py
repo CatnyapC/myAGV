@@ -28,11 +28,14 @@ def patch(source):
         if source.count(anchor) != 1 or source.count(cost) != 1 or 'MYAGV_ENDPOINT_HEADING' in source:
             raise ValueError('Unexpected trajectory score; refused partial patch')
         source = source.replace(anchor, heading + anchor).replace(cost, scored)
-    gate = ('      // MYAGV_TURN_FIRST: reject forward motion until the visible path is within 20 degrees.\n'
+    gate = ('      // MYAGV_TURN_FIRST: reject forward motion until the visible path is within 30 degrees.\n'
             '      if (i == 0 && vx_samp > 0.0 &&\n'
-            '          headingDiff(cell_x, cell_y, x_i, y_i, theta_i) > M_PI / 9.0) {\n'
+            '          headingDiff(cell_x, cell_y, x_i, y_i, theta_i) > M_PI / 6.0) {\n'
             '        traj.cost_ = -2.0; return;\n'
             '      }\n\n')
+    previous_gate = gate.replace('30 degrees', '20 degrees').replace('M_PI / 6.0', 'M_PI / 9.0')
+    if source.count(previous_gate + heading + anchor) == 1:
+        source = source.replace(previous_gate + heading + anchor, gate + heading + anchor)
     if source.count(gate + heading + anchor) != 1:
         if source.count(heading + anchor) != 1 or 'MYAGV_TURN_FIRST' in source:
             raise ValueError('Unexpected forward heading gate; refused partial patch')
@@ -73,7 +76,7 @@ if __name__ == '__main__':
         original = source.read_text()
         updated = transform(original)
         if updated != original:
-            backup = source.with_suffix(source.suffix + '.before-shortest-turn-v3')
+            backup = source.with_suffix(source.suffix + '.before-shortest-turn-v4')
             if backup.exists():
                 raise SystemExit('Backup exists; inspect previous installation first')
             changes.append((source, backup, original, updated))
