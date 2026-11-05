@@ -132,7 +132,6 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     <label className="setting-row">Folded clearance radius (m)<input type="number" min=".15" max="1" step=".01" value={radius} disabled={!idle} onChange={e => { setRadius(e.target.value); setMeasured(false); }} /></label>
     <label><input type="checkbox" checked={measured} disabled={!idle} onChange={e => setMeasured(e.target.checked)} /> Arm folded; measured radius encloses base, arm and payload</label>
     <Button disabled={!idle || !state?.arm_homed || !measured} onClick={() => void command('transport_record', { clearance_m: Number(radius), measured })}>Record transport pose</Button>
-    <span className="muted">{state?.transport_angles ? `Saved transport: ${state.transport_angles.join(', ')}° · ${state.clearance_m} m` : 'Transport calibration required before Fetch'}</span>
     <label className="setting-row">Station name<input value={name} maxLength={100} disabled={!idle} onChange={e => setName(e.target.value)} /></label>
     <Button disabled={!idle || !state?.arm_homed || !state?.localized || !name.trim()} onClick={() => {
       const previous = stations[name.trim()];
@@ -140,7 +139,6 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
       if (previous) setConfirmation({ type: 'teach', values, message: 'Overwrite this station with the current base and arm pose? Linked items will need reconfirmation.' });
       else void command('teach', values);
     }}>Teach current base + arm pose</Button>
-    <span className="muted">Existing names require overwrite confirmation. J1 must be 75–105° (forward). Link the station to an item in its photo editor.</span>
     {(review || holding) && <div role="alert">
       <strong>{review ? 'Inspect live arm camera; align before grasp' : 'Inspect live arm camera; verify object held'}</strong>
       {review && <div className="action-line">{['X+', 'X-', 'Y+', 'Y-', 'Z+', 'Z-'].map(key => <Button key={key} onClick={() => void command('align_step', { axis: key[0], direction: key[1] === '+' ? 1 : -1 })}>{key} 1 mm</Button>)}</div>}
