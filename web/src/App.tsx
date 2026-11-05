@@ -4,11 +4,11 @@ import * as Dropdown from '@radix-ui/react-dropdown-menu';
 import { GridStack } from 'gridstack';
 import { Camera, Crosshair, Dice5, Expand, Hand, LayoutGrid, LoaderCircle, Menu, MoreHorizontal, Play, Plus, RotateCcw, Search, Settings2, Shrink, Square, Trash2, X } from 'lucide-react';
 import { MapView, rectangleCorners } from './MapView';
-import { type ItemLocation, type MapInfo, type Navigation, type ObservationPoint, type ObservationPoints, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
+import { type ItemLocation, type MapInfo, type Navigation, type Origin, type PhotoIndex, type Point, type Settings, type Stations, type Zones } from './mapGeometry';
 import { Button } from './ui';
 import { BatteryStatus } from './BatteryStatus';
 import { api, commandId, hardwareBlocks, waitForControlLease } from './api';
-import { HardwareControls, MapUpdateControls, StopRecovery, type HardwareState, type HeldInput } from './HardwareControls';
+import { HardwareControls, StopRecovery, type HardwareState, type HeldInput } from './HardwareControls';
 import { PhotoEditor, StoredPhoto } from './PhotoEditor';
 import { FetchTest } from './FetchTest';
 import { LLMTurns } from './LLMTurns';
@@ -46,10 +46,6 @@ export function App() {
   const [obstacleSize, setObstacleSize] = useState<number | null>(null);
   const [packet, setPacket] = useState<{ info: MapInfo; image: string } | null>(null);
   const [zones, setZones] = useState<Zones | null>(null);
-  const [observationPoints, setObservationPoints] = useState<ObservationPoints | null>(null);
-  const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
-  const [pointsSaving, setPointsSaving] = useState(false);
-  const [mapToolbar, setMapToolbar] = useState<HTMLSpanElement | null>(null);
   const [savedSettings, setSavedSettings] = useState<Settings | null>(null);
   const [settingsDraft, setSettingsDraft] = useState<Settings['values']>({ auto_align: false, manual_angle_deg: 0, llm_model: 'deepseek/deepseek-v4.1-flash', reasoning_effort: 'off', fast_mode: true });
   const [angleText, setAngleText] = useState('0');
@@ -112,14 +108,13 @@ export function App() {
   const canResize = canLayout && !maximized;
   const canMove = canResize && layoutEditing;
   const navigation = state?.navigation ?? null;
-  const visiblePoints = observationPoints?.map_id === packet?.info.map_id ? observationPoints?.points ?? [] : [];
   const goalValid = goalText.every(v => v.trim() !== '' && Number.isFinite(Number(v))) && Math.abs(Number(goalText[2])) <= 180;
   const goal = goalValid ? { x_m: Number(goalText[0]), y_m: Number(goalText[1]), yaw_rad: Number(goalText[2]) * Math.PI / 180 } : null;
   const costmapReady = navigation?.costmap.ready && navigation.costmap.applied_zone_revision === zones?.revision;
   const selectedPhoto = photos?.photos.find(p => p.id === selectedPhotoId) ?? null;
   const locationPhotos = photos?.photos.filter(p => p.kind === 'observation' && p.map_id === packet?.info.map_id && p.current !== false) ?? [];
   const locationStatus = locationPhotos.some(p => p.location_analysis?.status === 'running' || p.location_analysis?.status === 'queued') ? 'Estimating item positions…'
-    : locationPhotos.some(p => p.location_analysis?.status === 'error') ? 'Position estimation failed; retry in Map actions.' : '';
+    : locationPhotos.some(p => p.location_analysis?.status === 'error') ? 'Position estimation failed; retry Manual Item Update.' : '';
   const selectedItem = photos?.items.find(i => i.id === selectedItemId);
   const selectedLocation = photos?.locations?.find(location => location.item_id === selectedItemId);
   const frontGoal = photos?.photos.find(p => p.id === selectedItem?.grasp_goal?.front);
@@ -156,10 +151,9 @@ export function App() {
 
   const reload = useCallback(async () => {
     const current = ++generation.current;
-    const [nextState, info, nextZones, preferences, nextPhotos, nextStations, nextPoints] = await Promise.all([
+    const [nextState, info, nextZones, preferences, nextPhotos, nextStations] = await Promise.all([
       api<State>('/api/state'), api<MapInfo>('/api/map'), api<Zones>('/api/no-go-zones'), api<Settings>('/api/settings'),
       api<PhotoIndex>('/api/items'), api<Stations>('/api/stations'),
-      api<ObservationPoints>('/api/observation-points'),
     ]);
     const imageResponse = await fetch(info.png_url);
     if (!imageResponse.ok) throw new Error('Map changed; reload required');
@@ -169,7 +163,7 @@ export function App() {
       if (current !== generation.current) { URL.revokeObjectURL(image); return; }
       const key = `${info.map_id}:${info.display.view_revision}`;
       if (key !== previousMap.current) { setDraft([]); setDrawing(false); }
-      if (!previousMap.current.startsWith(`${info.map_id}:`)) { setSelected(null); setGoalText(['', '', '0']); setSelectedPointId(null); }
+      if (!previousMap.current.startsWith(`${info.map_id}:`)) { setSelected(null); setGoalText(['', '', '0']); }
       previousMap.current = key;
       setPacket(old => {
         // Keep map/pan intact on zone events; replace raster only on a new view.
@@ -181,13 +175,11 @@ export function App() {
       setState(old => old && old.navigation.stamp_s > nextState.navigation.stamp_s ? old : nextState);
       setZones(nextZones); setSavedSettings(preferences);
       setPhotos(nextPhotos); setStations(nextStations);
-      setObservationPoints(old => old?.map_id === nextPoints.map_id && old.revision > nextPoints.revision ? old : nextPoints);
       if (!editingSettings.current) { setSettingsDraft(preferences.values); setAngleText(String(preferences.values.manual_angle_deg)); }
     } catch (failure) { URL.revokeObjectURL(image); throw failure; }
   }, []);
 
   useEffect(() => () => { if (packet) URL.revokeObjectURL(packet.image); }, [packet]);
-  useEffect(() => { setSelectedPointId(old => observationPoints?.points.some(p => p.id === old) ? old : null); }, [observationPoints]);
   useEffect(() => () => resolutionRequest.current?.abort(), []);
   useEffect(() => {
     if (resolution && `${resolution.map_id}:${resolution.index_revision}:${resolution.settings_revision}` !== resolutionContext.current) {
@@ -348,31 +340,6 @@ export function App() {
       reportError((failure as Error).message); if (type === 'reset_map') throw failure;
     }
   }
-  async function clearItemLocations() {
-    if (!photos || !packet) return;
-    setError('');
-    try {
-      const saved = await api<PhotoIndex>('/api/item-locations/clear', { method: 'POST', body: JSON.stringify({
-        map_id: packet.info.map_id, expected_revision: photos.revision,
-      }) });
-      setPhotos(saved);
-      log('Item positions cleared', 'info', 'Map');
-    } catch (failure) { reportError((failure as Error).message); void reload().catch(() => {}); }
-  }
-  async function saveObservationPoints(points: ObservationPoint[], selectId: string | null = selectedPointId) {
-    if (!observationPoints || !packet || observationPoints.map_id !== packet.info.map_id) return;
-    setPointsSaving(true); setError('');
-    try {
-      const saved = await api<ObservationPoints>('/api/observation-points', { method: 'PUT', body: JSON.stringify({
-        map_id: observationPoints.map_id, expected_revision: observationPoints.revision, points,
-      }) });
-      if (previousMap.current.startsWith(`${saved.map_id}:`)) {
-        setObservationPoints(saved); setSelectedPointId(selectId);
-        log(`Observation points saved · ${saved.points.length} views`, 'info', 'Map');
-      }
-    } catch (failure) { reportError((failure as Error).message); void reload().catch(() => {}); }
-    finally { setPointsSaving(false); }
-  }
   async function stop() {
     ++actionEpoch.current;
     held.current = null;
@@ -423,17 +390,6 @@ export function App() {
     } catch (failure) { reportError((failure as Error).message); }
     finally { setBusy(false); }
   }
-  async function estimatePositions() {
-    if (!photos || !packet || busy || !canEditPhotos) return;
-    setBusy(true); setError('');
-    try {
-      const index = await api<PhotoIndex>('/api/item-locations/estimate', { method: 'POST',
-        body: JSON.stringify({ map_id: packet.info.map_id, expected_revision: photos.revision }) });
-      setPhotos(index);
-      log('Position estimation requested', 'info', 'Map');
-    } catch (failure) { reportError((failure as Error).message); }
-    finally { setBusy(false); }
-  }
   function updateRequest(text: string) { setRequestText(text); setResolution(null); setGoalText(['', '', '0']); }
   async function resolveRequest() {
     if (!canEdit || busy || !photos || !packet || !requestText.trim() || state?.llm?.status !== 'configured' || settingsDirty || settingsSaving || saveError) return;
@@ -472,18 +428,18 @@ export function App() {
     setSelectedItemId(index.photos.find(p => p.id === id)?.item_id ?? '');
     if (addedId) setPhotoMode(index.photos.find(p => p.id === addedId)?.kind === 'reference' ? 'uploaded' : 'edit');
   }
-  async function capture(camera_id: 'front' | 'arm', saveObservationPoint = false) {
+  async function capture(camera_id: 'front' | 'arm', manualItemUpdate = false) {
     if (!canEdit || !packet || !photos || busy) return;
     setBusy(true); setError('');
     try {
       await controlReady();
       const result = await api<PhotoIndex & { added_id: string }>('/api/photos/capture', { method: 'POST',
         body: JSON.stringify({ id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, camera_id, map_id: packet.info.map_id, expected_revision: photos.revision, zone_revision: zones?.revision,
-          save_observation_point: saveObservationPoint }) });
-      if (saveObservationPoint) {
+          manual_item_update: manualItemUpdate }) });
+      if (manualItemUpdate) {
         setPhotos(result);
         setSelectedPhotoId(result.added_id);
-        log('Manual item update captured · current pose saved as observation point · item detection queued', 'info', 'Map');
+        log('Manual item update captured · item detection queued', 'info', 'Map');
       } else photoChanged(result, result.added_id);
     } catch (failure) { reportError((failure as Error).message); await reload().catch(() => {}); }
     finally { setBusy(false); }
@@ -591,7 +547,6 @@ export function App() {
               <Dropdown.Portal><Dropdown.Content className="menu" align="end" sideOffset={5}>
                 <Dropdown.Item className="menu-item" disabled={!canEdit || !packet || busy} onSelect={startDrawing}><Square size={15} /> No-go zone</Dropdown.Item>
                 <Dropdown.Item className="menu-item" disabled={!navigation} onSelect={() => setFocusRobotVersion(v => v + 1)}><Crosshair size={15} /> Fit robot</Dropdown.Item>
-                <Dropdown.Item className="menu-item" disabled={!canEditPhotos || busy || !photos?.items.length || state?.llm?.status !== 'configured'} onSelect={() => void estimatePositions()}><Search size={15} /> Estimate item positions</Dropdown.Item>
                 <Dropdown.CheckboxItem className="menu-item" disabled={!costmapReady} checked={showCostmap} onCheckedChange={setShowCostmap}><Square size={15} /> Global costmap {showCostmap ? '✓' : ''}</Dropdown.CheckboxItem>
                 <Dropdown.Item className="menu-item" disabled={!state?.demo || !canEdit || busy} onSelect={() => void simulationCommand('demo_reset')}><RotateCcw size={15} /> Reset demo pose</Dropdown.Item>
                 <Dropdown.Item className="menu-item" onSelect={() => setSettingsOpen(true)}><Settings2 size={15} /> Settings</Dropdown.Item>
@@ -610,23 +565,15 @@ export function App() {
         {packet ? <MapView info={packet.info} image={packet.image} zones={zones?.zones ?? []} selected={selected}
           drawing={drawing && canEdit} draft={draft} fitVersion={fitVersion} onDraft={setDraft} onSelect={setSelected}
           navigation={navigation} goal={goal} connected={connected} showCostmap={showCostmap} focusRobotVersion={focusRobotVersion}
-          photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto} update={state?.hardware?.map_update}
-          observationPoints={visiblePoints} selectedPointId={selectedPointId} onPoint={setSelectedPointId}
+          photos={photos?.photos ?? []} selectedPhotoId={selectedPhotoId} onPhoto={selectPhoto}
           locations={photos?.locations ?? []} onLocation={location => void selectLocation(location)}
           onGoal={previewGoal} /> : <div className="empty">Loading map…</div>}
-        {state?.demo === false && selectedLocation && <div className="action-line location-status">
-          <span className="muted">{selectedLocation.name}</span>
-          <Button disabled={approachReasons.length > 0} title={approachReasons.join('; ')} onClick={() => void hardwareCommand('approach_item', {
-            item_id: selectedItemId, index_revision: photos?.revision,
-          })}>Refine approach</Button>
-        </div>}
-        <div className="action-line"><Button disabled={!canEdit || busy || pointsSaving || !photos || (!state?.demo && (!state?.hardware?.localized || !state?.cameras?.front))}
-          title="Capture front camera here without moving. Save current position and heading as a new observation point. Item detection runs when a model and named items are available."
-          onClick={() => void capture('front', true)}><Camera size={15} /> Manual item update</Button></div>
-        {state?.demo === false && <MapUpdateControls toolbar={mapToolbar} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand}
-          points={visiblePoints} revision={observationPoints?.revision ?? 0} saving={pointsSaving}
-          selectedId={selectedPointId} onSelect={setSelectedPointId} onSave={saveObservationPoints} onClearLocations={clearItemLocations} />}
-      </>, <span ref={setMapToolbar} />)}
+        <div className="action-line"><Button disabled={!canEdit || busy || !photos || (!state?.demo && (!state?.hardware?.localized || !state?.cameras?.front))}
+          title="Capture here and estimate item map positions."
+          onClick={() => void capture('front', true)}><Camera size={15} /> Manual Item Update</Button></div>
+      </>, state?.demo === false && <Button title="Publish and save the latest LiDAR map"
+        disabled={!connected || busy || (state.phase !== 'idle' && state.phase !== 'update_paused')}
+        onClick={() => void hardwareCommand('map_refresh', { task_id: state.hardware?.task_id })}>Refresh LiDAR map</Button>)}
       {panel('front', storedCamera('front'), <Button variant="ghost" className="icon" aria-label="Capture front observation" title="Capture front observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('front')}><Camera size={15} /></Button>)}
       {panel('arm', storedCamera('arm'), <Button variant="ghost" className="icon" aria-label="Capture arm observation" title="Capture arm observation" disabled={!canEdit || busy || !photos || (!state?.demo && !state?.hardware?.localized)} onClick={() => void capture('arm')}><Camera size={15} /></Button>)}
       {panel('operate', <div className="operate-pages"><div className="operate-body" inert={Boolean(photoMode)} aria-hidden={Boolean(photoMode)}>

@@ -191,10 +191,6 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .hardware-controls input[type="number"] { max-width: 90px; }
 .hardware-controls summary { cursor: pointer; }
 
-.map-updates { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--gray-6); flex-shrink: 0; max-height: 40%; overflow: auto; }
-.map-updates details[open] > * { margin-top: 6px; }
-.map-updates summary { cursor: pointer; }
-.map-updates input[type="number"] { max-width: 90px; }
 .item-map-pin { background: none; border: 0; }
 .item-map-pin svg { width: 28px; height: 36px; filter: drop-shadow(0 2px 3px #0008); }
 .item-map-pin path { fill: var(--orange-9); stroke: var(--orange-12); stroke-width: 1.5; }
@@ -204,4 +200,3 @@ input[type='checkbox'] { width: 16px; height: 16px; accent-color: var(--cyan-9);
 .item-location-preview { display: grid; gap: 5px; width: 200px; white-space: normal; }
 .item-location-preview img { width: 200px; height: 140px; object-fit: contain; background: var(--gray-1); }
 .item-location-preview small { color: var(--gray-11); }
-.location-status { padding: 4px 10px; }

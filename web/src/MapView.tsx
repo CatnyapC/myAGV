@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
-import { chassisOutline, latestMapObservation, mapFitBounds, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type ObservationPoint, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
+import { chassisOutline, latestMapObservation, mapFitBounds, rectangleCorners, toView, toWorld, type ItemLocation, type MapInfo, type Navigation, type Origin, type Photo, type Point, type Zone } from './mapGeometry';
 
 export function MapView(props: {
   info: MapInfo; image: string; zones: Zone[]; selected: string | null;
@@ -10,8 +10,6 @@ export function MapView(props: {
   onGoal: (point: Point) => void;
   photos: Photo[]; selectedPhotoId: string | null; onPhoto: (id: string) => void;
   locations: ItemLocation[]; onLocation: (location: ItemLocation) => void;
-  update?: { map_id: string; goals: Origin[]; completed: number; active: boolean; state: string };
-  observationPoints: ObservationPoint[]; selectedPointId: string | null; onPoint: (id: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
@@ -23,12 +21,10 @@ export function MapView(props: {
   const path = useRef<L.Polyline | null>(null);
   const target = useRef<L.Polygon | null>(null);
   const observations = useRef<L.LayerGroup | null>(null);
-  const updatePoints = useRef<L.LayerGroup | null>(null);
   const itemPoints = useRef<L.LayerGroup | null>(null);
   const length = props.navigation?.footprint.length_m ?? .32;
   const width = props.navigation?.footprint.width_m ?? .28;
   const hasRobotPose = Boolean(props.navigation?.pose && props.navigation.map_id === props.info.map_id);
-  const activePoint = props.update?.active && props.update.map_id === props.info.map_id ? props.update.goals[props.update.completed] : null;
 
   useEffect(() => {
     if (!host.current) return;
@@ -39,7 +35,6 @@ export function MapView(props: {
     map.current = instance;
     polygons.current = L.layerGroup().addTo(instance);
     observations.current = L.layerGroup().addTo(instance);
-    updatePoints.current = L.layerGroup().addTo(instance);
     itemPoints.current = L.layerGroup().addTo(instance);
     path.current = L.polyline([], { color: 'var(--cyan-9)', weight: 2, opacity: .85, interactive: false }).addTo(instance);
     robot.current = L.polygon([], { color: 'var(--cyan-11)', weight: 3, fill: false, interactive: false, className: 'robot-outline' }).addTo(instance);
@@ -180,28 +175,6 @@ export function MapView(props: {
       marker.getElement()?.addEventListener('blur', () => marker.closeTooltip());
     }
   }, [props.locations, props.info]);
-
-  useEffect(() => {
-    const group = updatePoints.current;
-    if (!group) return;
-    group.clearLayers();
-    props.observationPoints.forEach((pose, i) => {
-      const chosen = props.selectedPointId === pose.id;
-      const running = activePoint && activePoint.x_m === pose.x_m && activePoint.y_m === pose.y_m && activePoint.yaw_rad === pose.yaw_rad;
-      const color = chosen || running ? 'var(--orange-11)' : 'var(--orange-9)';
-      const label = document.createElement('span'); label.textContent = `Observation point ${i + 1} · (${pose.x_m.toFixed(2)}, ${pose.y_m.toFixed(2)}) · ${(pose.yaw_rad * 180 / Math.PI).toFixed(0)}°`;
-      const marker = L.polygon(chassisOutline(pose, length * .75, width * .75).map(p => toView(p, props.info.display.origin)),
-        { color, weight: chosen ? 2.5 : 1.5, fillOpacity: chosen ? .35 : .12, bubblingMouseEvents: false }).addTo(group).bindTooltip(label);
-      const select = () => { if (!latest.current.drawing) latest.current.onPoint(pose.id); };
-      marker.on('click', select);
-      const element = marker.getElement();
-      element?.setAttribute('tabindex', '0'); element?.setAttribute('role', 'button'); element?.setAttribute('aria-label', label.textContent);
-      element?.setAttribute('aria-pressed', String(chosen));
-      element?.addEventListener('keydown', event => {
-        if ((event as KeyboardEvent).key === 'Enter' || (event as KeyboardEvent).key === ' ') { event.preventDefault(); select(); }
-      });
-    });
-  }, [props.observationPoints, props.selectedPointId, props.info, length, width, activePoint?.x_m, activePoint?.y_m, activePoint?.yaw_rad]);
 
   useEffect(() => {
     preview.current?.remove();

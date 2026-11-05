@@ -2,9 +2,9 @@ import { useId, useLayoutEffect, useRef, useState, type PointerEvent } from 'rea
 import { createPortal } from 'react-dom';
 import { ShieldCheck } from 'lucide-react';
 import { Button } from './ui';
-import type { ObservationPoint, Origin, Stations } from './mapGeometry';
+import type { Origin, Stations } from './mapGeometry';
 
-import { commandId, hardwareBlocks, type HardwareState } from './api';
+import { type HardwareState } from './api';
 export type { HardwareState } from './api';
 export type HeldInput = { mode: string; key: string } | null;
 
@@ -146,69 +146,4 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
       <Button variant="danger" onClick={stop}>Abort / STOP</Button>
     </div>}
   </details>;
-}
-
-export function MapUpdateControls({ toolbar, state, connected, goal, command, points, revision, saving, selectedId, onSelect, onSave, onClearLocations }:
-  Pick<Props, 'state' | 'connected' | 'goal' | 'command'> & {
-    toolbar: HTMLElement | null;
-    points: ObservationPoint[]; revision: number; saving: boolean; selectedId: string | null;
-    onSelect: (id: string | null) => void; onSave: (points: ObservationPoint[], selectedId?: string | null) => Promise<void>;
-    onClearLocations: () => Promise<void>;
-  }) {
-  const [minutes, setMinutes] = useState('10');
-  const [updating, setUpdating] = useState(false);
-  const update = state?.map_update;
-  const paused = state?.phase === 'update_paused';
-  const idle = connected && state?.phase === 'idle';
-  const validUpdate = Number.isFinite(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 60;
-  const goals = points.map(({ x_m, y_m, yaw_rad }) => ({ x_m, y_m, yaw_rad }));
-  const selected = points.find(p => p.id === selectedId);
-  const pointBlockers = !connected ? ['Connect to the controller'] : hardwareBlocks(state);
-  const blockers = !connected ? ['Connect to the controller'] : hardwareBlocks(state, false);
-  if (!goals.length) blockers.push('Add an observation point');
-  if (!validUpdate) blockers.push('Choose an update window from 1 to 60 minutes');
-  const cannotPlan = !idle || updating || saving || blockers.length > 0;
-  const updateCommand = async (type: string) => {
-    setUpdating(true);
-    try {
-      if (type === 'locations_clear') { await onClearLocations(); return; }
-      await command(type, type === 'update_start' || type === 'update_pause' || type === 'map_refresh'
-      ? { task_id: state?.task_id } : type === 'survey'
-        ? { observation_point_id: selectedId, observation_revision: revision }
-        : { limit_s: Number(minutes) * 60, goals }); }
-    finally { setUpdating(false); }
-  };
-  return <div className="map-updates">
-    {toolbar && createPortal(
-      <Button title="Publish and save the latest LiDAR map" disabled={!connected || updating || (!idle && !paused)} onClick={() => void updateCommand('map_refresh')}>Refresh LiDAR map</Button>,
-      toolbar)}
-    <div className="action-line">
-      <Button variant="default" title={blockers.join('; ')} disabled={!connected || updating || (!paused && cannotPlan)} onClick={() => void updateCommand(paused ? 'update_start' : 'map_update')}>Start item updates</Button>
-      <Button disabled={!connected || updating || paused || !update?.active} onClick={() => void updateCommand('update_pause')}>Pause item updates</Button>
-      <Button title="Clear all located item positions; keep photos, items, calibration and observation points"
-        disabled={!connected || updating || saving || (!idle && !paused)}
-        onClick={() => void updateCommand('locations_clear')}>Clear item positions</Button>
-    </div>
-    <div className="action-line">
-      <Button disabled={!selected || !idle || updating || saving || pointBlockers.length > 0}
-        title={pointBlockers.join('; ')} onClick={() => void updateCommand('survey')}>Update selected point</Button>
-      <Button disabled={!selected || !idle || updating || saving}
-        onClick={() => void onSave(points.filter(p => p.id !== selectedId), null)}>Remove selected point</Button>
-    </div>
-    <details className="control-details"><summary>Observation points · {points.length}{selected && ` · view ${points.indexOf(selected) + 1} selected`}</summary>
-      <span className="muted">Points stay on the map and are saved with it. Update the selected point once, or start updates for all saved points. Use Refresh LiDAR map separately to publish map changes.</span>
-      {blockers.length > 0 && <p className="muted">{blockers.join(' · ')}</p>}
-      {selected && pointBlockers.length > 0 && <p className="muted">{pointBlockers.join(' · ')}</p>}
-      <label className="setting-row">Update window (minutes)<input type="number" min="1" max="60" value={minutes} disabled={!idle || updating} onChange={e => setMinutes(e.target.value)} /></label>
-      {update?.active && <span className="muted">{Math.floor(update.remaining_s / 60)}:{String(update.remaining_s % 60).padStart(2, '0')} left</span>}
-      <div className="action-line">
-        <Button disabled={!idle || updating || saving || !goal || points.length >= 20} onClick={() => {
-          if (goal) { const point = { ...goal, id: commandId() }; void onSave([...points, point], point.id); }
-        }}>Add goal</Button>
-        <Button disabled={!idle || updating || saving || !points.length} onClick={() => void onSave([], null)}>Clear points</Button>
-      </div>
-      <div className="action-line">{points.map((p, i) => <Button key={p.id} aria-pressed={p.id === selectedId}
-        onClick={() => onSelect(p.id)}>{i + 1}: ({p.x_m.toFixed(2)}, {p.y_m.toFixed(2)}) · {(p.yaw_rad * 180 / Math.PI).toFixed(0)}°</Button>)}</div>
-    </details>
-  </div>;
 }

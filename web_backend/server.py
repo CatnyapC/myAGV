@@ -398,6 +398,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             if data['map_id'] != editor.grid['map_id'] or data['camera_id'] not in ('front', 'arm'):
                 raise ValueError('Invalid map or camera for Demo capture')
             photos.check(data['expected_revision'])
+            manual_update = data.get('manual_item_update') is True
+            if manual_update and (data['camera_id'] != 'front' or editor.state()['phase'] != 'idle'):
+                raise web.HTTPConflict(text='Stop the robot before a manual item update')
             points = None
             if data.get('save_observation_point') is True:
                 if data['camera_id'] != 'front' or editor.state()['phase'] != 'idle':
@@ -418,6 +421,9 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                             map_revision=editor.grid['revision'], frame=nav['frame'])
             if points is not None:
                 metadata = manual_observation(metadata, points)
+            if manual_update:
+                metadata['location_analysis'] = dict(status='queued',
+                    catalog_signature=catalog_signature(photos.value['items']), estimates=[])
             image = await asyncio.to_thread(demo_frame, data['camera_id'])
             added = await asyncio.to_thread(photos.add, image, metadata, data['expected_revision'])
         await editor.emit('photos')

@@ -147,8 +147,6 @@ It works while idle or while item position updates are paused, without arm motio
 or photo capture. The stopped refresh tolerates sensor callback delays during
 map processing; motion still requires fresh sensors, and STOP, control lease,
 driver watchdog and exclusive chassis ownership remain enforced.
-**Pause item updates** only stops observation collection after
-measured base stop; operator and time-limit pauses never publish the LiDAR map.
 Robot position remains live. Map identity stays fixed within
 one SLAM session; existing no-go zones keep their world coordinates. SLAM
 confirms its pose from fresh sensors automatically. **Set pose from goal** is
@@ -204,12 +202,15 @@ does not install the new startup command.
 
 Manual BASE driving is supervised and bypasses no-go planning. It uses at most
 0.1 m/s and 0.3 rad/s; PICKUP base motion uses 0.03 m/s and 0.05 rad/s. Releasing
-buttons stops the task. Fetch folds the arm before travel. Item position updates use the
-front camera and the same base-only readiness conditions as Go. They do not
-require arm homing or move the arm. Select a goal and press **Start item updates**,
-or add several goals under **Manual update points**. Disabled-start reasons
-appear below the buttons. Starting updates also validates each selected goal;
-it does not require the robot's current footprint to be observed as free.
+buttons stops the task. Fetch folds the arm before travel. Item position updates
+currently support only manual positioning: drive the base to the desired viewing
+position, stop, then click **Manual Item Update** in MAP. This captures the front
+camera without moving the base or arm. With a configured vision LLM and named
+reference items, the LLM estimates and saves item map positions from the photo
+and measured capture pose. Repeat manually at another position when needed.
+Saved observation points are not required or added; the old 20-point limit does
+not apply. MAP no longer exposes automatic update start/pause, observation-point
+management or Refine Approach. LiDAR map refresh remains a separate action.
 
 ## Navigation, no-go zones and Fetch
 
@@ -333,16 +334,8 @@ Grasp and possession still require the existing operator confirmations. Web STOP
 sends M15 but may not interrupt an absolute move; physical stopping remains a
 supervised acceptance check.
 
-**Item position updates** capture each selected viewing pose once.
-Use **Preview update points**, then **Start item update**. **Pause item updates** retains
-the current view and all map/photo records. The default window is 10 minutes (1–60 minutes);
-expiry pauses updating. Starting again after expiry opens a new window. Operator
-pauses count toward the same wall-clock window. STOP/disconnect cancel motion;
-reconnection never starts updating automatically.
-
-Select up to 20 saved viewing poses. Preview markers show headings; move_base
-computes the actual travel paths. Every goal is revalidated before travel.
-After the last capture the controller returns to idle. The configured LLM
+**Manual Item Update** is the supported item-map update workflow. Drive to each
+viewing position manually and stop before capturing. The configured LLM
 automatically assesses the current photo and up to six earlier views together,
 using each acquisition's measured base pose and the occupancy-map image. Raw
 occupancy arrays are excluded from the prompt. Estimates are projected from the
@@ -545,8 +538,8 @@ still gate pickup; placement uses the actual return position. Navigation failure
 timeouts, STOP, lease loss and sensor checks still stop the task. Standalone Go
 keeps its arrival tolerance check.
 
-After **Go** reaches the observation point, select the item pin and use **Refine
-approach** in the map panel. The item must be visible in the front camera. This
+Approach refinement remains part of Fetch and **SLOW APPROACH TEST** in OPERATE;
+there is no Refine Approach action in MAP. The item must be visible in the front camera. This
 base-only task makes at most 16 stopped camera checks, with at most 15 adjustments:
 each moves forward or backward by at most 0.25 m and turns by at most 15 degrees.
 Every step uses fresh localization, LiDAR and odometry, and checks the swept path
@@ -561,10 +554,10 @@ the item pin and preview update automatically. Arrival needs a geometric check o
 distance and heading in addition to the LLM's answer. Lost/ambiguous items, unsafe
 suggestions, lack of progress, timeout, stale sensors or exhausted rounds stop the
 task. STOP, disconnect, map/no-go changes and pose drift invalidate pending moves;
-late answers after cancellation are discarded. Standalone **Refine approach**
+late answers after cancellation are discarded. The standalone approach test
 sends no arm or gripper commands; Fetch continues to ALIGN only after arrival.
 
-**Map actions > Estimate item positions** retries existing front observations.
+**Manual Item Update** captures a fresh view to retry an estimate.
 Missing credentials, malformed results and STOP/map changes retain the photos
 without applying a location result. Simulator fixtures are analyzed only on
 explicit request. Background estimation does not hold the grasp-calibration lock.

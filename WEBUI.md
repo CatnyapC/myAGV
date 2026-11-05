@@ -90,6 +90,13 @@ is left intact. No login/startup registration or global `pm2 save` is performed.
     They clear navigation without moving on reconnect. MAP > More > **Reset demo
     pose** restores a safe start; service restart re-applies zones before simulation.
 
+For real hardware, item-map updates currently support manual positioning only:
+drive the base to the desired position, stop, then click **Manual Item Update**
+in MAP. With a configured vision LLM and named reference items, the captured
+front image and measured pose produce saved item map-position estimates. Repeat
+at each desired position. Automatic update start/pause, observation-point controls
+and MAP's Refine Approach action are removed. LiDAR refresh is independent.
+
 11. Menu > **Import reference photo** accepts a phone PNG/JPEG/WebP (up to 16 MiB).
     The browser converts it to an RGB/RGBA PNG up to 1600 pixels on its longest side
     and 4 MiB. Edit name/appearance manually; the reference has no map observation.
