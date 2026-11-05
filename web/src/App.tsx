@@ -41,6 +41,7 @@ const REQUEST_EXAMPLES = [
 ];
 
 export function App() {
+  const [llmToolbar, setLlmToolbar] = useState<HTMLSpanElement | null>(null);
   const [state, setState] = useState<State | null>(null);
   const [connected, setConnected] = useState(false);
   const [obstacleSize, setObstacleSize] = useState<number | null>(null);
@@ -673,7 +674,7 @@ export function App() {
           : !state?.hardware?.arm_available ? 'P340 feedback unavailable; reconnect the arm.' : ''}
         onCaptureGoal={captureGraspGoal} onClose={() => setPhotoMode(null)} onChange={photoChanged} onBusy={setBusy} onStop={() => void stop()} onLog={log} />}</div>,
         state?.demo === false && <StopRecovery state={state.hardware} connected={connected} command={hardwareCommand} />)}
-      {panel('llm', <LLMTurns connected={connected} onLog={log} />)}
+      {panel('llm', <LLMTurns connected={connected} onLog={log} toolbar={llmToolbar} />, <span ref={setLlmToolbar} />)}
     </main>
     <div className="panel-dividers">
       {!maximized && dividers(layout).map(seam => {

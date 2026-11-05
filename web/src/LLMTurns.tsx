@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Button } from './ui';
 import { api } from './api';
 import { MeasuredPhoto } from './MeasuredPhoto';
 import type { LogReporter } from './activityLog';
@@ -16,8 +18,10 @@ type Round = {
   outcome?: 'arrived' | 'stand_off';
 };
 
-export function LLMTurns(props: { connected: boolean; onLog: LogReporter }) {
+export function LLMTurns(props: { connected: boolean; onLog: LogReporter; toolbar: HTMLElement | null }) {
   const [rounds, setRounds] = useState<Round[]>([]);
+  const [hiddenIds, setHiddenIds] = useState(new Set<string>());
+  const visibleRounds = rounds.filter(round => !hiddenIds.has(round.id));
   const roundStatus = useRef(new Map<string, string>());
   const logRevision = useRef(-1);
   useEffect(() => {
@@ -51,8 +55,10 @@ export function LLMTurns(props: { connected: boolean; onLog: LogReporter }) {
     roundStatus.current = next;
   }, [rounds, props.onLog]);
   return <div className="llm-turns">
-    <span className="muted" role="status">{rounds.length ? `${rounds.length} turns` : 'No LLM turns yet. Update item positions, or run PREVIEW, ALIGN or FETCH.'}</span>
-    {rounds.map(round => {
+    {props.toolbar && createPortal(<Button variant="ghost" disabled={!visibleRounds.length}
+      onClick={() => setHiddenIds(old => new Set([...old, ...rounds.map(round => round.id)]))}>Clear log</Button>, props.toolbar)}
+    <span className="muted" role="status">{visibleRounds.length ? `${visibleRounds.length} turns` : 'No LLM turns.'}</span>
+    {visibleRounds.map(round => {
       const parts = round.messages?.[1].content ?? [];
       return <article className="fetch-round" key={round.id}>
         <header><strong>Round {round.round}</strong><span>{round.mode === 'locations' ? 'Item positions' : round.mode === 'approach' ? 'Base approach' : round.preview ? 'Preview' : 'Align'} · {round.stage || round.mode} · {round.status}{round.elapsed_s !== undefined && ` · ${round.elapsed_s}s`}</span></header>
