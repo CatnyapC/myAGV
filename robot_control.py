@@ -319,12 +319,30 @@ class Control:
         if homed and not self.arm_homed:
             raise RuntimeError('Home arm or explicitly confirm already homed')
 
-    def read_arm(self):
+    def read_arm(self, guard=None):
         self.require_arm(False)
-        with arm_deadline(.4):
-            self.angles = validate_angles(self.arm.get_angles_info())
+        if self.phase == 'calibrating':
+            self.angles = validate_angles(self.arm_feedback(self.arm.get_angles_info, guard))
+        else:
+            with arm_deadline(.4):
+                self.angles = validate_angles(self.arm.get_angles_info())
         self.arm_stamp = time.monotonic()
         return self.angles
+
+    def arm_feedback(self, read, guard=None):
+        # Retry only reads: a timed-out motion command may already be executing.
+        for attempt in range(3):
+            if attempt:
+                if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
+                    raise Stopped('Arm feedback cancelled or lease expired')
+                if guard:
+                    guard()
+            try:
+                with arm_deadline(.4):
+                    return read()
+            except TimeoutError:
+                if attempt == 2:
+                    raise
 
     def teleop_feedback(self, after_s=0):
         end = time.monotonic() + 4
@@ -490,8 +508,7 @@ class Control:
         number(y_mm, LIMITS['X'][0] - LIMITS['X'][1] + 10, LIMITS['X'][1] - LIMITS['X'][0] - 10, 'Combined pickup Y correction')
         if y_mm and (not pickup or axis != 'X'):
             raise ValueError('Combined Y correction requires pickup X motion')
-        with arm_deadline(.4):
-            coords = self.arm.get_coords_info()
+        coords = self.arm_feedback(self.arm.get_coords_info, guard)
         if not coords or len(coords) < 3 or not all(type(v) in (float, int) and math.isfinite(v) for v in coords[:3]):
             raise RuntimeError('Arm coordinate feedback unavailable')
         coords = list(coords[:4])
@@ -524,12 +541,11 @@ class Control:
                 waiting = time.monotonic()
                 guard()
                 end += time.monotonic() - waiting
-            with arm_deadline(.4):
-                actual = self.arm.get_coords_info()
+            actual = self.arm_feedback(self.arm.get_coords_info, guard)
             if actual and len(actual) >= len(coords) and all(type(a) in (int, float) and math.isfinite(a)
                     and abs(a-b) <= (1 if pickup and axis == 'Z' and i == 2 else .5)
                     for i, (a, b) in enumerate(zip(actual[:len(coords)], coords))):
-                self.read_arm()
+                self.read_arm(guard=guard)
                 return
             time.sleep(.05)
         raise TimeoutError('Arm step did not reach its measured target: target=%s actual=%s' % (coords, actual))
@@ -537,16 +553,14 @@ class Control:
     def move_pickup_z(self, target_z, current):
         target_z = number(target_z, LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Pickup target Z')
         current()
-        with arm_deadline(.4):
-            coords = self.arm.get_coords_info()
+        coords = self.arm_feedback(self.arm.get_coords_info, current)
         if not coords or len(coords) < 3:
             raise RuntimeError('Arm coordinate feedback unavailable')
         delta = target_z - number(coords[2], *LIMITS['Z'], 'Arm Z feedback')
         if abs(delta) > 1:
             self.arm_step('Z', 1 if delta > 0 else -1, pickup=True, distance=abs(delta), guard=current)
             current()
-            with arm_deadline(.4):
-                coords = self.arm.get_coords_info()
+            coords = self.arm_feedback(self.arm.get_coords_info, current)
             if not coords or len(coords) < 3:
                 raise RuntimeError('Arm coordinate feedback unavailable')
             if abs(target_z - number(coords[2], *LIMITS['Z'], 'Arm Z feedback')) > 1:
@@ -1250,8 +1264,7 @@ class Control:
                 images = {camera: self.capture(camera, vision=True)['image'] for camera in (('front',) if stage == 'base' else ('arm',))}
                 position = None
                 if stage == 'arm' and packet.get('alignment_protocol') == 'metric-v1':
-                    with arm_deadline(.4):
-                        position = self.arm.get_coords_info()
+                    position = self.arm_feedback(self.arm.get_coords_info, current)
                     if not position or len(position) < 3:
                         raise RuntimeError('Measured ARM coordinates required for metric alignment')
                     position = [number(position[i], *LIMITS[axis], 'ARM position feedback') for i, axis in enumerate('XYZ')]
@@ -1320,8 +1333,7 @@ class Control:
                     self.arm_step('Y', 1 if y > 0 else -1, pickup=True, distance=abs(y), guard=current)
                 actual = None
                 if position is not None:
-                    with arm_deadline(.4):
-                        after = self.arm.get_coords_info()
+                    after = self.arm_feedback(self.arm.get_coords_info, current)
                     if not after or len(after) < 3:
                         raise RuntimeError('ARM feedback unavailable after metric correction')
                     actual = dict(X=after[1]-position[1], Y=position[0]-after[0], Z=after[2]-position[2])

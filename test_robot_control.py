@@ -346,6 +346,50 @@ class ControlTest(unittest.TestCase):
                 c.arm.set_coords.assert_called_once_with(target, 30)
                 self.assertEqual(c.angles, [90, 0, 0])
 
+    def test_alignment_feedback_retries_without_repeating_motion(self):
+        c = fake_control()
+        c.phase, c.deadline = 'calibrating', time.monotonic() + 60
+        target = [12, 210, 35, 27]
+        timeout = TimeoutError('P340 did not respond in time')
+        c.arm.get_coords_info.side_effect = [timeout, timeout, [0, 150, 35, 27], timeout, target]
+        c.arm.get_angles_info.side_effect = [timeout, [90, 0, 0]]
+        guard = Mock()
+        with patch('robot_control.arm_deadline', return_value=nullcontext()):
+            c.arm_step('X', 1, pickup=True, distance=60, y_mm=-12, guard=guard)
+        c.arm.set_coords.assert_called_once_with(target, 30)
+        c.arm.set_mode.assert_called_once_with(0)
+        self.assertEqual(c.angles, [90, 0, 0])
+        self.assertGreaterEqual(guard.call_count, 6)
+        c.arm.set_gripper_state.assert_not_called()
+
+    def test_arm_feedback_retry_limit_and_safety_checks(self):
+        for failure in ('timeout', 'stop', 'lease', 'guard', 'invalid'):
+            with self.subTest(failure=failure):
+                c = fake_control()
+                c.deadline = time.monotonic() + 60
+                def fail():
+                    if failure == 'stop':
+                        c.stop_pending = 'STOP'
+                    if failure == 'lease':
+                        c.deadline = 0
+                    raise ValueError('Invalid feedback') if failure == 'invalid' else TimeoutError('P340 did not respond in time')
+                c.arm.get_coords_info.side_effect = fail
+                guard = Mock(side_effect=Stopped('Map changed') if failure == 'guard' else None)
+                error = ValueError if failure == 'invalid' else TimeoutError if failure == 'timeout' else Stopped
+                with patch('robot_control.arm_deadline', return_value=nullcontext()), self.assertRaises(error):
+                    c.arm_feedback(c.arm.get_coords_info, guard)
+                self.assertEqual(c.arm.get_coords_info.call_count, 3 if failure == 'timeout' else 1)
+                c.arm.set_coords.assert_not_called()
+
+    def test_alignment_motion_timeout_is_never_retried(self):
+        c = fake_control()
+        c.phase, c.deadline = 'calibrating', time.monotonic() + 60
+        c.arm.get_coords_info.return_value = [0, 150, 35, 27]
+        c.arm.set_coords.side_effect = TimeoutError('P340 did not respond in time')
+        with patch('robot_control.arm_deadline', return_value=nullcontext()), self.assertRaises(TimeoutError):
+            c.arm_step('X', 1, pickup=True, distance=10)
+        c.arm.set_coords.assert_called_once_with([0, 160, 35, 27], 30)
+
     def test_pickup_z_accepts_one_mm_but_preserves_xy_and_stop_checks(self):
         for z_error, x_error, stop in ((.58,0,False), (1,0,False), (1.01,0,False), (.58,.51,False), (.58,0,True)):
             with self.subTest(z_error=z_error, x_error=x_error, stop=stop):
