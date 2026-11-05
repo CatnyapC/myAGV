@@ -138,7 +138,7 @@ checks standstill within 2 cm / 2 degrees. No measured improvement for 3 seconds
 or exceeding the bounded approach duration stops the attempt. These values need
 hardware validation; map accuracy still limits actual grasp accuracy.
 The arm replays taught reach/height; it does not sense or compensate for a moved
-object. Re-teach moved objects. Task list: [PICKUP_TASKS.md](PICKUP_TASKS.md).
+object. Re-teach moved objects.
 
 Timeouts, failures and interruptions cancel the current navigation goal and stop subsequent grasp/place steps. Unconfirmed cancellation is reported. The fetch demo bounds P340 calls to 3 seconds and arm movement waits to 30 seconds. Stop commands are best effort and may not interrupt firmware-queued moves; keep the hardware stop accessible.
 Gripper completion uses a configurable delay and does not detect whether an object was grasped. Software checks do not replace hardware testing.

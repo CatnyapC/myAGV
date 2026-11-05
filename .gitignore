@@ -189,3 +189,7 @@ cython_debug/
 /web/dist/
 /web/.tsbuildinfo
 /web_runtime/
+
+# Finder metadata and Office temporary lock files
+.DS_Store
+~$*
