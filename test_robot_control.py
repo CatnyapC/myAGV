@@ -59,6 +59,38 @@ def packet(**values):
 
 
 class ControlTest(unittest.TestCase):
+    def test_arm_serial_logging_preserves_frames_results_and_errors(self):
+        c = fake_control()
+        arm, c.arm = c.arm, None
+        write = arm._serial_port.write
+        write.side_effect = lambda data: len(data)
+        c.read_arm = Mock()
+        with patch('pymycobot.ultraArmP340.ultraArmP340', return_value=arm), \
+             patch('robot_control.arm_deadline', return_value=nullcontext()), \
+             patch('robot_control.print') as logged:
+            c.connect_arm()
+            write.assert_not_called()
+            c.phase, c.status, c.task_id = 'grasp_testing', 'Lifting item', 'fetch-id'
+            for frame in (b'M25 A0 F500\r', b'G0 X0 Y150 Z100 E27 F30\r', b'M15\r'):
+                self.assertEqual(arm._serial_port.write(frame), len(frame))
+                write.assert_called_with(frame)
+                attempt, result = [json.loads(call.args[0]) for call in logged.call_args_list[-2:]]
+                self.assertEqual(attempt['command'], frame.decode('ascii'))
+                self.assertEqual(attempt['event'], 'arm_serial_write')
+                self.assertEqual(attempt['task_id'], 'fetch-id')
+                self.assertEqual(attempt['phase'], 'grasp_testing')
+                self.assertEqual(result['bytes_written'], len(frame))
+            wrapped = arm._serial_port.write
+            c.connect_arm()
+            self.assertIs(arm._serial_port.write, wrapped)
+            write.side_effect = OSError('Serial disconnected')
+            with self.assertRaisesRegex(OSError, 'Serial disconnected'):
+                arm._serial_port.write(b'M25 A0 F500\r')
+            self.assertEqual(json.loads(logged.call_args.args[0])['event'], 'arm_serial_error')
+            write.side_effect, write.return_value = None, 2
+            self.assertEqual(arm._serial_port.write(b'M15\r'), 2)
+            self.assertEqual(json.loads(logged.call_args.args[0])['bytes_written'], 2)
+
     def test_idle_ui_reload_preserves_homing_but_active_reload_still_stops(self):
         c = fake_control()
         c.request_stop = Mock()

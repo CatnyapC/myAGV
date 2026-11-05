@@ -361,6 +361,23 @@ class Control:
         with arm_deadline(3):
             self.arm = ultraArmP340(os.environ.get('MYAGV_P340_PORT', '/dev/ttyUSB0'), 115200)
             self.arm._serial_port.exclusive = True
+        write = self.arm._serial_port.write
+
+        def logged_write(data):
+            # Trace the wire boundary, including SDK commands and direct clamp writes.
+            event = dict(event='arm_serial_write', time_s=time.time(), boot_id=self.boot_id,
+                         task_id=self.task_id, phase=self.phase, status=self.status,
+                         command=bytes(data).decode('ascii', errors='backslashreplace'))
+            print(json.dumps(event), flush=True)
+            try:
+                written = write(data)
+            except BaseException as exc:
+                print(json.dumps(dict(event, event='arm_serial_error', error=str(exc))), flush=True)
+                raise
+            print(json.dumps(dict(event, event='arm_serial_written', bytes_written=written)), flush=True)
+            return written
+
+        self.arm._serial_port.write = logged_write
         self.arm_homed = False
         self.read_arm()
         self.arm_error = ''
