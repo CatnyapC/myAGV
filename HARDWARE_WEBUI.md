@@ -506,6 +506,23 @@ remain in `stations.json`. Keep these files with the robot's configuration.
 
 ## LLM key
 
+For direct OpenAI API access, run in Bash on the robot:
+
+```bash
+set +x
+read -rsp 'OpenAI API key: ' OPENAI_API_KEY
+printf '\n'
+export OPENAI_API_KEY
+pm2 restart myagv-api --update-env
+unset OPENAI_API_KEY
+```
+
+Paste only at the hidden prompt. Do not run `pm2 save` or print process environments.
+After restart, Settings > Model automatically lists the key's OpenAI catalog.
+Select a model supporting Chat Completions, structured JSON, and image inputs for
+vision tasks. See [OpenAI API key](WEBUI.md#openai-api-key) for storage and catalog
+limitations. Existing OpenRouter and Local Codex configuration remains independent.
+
 ### Estimated item positions
 
 Each current front-camera observation is automatically analyzed against the named

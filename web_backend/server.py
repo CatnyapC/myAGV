@@ -22,7 +22,7 @@ from .photos import MAX_IMAGE_BYTES, PhotoIndex, demo_frame, digest_station
 from .storage import atomic_bytes, atomic_json
 from .hardware import Hardware
 from .observation_points import ObservationPoints
-from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, close_codex_session, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm
+from .resolve import MODEL, MODEL_OPTIONS, PICKUP_PROMPT, close_codex_session, describe_photo, load_key, locate_pickup, resolve_items, target_preview, validate_llm, openai_models
 from .codex_bridge import MODELS as CODEX_MODELS, load_token
 from .item_locations import approach_goal, approach_step, catalog_signature, estimate_items, location_config, location_records, refine_approach
 
@@ -159,13 +159,26 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
     editor.llm['status'], llm_key = load_key()
     openrouter_status = editor.llm['status']
     codex_status, codex_key = load_token()
+    openai_status, openai_key = load_key('openai_api_key', 'OPENAI_API_KEY')
+    model_options = list(MODEL_OPTIONS)
 
     def model_key(model=None):
-        return codex_key if (model or editor.settings['values']['llm_model']) in CODEX_MODELS else llm_key
+        model = model or editor.settings['values']['llm_model']
+        return codex_key if model in CODEX_MODELS else openai_key if model.startswith('openai/') else llm_key
 
     def update_llm_status():
-        editor.llm['status'] = codex_status if editor.settings['values']['llm_model'] in CODEX_MODELS else openrouter_status
+        model = editor.settings['values']['llm_model']
+        editor.llm['status'] = codex_status if model in CODEX_MODELS else openai_status if model.startswith('openai/') else openrouter_status
 
+    async def discover_models(app):
+        nonlocal openai_status
+        try:
+            model_options.extend(await openai_models(openai_key))
+        except web.HTTPBadGateway:
+            openai_status = 'unavailable'
+        update_llm_status()
+
+    app.on_startup.append(discover_models)
     update_llm_status()
     resolve_lock = asyncio.Lock()  # ponytail: one request; per-user locks if multi-user control is added.
     fetch_settings = load_json(editor.directory / 'fetch_settings.json', dict(revision=0,
@@ -543,12 +556,15 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
 
     async def settings(request):
         if request.method == 'GET':
-            return web.json_response({**editor.settings, 'llm_models': MODEL_OPTIONS})
+            return web.json_response({**editor.settings, 'llm_models': model_options})
         data = await request.json()
         async with editor.lock:
             if data['expected_revision'] != editor.settings['revision']:
                 raise web.HTTPConflict(text='Settings changed; reload before editing')
             values = validate_settings(data['values'])
+            if values['llm_model'] != editor.settings['values']['llm_model'] and not any(
+                    option['id'] == values['llm_model'] for option in model_options):
+                raise ValueError('Unsupported model for configured key')
             saved = dict(revision=editor.settings['revision'] + 1, values=values)
             metadata, png = editor.metadata, editor.png
             if any(values[k] != editor.settings['values'][k] for k in DISPLAY_FIELDS):
@@ -557,7 +573,7 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
             editor.settings, editor.metadata, editor.png = saved, metadata, png
             update_llm_status()
         await editor.emit('settings')
-        return web.json_response({**saved, 'llm_models': MODEL_OPTIONS})
+        return web.json_response({**saved, 'llm_models': model_options})
 
     async def commands(request):
         data = await request.json()

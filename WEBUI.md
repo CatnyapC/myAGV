@@ -246,6 +246,40 @@ Official references: [Codex app-server](https://learn.chatgpt.com/docs/app-serve
 and [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source).
 The latter is the recommended future route for a separately authorized app.
 
+### OpenAI API key
+
+OpenAI API is a separate backend from Local Codex and OpenRouter. On the machine
+running `myagv-api`, provide `OPENAI_API_KEY` to the backend only. In zsh:
+
+```zsh
+set +x
+read -rs 'OPENAI_API_KEY?OpenAI API key: '
+printf '\n'
+export OPENAI_API_KEY
+pm2 restart myagv-api --update-env
+unset OPENAI_API_KEY
+```
+
+Paste the key at the hidden prompt, never into the command itself. This keeps it
+out of shell history and terminal output. PM2 retains the environment; do not run
+`pm2 save`, print process environments, or put the key in source/frontend config.
+For systemd credentials, use `openai_api_key` in `$CREDENTIALS_DIRECTORY`; an
+explicit credentials directory takes precedence over environment variables.
+
+At startup, a configured key triggers authenticated
+[OpenAI model discovery](https://developers.openai.com/api/reference/resources/models/methods/list).
+Settings > Model includes every returned ID under **OpenAI API**, separately from
+OpenRouter and Local Codex. Restart to refresh after changing keys or permissions.
+Discovery failure leaves other backends usable; a previously saved OpenAI model
+survives restart and its status becomes `unavailable` if discovery fails.
+
+The catalog is not a capability guarantee: embeddings, audio, image-generation,
+and other incompatible models may appear. Robot tasks require Chat Completions
+with structured JSON output; photo tasks also require image inputs. Unsupported
+requests fail without bypassing result validation or motion checks. Thinking is
+**Auto** (provider default); Fast mode remains Local Codex only. Direct calls use
+an 8192-token completion cap. API usage is billed separately from ChatGPT/Codex.
+
 ### OpenRouter
 
 Settings > **Model** selects DeepSeek V4.1 Flash or V4 Pro 0813. **Thinking** selects
