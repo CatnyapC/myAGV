@@ -90,8 +90,8 @@ The global planner merges safely visible path nodes into straight segments while
 checking every crossed inflated costmap cell, including diagonal corner contacts.
 It retains dense samples for ROS distance fields. Local heading tracks the current
 segment's endpoint and advances to the next segment within 15 cm of a corner.
-Forward tracking starts within 45 degrees and continues until heading error exceeds
-60 degrees. Legal forward trajectories take priority over in-place turns; a blocked
+Forward tracking starts within 15 degrees and continues until heading error exceeds
+30 degrees. Legal forward trajectories take priority over in-place turns; a blocked
 forward trajectory still permits collision-checked rotation and replanning.
 Velocity sampling stays within configured limits even when measured feedback is
 outside those limits. The driver still requires a measured stop for drive-mode changes.
@@ -102,7 +102,7 @@ stop gate before final rotation. Feedback-minus-acceleration braking can keep
 driving on this chassis when its low-speed response exceeds the command.
 Web Go and Fetch use 15 cm / 30 degree arrival tolerances in both the ROS planner
 and the caller's completion check. The position latch retains arrival during final rotation.
-The installer refuses unknown source layouts and keeps `.before-shortest-turn-v6`,
+The installer refuses unknown source layouts and keeps `.before-shortest-turn-v7`,
 preserving earlier backups when upgrading.
 Web navigation caps turns at 0.1 rad/s and forward travel at 0.05 m/s;
 automatic reverse escape is disabled. When no legal trajectory exists, the local

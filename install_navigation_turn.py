@@ -29,7 +29,7 @@ def patch(source):
     source = replace_once(source, '    global_plan_.resize(new_plan.size());',
         '    if (new_plan.empty()) myagv_following_ = false;\n'
         '    global_plan_.resize(new_plan.size());')
-    source = replace_once(source, '    //we want to sample the velocity space regularly',
+    following = (
         '    // MYAGV_POLYLINE_FOLLOW: align within 45 degrees; keep following until error exceeds 60.\n'
         '    unsigned int heading_x, heading_y;\n'
         '    double error = DBL_MAX;\n'
@@ -43,6 +43,12 @@ def patch(source):
         '    min_vel_theta = max(min_vel_th_, min(max_vel_th_, min_vel_theta));\n'
         '    max_vel_theta = max(min_vel_theta, max(min_vel_th_, min(max_vel_th_, max_vel_theta)));\n\n'
         '    //we want to sample the velocity space regularly')
+    tightened = following.replace('45 degrees', '15 degrees').replace('exceeds 60', 'exceeds 30')
+    tightened = tightened.replace('M_PI / 3.0', 'M_PI / 6.0').replace('M_PI / 4.0', 'M_PI / 12.0')
+    if following in source:
+        source = replace_once(source, following, tightened)
+    else:
+        source = replace_once(source, '    //we want to sample the velocity space regularly', tightened)
     signature = '  double TrajectoryPlanner::headingDiff('
     start = source.find(signature)
     end = source.find('  //calculate the cost of a ray-traced line', start)
@@ -161,7 +167,7 @@ if __name__ == '__main__':
         original = source.read_text()
         updated = transform(original)
         if updated != original:
-            backup = source.with_suffix(source.suffix + '.before-shortest-turn-v6')
+            backup = source.with_suffix(source.suffix + '.before-shortest-turn-v7')
             if backup.exists():
                 raise SystemExit('Backup exists; inspect previous installation first')
             changes.append((source, backup, original, updated))

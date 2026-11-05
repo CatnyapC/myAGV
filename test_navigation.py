@@ -98,6 +98,19 @@ class NavigationTurnPatchTest(unittest.TestCase):
             with self.subTest(source=invalid), self.assertRaises(ValueError):
                 patch_navigation_turn(invalid)
 
+    def test_heading_thresholds_upgrade_existing_patch(self):
+        source = self.scoring + ('//next we want to generate trajectories for rotating in place\n'
+                  'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;\n'
+                  '//do we have a legal trajectory\n')
+        updated = patch_navigation_turn(source)
+        self.assertIn('error > M_PI / 6.0 + 1e-6', updated)
+        self.assertIn('error <= M_PI / 12.0 + 1e-6', updated)
+        previous = updated.replace('15 degrees', '45 degrees').replace('exceeds 30', 'exceeds 60')
+        previous = previous.replace('error > M_PI / 6.0', 'error > M_PI / 3.0')
+        previous = previous.replace('error <= M_PI / 12.0', 'error <= M_PI / 4.0')
+        self.assertEqual(patch_navigation_turn(previous), updated)
+        self.assertEqual(patch_navigation_turn(updated), updated)
+
     def test_installer_preserves_backup_and_refuses_overwriting_it(self):
         source = self.scoring + ('//next we want to generate trajectories for rotating in place\n'
                   'double ahead_gdist = goal_map_(cell_x, cell_y).target_dist;\n'
@@ -131,9 +144,9 @@ class NavigationTurnPatchTest(unittest.TestCase):
             self.assertIn('myagv::simplify', global_path.read_text())
             self.assertEqual((path.parent/'myagv_polyline.h').read_text(),
                              (global_path.parent/'myagv_polyline.h').read_text())
-            backup = path.with_suffix('.cpp.before-shortest-turn-v6')
+            backup = path.with_suffix('.cpp.before-shortest-turn-v7')
             self.assertEqual(backup.read_text(), source)
-            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v6').read_text(), self.goal_stop)
+            self.assertEqual(wrapper.with_suffix('.cpp.before-shortest-turn-v7').read_text(), self.goal_stop)
             self.assertEqual(old_backup.read_text(), 'original upstream source')
             self.assertEqual(v2_backup.read_text(), 'previous patch backup')
             self.assertEqual(v3_backup.read_text(), '20 degree patch backup')
@@ -164,7 +177,7 @@ class NavigationTurnPatchTest(unittest.TestCase):
                                      str(path)], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(path.read_text(), source)
-            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v6').exists())
+            self.assertFalse(path.with_suffix('.cpp.before-shortest-turn-v7').exists())
 
 
 class FakeArm:
