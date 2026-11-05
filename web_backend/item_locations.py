@@ -199,9 +199,9 @@ def approach_step(result, photo, grid, zones, item, radius, config):
         return goal, None
     goal_box, current_box = result['goal'], result['current']
     scale = (current_box[2] - current_box[0]) / (goal_box[2] - goal_box[0])
-    matched = (.60 <= scale <= 1.60
-               and abs(current_box[1] - goal_box[1]) <= 300 and abs(current_box[3] - goal_box[3]) <= 300
-               and abs(result['distance_m'] * (1 - scale)) <= .12 + 1e-9)
+    matched = (.72 <= scale <= 1.42
+               and abs(current_box[1] - goal_box[1]) <= 150 and abs(current_box[3] - goal_box[3]) <= 210
+               and abs(result['distance_m'] * (1 - scale)) <= .084 + 1e-9)
     if result['arrived']:
         if result['forward_m'] or result['turn_deg'] or not matched:
             raise ValueError('Item approach arrival does not match saved front GOAL')
@@ -286,7 +286,7 @@ Turn only when needed to keep the item visible. Prefer turn-only, then reassess,
 Use GOAL/CURRENT target width ratio and measured executed poses to estimate remaining range.
 Travel magnitude must also be at most half of distance_m*abs(1-current_width/goal_width); reduce it further when uncertain.
 GOAL/current are visible target boxes [left,top,right,bottom], integers normalized to 0..1000.
-Measure independently; retain clipping. At 60..160% of GOAL width, top and bottom edges each within 300 normalized units of GOAL, and estimated remaining range abs(distance_m*(1-current_width/goal_width)) within 0.12 meters, return zero motion: Approach is ready for ALIGN.
+Measure independently; retain clipping. At 72..142% of GOAL width, top edge within 150 normalized units of GOAL and bottom edge within 210 normalized units of GOAL, and estimated remaining range abs(distance_m*(1-current_width/goal_width)) within 0.084 meters, return zero motion: Approach is ready for ALIGN.
 This is a coarse handoff, not the final grasp pose. Within this band, accept a closer, off-center or oblique view and return forward_m=0 and turn_deg=0 even if an adjustment could improve the match. ALIGN handles the remaining distance, angle and centering under its own workspace checks; do not retreat merely because CURRENT is larger than GOAL within this band.
 If the item is identified but no useful forward/turn correction remains, return zero motion to finish Approach and proceed to ALIGN instead of repeating tiny corrections.
 Never advance when CURRENT width is at least GOAL width. Outside the arrival tolerance, if CURRENT is too large, request a small negative forward_m to retreat, then reassess; being too close is recoverable.
