@@ -145,6 +145,10 @@ instead of silently replacing it. The UI does not store credentials.
 
 ## LLM configuration
 
+The current Codex bridge deployment supports **macOS or WSL2 only**. Native
+Windows deployment is not supported by the supplied scripts. On Windows, run
+Codex CLI, the bridge, and the SSH tunnel inside WSL2.
+
 Settings > **Model** also offers **GPT-6.1 Sol · Local Codex**. Use Codex CLI
 0.162.1 or newer; version 0.140.0 rejected this model in our deployment. This uses the
 Mac's Codex CLI ChatGPT login through a loopback HTTP adapter and an SSH reverse
