@@ -160,7 +160,7 @@ class Controller:
             self.stop()
             self.arm_homed = False
             print("Homing arm; wait for completion")
-            with arm_deadline():
+            with arm_deadline(60):
                 self.arm.go_zero()
             self.arm_homed = True
             print("Arm homed")

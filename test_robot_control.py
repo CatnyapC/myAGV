@@ -500,8 +500,23 @@ class ControlTest(unittest.TestCase):
                 patch('robot_control.wait_arm', return_value=[90, 10, 20]) as wait:
             c.fold()
         c.arm.set_angles.assert_called_once_with([90, 10, 20], 30)
-        wait.assert_called_once_with(c.arm, [90, 10, 20])
+        wait.assert_called_once_with(c.arm, [90, 10, 20], timeout=30)
         self.assertEqual(c.angles, [90, 10, 20])
+
+    def test_homing_allows_sixty_seconds_without_extending_confirmation(self):
+        for kind in ('home', 'confirm_homed'):
+            with self.subTest(kind=kind):
+                c = fake_control()
+                with patch('robot_control.arm_deadline', return_value=nullcontext()) as deadline, \
+                        patch('robot_control.wait_arm', return_value=[0, 0, 0]) as wait:
+                    c.execute(dict(type=kind))
+                wait.assert_called_once_with(c.arm, timeout=60 if kind == 'home' else 3)
+                if kind == 'home':
+                    deadline.assert_called_once_with(60)
+                    c.arm.go_zero.assert_called_once_with()
+                else:
+                    c.arm.go_zero.assert_not_called()
+                self.assertTrue(c.arm_homed)
 
     def test_full_arm_target_preserves_pre_motion_gates(self):
         for reason in ('stop', 'lease', 'joint_count', 'map_pause'):

@@ -486,7 +486,7 @@ class Control:
         # shortcut: M15 may not interrupt absolute travel; verify firmware before relying on Web STOP.
         with arm_deadline():
             self.arm.set_angles(target, 30)
-        self.angles = wait_arm(self.arm, target)
+        self.angles = wait_arm(self.arm, target, timeout=30)
         self.arm_stamp = time.monotonic()
 
     def grip(self, value):
@@ -818,9 +818,9 @@ class Control:
             self.robot.nav.wait_stopped()
             if kind == 'home':
                 self.phase, self.status, self.arm_homed = 'homing', 'Homing arm', False
-                with arm_deadline():
+                with arm_deadline(60):
                     self.arm.go_zero()
-            self.angles = wait_arm(self.arm)
+            self.angles = wait_arm(self.arm, timeout=60 if kind == 'home' else P340_TIMEOUT_S)
             self.arm_stamp, self.arm_homed = time.monotonic(), True
         elif kind == 'gripper':
             self.robot.nav.wait_stopped()
