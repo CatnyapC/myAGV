@@ -53,6 +53,25 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
         c.capture.assert_called_once_with('front', vision=True)
         c.arm.set_coords.assert_not_called()
 
+    def test_close_holds_three_seconds_before_sdk_queue_query(self):
+        c = fake_control()
+        c.arm.lock = threading.Lock()
+        events = []
+        c.arm._serial_port.write.side_effect = lambda data: events.append(data)
+        c.arm._respone.side_effect = lambda: c.arm._serial_port.write(b'M120\r')
+
+        def sleep(seconds):
+            self.assertTrue(c.arm.lock.locked())
+            events.append(('sleep', seconds))
+
+        with patch('robot_control.time.sleep', side_effect=sleep), \
+             patch('robot_control.print'):
+            c.grip(0)
+            self.assertEqual(events, [b'M25 A0 F500\r', ('sleep', 3), b'M120\r'])
+            events.clear()
+            c.grip(100)
+            self.assertEqual(events, [b'M25 A100 F500\r', b'M120\r', ('sleep', 1.5)])
+
     def test_grasp_wire_commands_keep_clamp_and_send_one_full_target_per_move(self):
         from pymycobot.ultraArmP340 import ultraArmP340
         from pymycobot.error import calibration_parameters

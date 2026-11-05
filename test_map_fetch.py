@@ -35,7 +35,7 @@ class MapFetchTest(unittest.TestCase):
         start = dict(x_m=2, y_m=3, yaw_deg=0)
         pose, angles, coords, events = dict(start), [0, 10, 20, 27], [20, 80, 100, 27], []
         c.robot.nav.get_pose.side_effect = lambda **kw: dict(pose)
-        c.read_arm = Mock(side_effect=lambda: list(angles))
+        c.read_arm = Mock(side_effect=lambda **kw: list(angles))
         c.arm.get_coords_info.side_effect = lambda: list(coords)
 
         def joints(target, speed):

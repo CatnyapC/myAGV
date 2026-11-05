@@ -492,15 +492,20 @@ class Control:
     def grip(self, value):
         self.require_arm()
         number(value, 0, 100, 'Gripper value')
-        with arm_deadline():
-            # Use the documented P340 frame; newer SDKs append a second M-code.
-            with self.arm.lock:
+        with self.arm.lock:
+            with arm_deadline():
+                # Use the documented P340 frame; newer SDKs append a second M-code.
                 self.arm._serial_port.write(('M25 A%s F500\r' % value).encode())
                 self.arm._serial_port.flush()
-                self.arm._respone()
-        print(json.dumps(dict(event='gripper_command', time_s=time.time(), task_id=self.task_id,
-                              phase=self.phase, status=self.status, value=value)), flush=True)
-        time.sleep(1.5)
+                if value != 0:
+                    self.arm._respone()
+            print(json.dumps(dict(event='gripper_command', time_s=time.time(), task_id=self.task_id,
+                                  phase=self.phase, status=self.status, value=value)), flush=True)
+            # Keep close isolated: SDK response handling sends an M120 query.
+            time.sleep(3 if value == 0 else 1.5)
+            if value == 0:
+                with arm_deadline():
+                    self.arm._respone()
 
     def arm_step(self, axis, direction, pickup=False, distance=1, guard=None, y_mm=0):
         self.require_arm()
