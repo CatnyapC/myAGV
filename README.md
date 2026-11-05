@@ -1,245 +1,106 @@
-# myAGV P340 Command Control
+# myAGV + P340
 
-Language: [English](#english) | [日本語](#日本語)
+WebUI for the myAGV chassis, P340 arm and gripper: live ROS map, cameras,
+manual movement, no-go zones, navigation and camera-guided Fetch.
 
-Minimal robot setup commands: [QUICKSTART.md](QUICKSTART.md).
+## Start or update the robot WebUI
 
-Local four-panel WebUI and map/no-go editor: [WEBUI.md](WEBUI.md).
-Demo-only development milestone; services are managed with PM2.
+Run on the robot. Requires ROS Noetic, the `~/myagv_ros` workspace, Python
+3.11+, uv, Node.js and PM2. **First installation:** follow
+[hardware setup](HARDWARE_WEBUI.md#install-and-start), including the driver
+watchdog and navigation patches/builds. Repeat those builds when their patches change.
 
-Read-only real ROS map/pose and camera connection: [HARDWARE_WEBUI.md](HARDWARE_WEBUI.md).
-Hardware motion and arm control are not yet connected to the WebUI.
-
-Combined ROS keyboard control for **AGV + P340 arm + gripper**:
-see [TELEOP.md](TELEOP.md). Use `teleop_control.py` in the system ROS Python
-environment; `command_control.py` below remains the direct-serial command console.
-
-AGV・P340アーム・グリッパーの統合キーボード操作は [TELEOP.md](TELEOP.md) を参照。
-`teleop_control.py` は ROS のシステム Python 環境で実行します。
-
-Record item poses with `p`, then fetch back to the demo's startup base and arm pose:
-[NAVIGATION.md](NAVIGATION.md). No dropoff configuration is needed.
-
-## English
-
-Use `command_control.py` from the repository root for myAGV chassis movement and P340 arm operation.
-
-## Initial setup on myAGV Raspberry Pi
-
-Install Git and curl:
-
-```bash
-sudo apt update
-sudo apt install -y git curl
-```
-
-If `apt update` hangs on `ports.ubuntu.com` IPv6, use `sudo apt -o Acquire::ForceIPv4=true update`.
-
-Install `uv`:
-
-```bash
-export UV_INSTALL_DIR="$HOME/.local/uv"
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source "$UV_INSTALL_DIR/env"
-```
-
-Clone this repository and install the Python environment:
-
-```bash
-git clone https://github.com/CatnyapC/myAGV.git
-cd myAGV
-uv sync
-```
-
-`git clone` is preferred over downloading one file with `curl` because `uv sync` uses `pyproject.toml` and `uv.lock`.
-
-## Connect and run
-
-Connect the P340 by USB serial. The myAGV chassis uses `/dev/ttyAMA2` by default. List ports:
-
-```bash
-uv run python command_control.py --list-ports
-```
-
-On Raspberry Pi the port is usually `/dev/ttyUSB0`:
-
-```bash
-uv run python command_control.py --p340-port /dev/ttyUSB0
-```
-
-On macOS it may look like:
-
-```bash
-uv run python command_control.py --p340-port /dev/cu.usbserial-140
-```
-
-The first P340 command runs `go_zero()`. To skip homing:
-
-```bash
-uv run python command_control.py --p340-port /dev/ttyUSB0 --no-zero
-```
-
-The script waits for each P340 coordinate move to finish before showing the next `myagv>` prompt.
-
-If a move prints `write failed: [Errno 5] Input/output error`, handle it as a dropped USB serial connection:
-
-1. Stop the script with `Ctrl+C`.
-2. Replug the USB serial cable.
-3. Run `uv run python command_control.py --list-ports` again.
-4. Restart with `uv run python command_control.py --p340-port /dev/ttyUSB0`.
-
-If it keeps happening, use a powered USB hub, direct USB port, or shorter USB cable.
-
-## Update later
+Stop any running task before updating. Close the vendor UI, keyboard teleop and
+other serial controllers; only one controller may own the hardware.
 
 ```bash
 cd ~/myAGV
-git pull
-uv sync
+git pull --ff-only
+uv sync --locked --extra web
+npm --prefix web ci
+npm --prefix web run build
+pm2 startOrRestart ecosystem.robot.config.cjs
+MYAGV_HARDWARE_DIR="$HOME/myAGV/web_runtime/ros" \
+MYAGV_WEB_ORIGIN="http://172.28.13.26:5173" \
+pm2 startOrRestart ecosystem.config.cjs --only myagv-api,myagv-web --update-env
+pm2 status
 ```
 
-## Basic commands
+Open **http://172.28.13.26:5173** on the same trusted network. Replace that IP
+in both the browser URL and `MYAGV_WEB_ORIGIN` for another robot.
+The frontend proxies the local API on port 8791. Do not expose it publicly.
+Starting services does not home the arm or start a navigation task.
 
-Type commands at the `myagv>` prompt.
+## Operate
 
-| Command | Meaning | Example |
-| --- | --- | --- |
-| `move DIRECTION [speed] [seconds]` | Manual chassis movement pulse, max `10` seconds | `move forward 10 1` |
-| `stop` | Stop chassis movement | `stop` |
-| `reach X Y Z [speed]` | Move to absolute XYZ coordinate in mm | `reach 180 0 80 30` |
-| `coord AXIS VALUE [speed]` | Move one axis only | `coord Z 60` |
-| `where` | Print current coordinates | `where` |
-| `zero` | Run `go_zero()` | `zero` |
-| `speed reach VALUE` | Set default reach speed, `1..200` | `speed reach 40` |
-| `speed grip VALUE` | Set default gripper speed, `1..1500` | `speed grip 500` |
-| `speed move VALUE` | Set default manual move speed, `1..127` | `speed move 10` |
-| `speed go VALUE` | Set future navigation speed | `speed go 0.3` |
-| `clamp [value] [speed]` | Close gripper, default value `0` | `clamp` |
-| `release [value] [speed]` | Open gripper, default value `100` | `release` |
-| `grip VALUE [speed]` | Set gripper value, `0..100` | `grip 50 500` |
-| `go X Y YAW` | Reserved for navigation, not implemented yet | `go 1.2 0.5 90` |
-| `quit` | Exit | `quit` |
+1. **Check connection:** verify live map, robot pose, front camera and arm camera.
+   Open **OPERATE → Hardware controls**; check driver, sensor and controller status.
+2. **Localize:** in saved-map mode, enter the robot's actual position and heading
+   in **GOAL**, click **Set pose from goal**, verify the marker, then **Confirm map
+   pose**. Live SLAM establishes its pose automatically.
+3. **Home arm:** clear its travel area, click **Home arm** and confirm. Use
+   **Already homed** only if homing completed since the last power-on. Controller
+   restarts clear homing and localization confirmations; recheck both.
+4. **Move manually:** select **BASE**, **ARM** or **PICKUP**. Hold a direction
+   button to move; release to stop. PICKUP combines slow base movement and arm
+   positioning. Use **Open gripper** / **Close gripper** while stopped.
+   Manual base driving bypasses no-go planning: watch the robot.
+5. **Prepare transport:** fold the arm manually, measure a radius enclosing the
+   base, arm and payload, enter it, tick the measurement checkbox, then **Record
+   transport pose**. **Transport pose** later returns to those measured joints.
 
-`move` directions: `forward`/`f`/`fwd`, `back`/`b`/`bwd`, `left`/`l`, `right`/`r`, `cw`, `ccw`.
+Use the red **STOP** button to interrupt motion. Keep the physical stop accessible.
+If controls are disabled, read the displayed reason before continuing.
 
-## Coordinate limits
+## Map, navigation and Fetch
 
-Coordinates are millimeters. The script rejects out-of-range coordinates by default.
+- **No-go zones:** MAP → More → No-go zone. Select opposite corners and save.
+- **Go:** set a map goal, then click **Go**. Requires confirmed localization,
+  fresh sensors and valid obstacle/clearance checks. Go does not fold the arm;
+  put it in a safe transport pose before travel.
+- **Manual Item Update:** position the robot manually, stop, then click this
+  MAP action. With named reference items and a configured vision model, it
+  captures the front camera and estimates item locations without moving.
+- **Fetch:** select an item with a reference image and current-map location.
+  Configure the vision model, record grasp height and arm/camera GOAL poses,
+  and record transport clearance first. Fetch approaches, aligns, grasps,
+  returns to its starting base pose and places the item. Check the displayed
+  prerequisites; see [Fetch calibration](HARDWARE_WEBUI.md#dual-camera-fetch-calibration)
+  for the recording procedure.
 
-| Axis | Range |
-| --- | --- |
-| X | `-360..365.55 mm` |
-| Y | `-365.55..365.55 mm` |
-| Z | `-140..130 mm` |
-
-## 日本語
-
-リポジトリ直下の `command_control.py` で myAGV 車体移動と P340 アーム操作を行います。
-
-## myAGV Raspberry Pi 初回セットアップ
-
-Git と curl をインストールします。
+## Service controls
 
 ```bash
-sudo apt update
-sudo apt install -y git curl
+# Inspect recent controller/API logs
+pm2 logs myagv-bridge --lines 30 --nostream
+pm2 logs myagv-api --lines 30 --nostream
+
+# Restart only the web services
+pm2 restart myagv-api myagv-web
+
+# After stopping motion in the UI, shut down this project's services
+pm2 stop myagv-api myagv-web myagv-bridge myagv-localization myagv-ros
 ```
 
-`apt update` が `ports.ubuntu.com` の IPv6 接続で止まる場合は、`sudo apt -o Acquire::ForceIPv4=true update` を使います。
+If hardware is unavailable, check power, USB/cameras and bridge logs. If TELEOP
+owns control, exit it before using WebUI motion. These commands do not configure
+automatic startup after reboot.
 
-`uv` をインストールします。
+## Other entry points
 
-```bash
-export UV_INSTALL_DIR="$HOME/.local/uv"
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source "$UV_INSTALL_DIR/env"
-```
+- [Robot setup and keyboard quick start](QUICKSTART.md)
+- [Hardware setup, safety and calibration](HARDWARE_WEBUI.md)
+- [Local simulation and model configuration](WEBUI.md)
+- [Combined keyboard control](TELEOP.md) · [Taught-station navigation](NAVIGATION.md)
+- [Test commands](tests/README.md)
 
-このリポジトリを取得し、Python 環境を作ります。
-
-```bash
-git clone https://github.com/CatnyapC/myAGV.git
-cd myAGV
-uv sync
-```
-
-`curl` で単体ファイルだけを取得する方法もありますが、`uv sync` は `pyproject.toml` と `uv.lock` を使うため、`git clone` を推奨します。
-
-## 接続と起動
-
-P340 を USB シリアル接続します。myAGV 車体は標準で `/dev/ttyAMA2` を使います。ポートを確認します。
+For the standalone direct-serial console (with other controllers stopped):
 
 ```bash
 uv run python command_control.py --list-ports
-```
-
-Raspberry Pi では通常 `/dev/ttyUSB0` です。
-
-```bash
 uv run python command_control.py --p340-port /dev/ttyUSB0
 ```
 
-macOS から操作する場合は、次のようなポート名になります。
-
-```bash
-uv run python command_control.py --p340-port /dev/cu.usbserial-140
-```
-
-最初の P340 コマンド実行時に標準で `go_zero()` を実行します。原点復帰を省略する場合だけ、次のように `--no-zero` を付けます。
-
-```bash
-uv run python command_control.py --p340-port /dev/ttyUSB0 --no-zero
-```
-
-スクリプトは P340 座標移動が終わってから次の `myagv>` プロンプトを出します。
-
-移動時に `write failed: [Errno 5] Input/output error` が出る場合は、USB シリアル接続が切断またはリセットされたものとして扱います。
-
-1. `Ctrl+C` でスクリプトを止めます。
-2. USB シリアルケーブルを挿し直します。
-3. `uv run python command_control.py --list-ports` を再実行します。
-4. `uv run python command_control.py --p340-port /dev/ttyUSB0` で起動し直します。
-
-何度も起きる場合は、電源付き USB ハブ、直結 USB ポート、短い USB ケーブルを使ってください。
-
-## 2 回目以降の更新
-
-```bash
-cd ~/myAGV
-git pull
-uv sync
-```
-
-## 基本コマンド
-
-`myagv>` プロンプトで入力します。
-
-| コマンド | 意味 | 例 |
-| --- | --- | --- |
-| `move DIRECTION [speed] [seconds]` | 手動の車体移動パルス。最大 `10` 秒 | `move forward 10 1` |
-| `stop` | 車体移動を停止 | `stop` |
-| `reach X Y Z [speed]` | XYZ 絶対座標へ移動。単位は mm | `reach 180 0 80 30` |
-| `coord AXIS VALUE [speed]` | 1 軸だけ移動 | `coord Z 60` |
-| `where` | 現在座標を表示 | `where` |
-| `zero` | `go_zero()` を実行 | `zero` |
-| `speed reach VALUE` | 標準 reach 速度を設定。`1..200` | `speed reach 40` |
-| `speed grip VALUE` | 標準グリッパー速度を設定。`1..1500` | `speed grip 500` |
-| `speed move VALUE` | 標準手動移動速度を設定。`1..127` | `speed move 10` |
-| `speed go VALUE` | 将来のナビゲーション速度を設定 | `speed go 0.3` |
-| `clamp [value] [speed]` | クランパーを閉じる。標準 value は `0` | `clamp` |
-| `release [value] [speed]` | クランパーを開く。標準 value は `100` | `release` |
-| `grip VALUE [speed]` | クランパー開度を指定。`0..100` | `grip 50 500` |
-| `go X Y YAW` | ナビゲーション予約。未実装 | `go 1.2 0.5 90` |
-| `quit` | 終了 | `quit` |
-
-`move` の方向: `forward`/`f`/`fwd`, `back`/`b`/`bwd`, `left`/`l`, `right`/`r`, `cw`, `ccw`。
-
-## 座標範囲
-
-座標単位は mm です。スクリプトは標準で範囲外の座標を拒否します。
-
-| 軸 | 範囲 |
-| --- | --- |
-| X | `-360..365.55 mm` |
-| Y | `-365.55..365.55 mm` |
-| Z | `-140..130 mm` |
+Commands include `where`, `zero`, `reach X Y Z`, `coord Z VALUE`, `clamp`,
+`release`, `move forward 10 1`, `stop` and `quit`. Coordinates are millimeters.
+The first arm command homes automatically unless `--no-zero` is supplied.
