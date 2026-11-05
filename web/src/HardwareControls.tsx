@@ -71,7 +71,7 @@ export function StopRecovery({ state, connected, command }: Pick<Props, 'state' 
   </>;
 }
 
-export function HardwareControls({ stations, state, connected, goal, command, hold, stop }: Props) {
+export function HardwareControls({ stations, state, connected, goal, command, hold, stop, skipBaseAlign, onSkipBaseAlign }: Props & { skipBaseAlign: boolean; onSkipBaseAlign: (value: boolean) => void }) {
   const [mode, setMode] = useState('BASE');
   const [name, setName] = useState('');
   const [radius, setRadius] = useState(String(state?.clearance_m ?? .21));
@@ -94,6 +94,8 @@ export function HardwareControls({ stations, state, connected, goal, command, ho
     onKeyUp={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); release(); } }} onBlur={() => hold(null)} aria-label={`Hold ${label}`}>{label}</Button>;
   return <details className="hardware-controls" open>
     <summary>Hardware controls</summary>
+    <label><input type="checkbox" checked={skipBaseAlign} disabled={!idle} onChange={e => onSkipBaseAlign(e.target.checked)} /> Skip base align</label>
+    <span className="muted">Fetch and alignment tests go straight to arm alignment. Approach still runs during Fetch.</span>
     {state?.phase === 'teleop' && <div role="status"><strong>TELEOP controls hardware</strong><p>Item Z and GOAL recording remain available. Exit TELEOP to resume WebUI motion; stopped feedback is verified automatically.</p></div>}
     {confirmation && <div role="alertdialog" aria-label="Confirm hardware action">
       <p>{confirmation.message}</p>

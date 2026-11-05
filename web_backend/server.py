@@ -630,6 +630,8 @@ def create_app(directory=ROOT / 'web_runtime', stations_path=ROOT / 'stations.js
                         raise ValueError('Record the item grasp height before testing grasp / place')
                     data = {**data, 'grasp_z_mm': item['grasp_z_mm']}
                 if kind in ('fetch', 'fetch_test'):
+                    if type(data.get('skip_base_align', False)) is not bool:
+                        raise ValueError('Skip base align must be a boolean')
                     metric_protocol = editor.settings['values']['llm_model'] in CODEX_MODELS
                     if metric_protocol and not editor.hardware.control.get('metric_alignment_available'):
                         raise ValueError('Restart robot controller to enable millimeter alignment')

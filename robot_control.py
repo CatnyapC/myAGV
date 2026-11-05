@@ -1238,6 +1238,9 @@ class Control:
             self.robot.nav.wait_stopped()
 
     def calibrate_fetch(self, packet, config):
+        skip_base_align = packet.get('skip_base_align', False)
+        if type(skip_base_align) is not bool:
+            raise ValueError('Skip base align must be a boolean')
         config = calibration_config(config)
         request_timeout = (FETCH_VISION_TIMEOUT_S + 5) * (FETCH_VISION_RETRIES + 1)
         self.phase, self.status = 'calibrating', 'Aligning pickup with front and arm cameras'
@@ -1247,7 +1250,7 @@ class Control:
         response_path = self.directory / 'fetch_vision_response.json'
         turned = 0
         history = []
-        stage = 'base'
+        stage = 'arm' if skip_base_align else 'base'
         map_id, revision = self.robot.grid['map_id'], self.robot.zones['revision']
 
         def current():
@@ -1258,9 +1261,10 @@ class Control:
             return self.wait_vision_sensors()
 
         try:
-            if not packet.get('preview'):
+            if not packet.get('preview') or (stage == 'arm' and packet.get('alignment_protocol') == 'metric-v1'):
                 target_z = number(packet['vision_item'].get('calibration_z_mm'),
                     LIMITS['Z'][0] + 5, LIMITS['Z'][1] - 5, 'Calibration GOAL Z; recapture GOAL if missing')
+            if not packet.get('preview'):
                 self.status = 'Moving Z to ARM CALIBRATION GOAL height'
                 current()
                 self.robot.nav.wait_stopped()

@@ -540,6 +540,39 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
             with patch('robot_control.atomic_json', side_effect=respond), self.assertRaisesRegex(ValueError, 'violates active stage'):
                 c.calibrate_fetch({'vision_item': {'name': 'cup', 'calibration_z_mm': 30}}, None)
 
+    def test_skip_base_align_starts_at_arm(self):
+        for preview, protocol in ((False, 'visual-bounds-v1'), (True, 'visual-bounds-v1'),
+                                  (False, 'metric-v1'), (True, 'metric-v1')):
+            with self.subTest(preview=preview, protocol=protocol), tempfile.TemporaryDirectory() as folder:
+                c = fake_control()
+                c.directory = Path(folder)
+                c.task_id, c.turn_fetch, c.move_pickup_z = 'task', Mock(), Mock()
+                c.arm.get_coords_info.return_value = [0, 150, 30]
+                c.capture.return_value = {'image': 'compressed'}
+                requests = []
+                def respond(path, value):
+                    requests.append(value)
+                    atomic_json(c.directory / 'fetch_vision_response.json', dict(
+                        id=value['id'], result=dict(x_mm=0, y_mm=0, turn_deg=0),
+                        aligned_perfectly=True, metric_ready=True,
+                        residual_mm=dict(x_mm=0, y_mm=0), model_aligned=True))
+                with patch('robot_control.atomic_json', side_effect=respond):
+                    c.calibrate_fetch(dict(skip_base_align=True, preview=preview, alignment_protocol=protocol,
+                        vision_item=dict(calibration_z_mm=30)), None)
+                self.assertEqual([r['stage'] for r in requests], ['arm'])
+                c.capture.assert_called_once_with('arm', vision=True)
+                c.turn_fetch.assert_not_called()
+                if preview:
+                    c.move_pickup_z.assert_not_called()
+                else:
+                    c.move_pickup_z.assert_called_once_with(30, ANY)
+
+    def test_skip_base_align_requires_boolean(self):
+        c = fake_control()
+        for value in ('false', 1, None):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'must be a boolean'):
+                c.calibrate_fetch(dict(skip_base_align=value), None)
+
     def test_goal_z_is_reached_before_any_alignment_image(self):
         for start_z in (10, 65, 39, 39.42, 40.58, 41):
             with self.subTest(start_z=start_z), tempfile.TemporaryDirectory() as folder:

@@ -77,6 +77,7 @@ export function App() {
   const [requestText, setRequestText] = useState('');
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [skipBaseAlign, setSkipBaseAlign] = useState(false);
   const [resetMapOpen, setResetMapOpen] = useState(false);
   const [layoutEditing, setLayoutEditing] = useState(false);
   const [layoutError, setLayoutError] = useState('');
@@ -335,6 +336,7 @@ export function App() {
       await controlReady(type === 'manual' ? 1000 : 5000);
       if (type === 'manual' && !held.current) return;
       await api('/api/commands', { method: 'POST', body: JSON.stringify({ ...values,
+        ...(['fetch', 'fetch_test'].includes(type) ? { skip_base_align: skipBaseAlign } : {}),
         type, id: commandId(), session_id: session.current, stop_epoch: state?.hardware?.stop_epoch, map_id: packet.info.map_id, expected_revision: zones.revision }) });
       if (type !== 'manual') log(`Accepted · ${type.replaceAll('_', ' ')}`, 'info', 'Action');
       if (type === 'teach' || type === 'transport_record' || type === 'reset_map') await reload();
@@ -690,7 +692,7 @@ export function App() {
           <Square size={14} /> Zone {i + 1}<span className="row-end">{selected === zone.id ? 'Selected' : ''}</span>
         </button>) : <span className="muted">None</span>}</div>
         <span className="muted enforcement">{state?.demo === false ? costmapReady ? 'ROS global + local no-go applied' : 'ROS no-go enforcement pending' : costmapReady ? 'Demo costmap applied' : 'Costmap pending'}</span>
-        {state?.demo === false && <HardwareControls stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
+        {state?.demo === false && <HardwareControls skipBaseAlign={skipBaseAlign} onSkipBaseAlign={setSkipBaseAlign} stations={stations} state={state.hardware} connected={connected} goal={goal} command={hardwareCommand} hold={input => { held.current = input; }} stop={() => void stop()} />}
         <FetchTest metric={state?.llm?.model.startsWith('codex-local/')} connected={connected} editable={canEdit && !busy} turnEnabled={state?.demo === false && Boolean(state?.hardware?.localized)} itemId={selectedItemId} itemName={selectedItem?.name}
           indexRevision={photos?.revision} graspZ={selectedItem?.grasp_z_mm} holdingItemId={state?.hardware?.grasp_test_item_id}
           graspToggleAvailable={state?.hardware?.grasp_test_toggle_available} command={hardwareCommand} stop={() => void stop()} onLog={log}
