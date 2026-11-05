@@ -159,7 +159,7 @@ hardware stop accessible. This controller has not yet been tested on the robot.
 ## Local checks (no hardware)
 
 ```bash
-uv run python -m unittest test_teleop_control test_command_control
+uv run python -m unittest tests.test_teleop_control tests.test_command_control
 ```
 
 Tests cover mode switching, motion timeout, command ordering, limits, missing

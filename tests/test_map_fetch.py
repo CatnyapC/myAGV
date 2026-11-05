@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 from aiohttp.test_utils import TestClient, TestServer
 from robot_control import Stopped
-from test_item_locations import open_map
-from test_robot_control import fake_control
+from tests.test_item_locations import open_map
+from tests.test_robot_control import fake_control
 from web_backend.item_locations import DEFAULT_CONFIG, catalog_signature
 from web_backend.photos import PhotoIndex, demo_frame
 from web_backend.server import EDITOR, create_app

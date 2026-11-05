@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight } from './layout.ts';
+import { DEFAULT_LAYOUT, canonicalLayout, dividers, moveDivider, validatedLayout, viewportCellHeight } from '../src/layout.ts';
 
 test('viewport fill, coupled divider resizing, minimums and reset', () => {
   const original = validatedLayout(DEFAULT_LAYOUT);

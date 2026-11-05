@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { commandId, hardwareBlocks, waitForControlLease, type HardwareState } from './api.ts';
+import { commandId, hardwareBlocks, waitForControlLease, type HardwareState } from '../src/api.ts';
 
 test('commands wait for a fresh receipt, and STOP or hidden page cancels pending commands', async () => {
   let state = { ack: 1, epoch: 0, visible: true };

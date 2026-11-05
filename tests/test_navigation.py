@@ -135,7 +135,7 @@ class NavigationTurnPatchTest(unittest.TestCase):
             v3_backup.write_text('20 degree patch backup')
             v4_backup = path.with_suffix('.cpp.before-shortest-turn-v4')
             v4_backup.write_text('30 degree patch backup')
-            command = [sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')), str(path)]
+            command = [sys.executable, str((Path(__file__).resolve().parents[1] / 'install_navigation_turn.py')), str(path)]
             for _ in range(2):
                 subprocess.run(command, check=True, capture_output=True, text=True)
             self.assertEqual(path.read_text(), patch_navigation_turn(source))
@@ -173,7 +173,7 @@ class NavigationTurnPatchTest(unittest.TestCase):
             global_path.write_text('#include <global_planner/planner_core.h>\n    // add orientations if needed')
             path.write_text(source)
             path.with_name('trajectory_planner_ros.cpp').write_text('unknown source')
-            result = subprocess.run([sys.executable, str(Path(__file__).with_name('install_navigation_turn.py')),
+            result = subprocess.run([sys.executable, str((Path(__file__).resolve().parents[1] / 'install_navigation_turn.py')),
                                      str(path)], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(path.read_text(), source)
@@ -405,7 +405,7 @@ class NavigationTest(unittest.TestCase):
         self.nav.client.cancel_goal.assert_not_called()
 
     def test_launch_planner_success_is_inside_arrival_tolerance(self):
-        launch = ET.parse(Path(__file__).with_name("navigation_fetch.launch")).getroot()
+        launch = ET.parse((Path(__file__).resolve().parents[1] / "navigation_fetch.launch")).getroot()
         self.assertEqual(launch[1].tag, "include")
         self.assertEqual(launch[1].get("file"),
                          "$(find myagv_navigation)/launch/navigation_active.launch")
@@ -487,7 +487,7 @@ class NavigationTest(unittest.TestCase):
             self.nav.go_to(POSE, require_arrival=False)
 
     def test_web_planner_preserves_arrival_latch_and_turn_limits(self):
-        launch = ET.parse(Path(__file__).with_name('web_hardware.launch')).getroot()
+        launch = ET.parse((Path(__file__).resolve().parents[1] / 'web_hardware.launch')).getroot()
         node = launch.find("node[@name='move_base']")
         params = dict(line.strip().split(': ', 1) for line in node.findall('rosparam')[-1].text.splitlines()
                       if ': ' in line and not line.lstrip().startswith('#'))

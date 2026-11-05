@@ -116,7 +116,7 @@ Rebuild and restart navigation to load the patch. Run the offline regression
 on the ROS machine; it publishes no motion commands:
 
 ```bash
-g++ -std=c++14 -fno-access-control test_navigation_turn.cpp -o /tmp/myagv-navigation-turn $(pkg-config --cflags --libs base_local_planner)
+g++ -std=c++14 -fno-access-control tests/test_navigation_turn.cpp -o /tmp/myagv-navigation-turn $(pkg-config --cflags --libs base_local_planner)
 /tmp/myagv-navigation-turn
 ```
 
@@ -593,7 +593,7 @@ startup has not been enabled.
 ## Verification
 
 ```bash
-.venv/bin/python -m unittest discover -p 'test_*.py'
+.venv/bin/python -m unittest discover -s tests -t . -p 'test_*.py'
 npm --prefix web test
 npm --prefix web run build
 pm2 logs myagv-bridge --lines 30 --nostream

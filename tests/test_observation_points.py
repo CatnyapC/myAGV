@@ -10,7 +10,7 @@ import uuid
 
 from aiohttp.test_utils import TestClient, TestServer
 
-from test_robot_control import fake_control
+from tests.test_robot_control import fake_control
 from web_backend.map_data import demo_map
 from web_backend.observation_points import ObservationPoints
 from web_backend.photos import PhotoIndex, demo_frame

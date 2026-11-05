@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { chassisOutline, latestMapObservation, mapFitBounds, rectangleCorners, toView, toWorld, type MapInfo, type Navigation, type Photo } from './mapGeometry.ts';
+import { chassisOutline, latestMapObservation, mapFitBounds, rectangleCorners, toView, toWorld, type MapInfo, type Navigation, type Photo } from '../src/mapGeometry.ts';
 
 test('map shows only the latest current observation across cameras and items', () => {
   const older: Extract<Photo, { kind: 'observation' }> = { id: 'older', kind: 'observation',

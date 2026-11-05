@@ -146,5 +146,5 @@ Gripper completion uses a configurable delay and does not detect whether an obje
 Local tests without hardware:
 
 ```bash
-.venv/bin/python -m unittest test_pickup_alignment test_navigation test_teleop_control test_command_control
+.venv/bin/python -m unittest tests.test_pickup_alignment tests.test_navigation tests.test_teleop_control tests.test_command_control
 ```

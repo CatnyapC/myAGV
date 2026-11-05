@@ -12,7 +12,7 @@ import uuid
 from aiohttp.test_utils import TestClient, TestServer
 
 from robot_control import Stopped, UpdatePaused
-from test_robot_control import fake_control, packet
+from tests.test_robot_control import fake_control, packet
 from web_backend.map_data import demo_map
 from web_backend.photos import PhotoIndex, demo_frame
 from web_backend.resolve import target_preview

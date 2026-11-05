@@ -16,7 +16,7 @@ from navigation import Navigation
 from aiohttp.test_utils import TestClient, TestServer
 
 from fetch_calibration import alignment_command, calibration_config, measured_arm_alignment, pickup_delta, qualitative_alignment, vision_image
-from test_robot_control import fake_control
+from tests.test_robot_control import fake_control
 from robot_control import Stopped
 from robot_safety import fresh, number
 from P340.keyboard_control import LIMITS

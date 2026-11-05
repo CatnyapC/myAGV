@@ -354,7 +354,7 @@ trusted LAN or phone hotspot; do not expose it to the public internet.
 ## Necessary checks
 
 ```bash
-.venv/bin/python -m unittest test_web_backend test_web_simulation test_web_photos test_web_resolve
+.venv/bin/python -m unittest tests.test_web_backend tests.test_web_simulation tests.test_web_photos tests.test_web_resolve
 npm --prefix web run build
 npm --prefix web test
 ```

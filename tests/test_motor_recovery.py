@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 from install_driver_watchdog import patch_recovery
 from robot_control import Stopped
 from robot_ros import RobotROS
-from test_robot_control import fake_control
+from tests.test_robot_control import fake_control
 
 
 LEGACY = '''void MyAGV::restoreRun()

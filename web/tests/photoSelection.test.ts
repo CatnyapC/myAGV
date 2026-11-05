@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { loadPhotoSelection, savePhotoSelection } from './photoSelection.ts';
+import { loadPhotoSelection, savePhotoSelection } from '../src/photoSelection.ts';
 
 test('selection survives reload, clearing, invalid storage and unavailable storage', () => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');

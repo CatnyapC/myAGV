@@ -1,5 +1,5 @@
 // Offline geometry regressions; no goals or motor commands are published.
-#include "myagv_polyline.h"
+#include "../myagv_polyline.h"
 #include <cassert>
 #include <iostream>
 #include <random>

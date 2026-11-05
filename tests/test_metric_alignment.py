@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from fetch_calibration import MetricArmCalibration, metric_arm_alignment
-from test_robot_control import fake_control
+from tests.test_robot_control import fake_control
 
 
 class MetricAlignmentTest(unittest.TestCase):

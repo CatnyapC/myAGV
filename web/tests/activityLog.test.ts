@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appendLog, type LogEntry } from './activityLog.ts';
+import { appendLog, type LogEntry } from '../src/activityLog.ts';
 
 test('log retains messages across actions and groups repeated failures without losing severity or source', () => {
   const initial = appendLog([], 'Connection lost', 'error', 'Connection', 1000);

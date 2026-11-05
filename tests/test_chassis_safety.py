@@ -7,7 +7,7 @@ import unittest
 
 from install_driver_watchdog import install, patch_serial_timeout, patch_speed_guard
 
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @unittest.skipUnless(shutil.which('c++'), 'C++ compiler unavailable')

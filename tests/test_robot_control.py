@@ -647,7 +647,7 @@ class ControlTest(unittest.TestCase):
         with self.assertRaises(ValueError): patch_driver('unknown driver')
 
     def test_assume_clear_ignores_item_occupancy_but_keeps_no_go_and_bounds(self):
-        from test_item_locations import open_map
+        from tests.test_item_locations import open_map
         robot = RobotROS.__new__(RobotROS)
         robot.grid = open_map()
         robot.grid['cells'] = [100] * len(robot.grid['cells'])

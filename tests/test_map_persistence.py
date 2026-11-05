@@ -8,8 +8,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from map_persistence import load_saved_map, map_digest, prepare_localization, save_map, validate_saved_map
-from test_map_reset import robot_at
-from test_robot_control import fake_control, packet
+from tests.test_map_reset import robot_at
+from tests.test_robot_control import fake_control, packet
 from web_backend.map_data import demo_map
 from web_backend.storage import atomic_json
 
