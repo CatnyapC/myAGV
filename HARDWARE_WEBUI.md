@@ -428,6 +428,12 @@ live frames, even if a stored photo was selected previously.
 
 ## STOP and reconnect behavior
 
+P340 response and measured motion-completion timeouts default to 3 seconds,
+including homing. Alignment feedback reads allow two retries; reads during
+motion share the remaining completion budget. Motion commands are never resent.
+Terminal jogging retains its shorter `--arm-timeout` to enforce the key deadman.
+Long moves or homing that exceed the completion budget stop with a timeout.
+
 Starting `teleop_control.py` requests a local hardware handoff before opening
 the P340 or publishing chassis commands. WebUI releases the arm serial port and
 pauses its chassis output while continuing camera/map monitoring. Active WebUI

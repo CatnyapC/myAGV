@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 
-from navigation import arm_deadline, load_stations, pickup_angles, save_station, validate_angles, wait_arm
+from navigation import P340_TIMEOUT_S, arm_deadline, load_stations, pickup_angles, save_station, validate_angles, wait_arm
 from fetch_calibration import FETCH_VISION_RETRIES, FETCH_VISION_TIMEOUT_S, alignment_command, calibration_config, metric_arm_alignment, pickup_delta
 from P340.keyboard_control import LIMITS
 from robot_safety import fresh, lease_valid, manual_vector, number, footprint_clear
@@ -324,12 +324,12 @@ class Control:
         if self.phase == 'calibrating':
             self.angles = validate_angles(self.arm_feedback(self.arm.get_angles_info, guard))
         else:
-            with arm_deadline(.4):
+            with arm_deadline():
                 self.angles = validate_angles(self.arm.get_angles_info())
         self.arm_stamp = time.monotonic()
         return self.angles
 
-    def arm_feedback(self, read, guard=None):
+    def arm_feedback(self, read, guard=None, deadline=None):
         # Retry only reads: a timed-out motion command may already be executing.
         for attempt in range(3):
             if attempt:
@@ -337,8 +337,11 @@ class Control:
                     raise Stopped('Arm feedback cancelled or lease expired')
                 if guard:
                     guard()
+            remaining = P340_TIMEOUT_S if deadline is None else deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Arm motion completion timed out')
             try:
-                with arm_deadline(.4):
+                with arm_deadline(min(P340_TIMEOUT_S, remaining)):
                     return read()
             except TimeoutError:
                 if attempt == 2:
@@ -376,7 +379,7 @@ class Control:
         from pymycobot.ultraArmP340 import ultraArmP340
         if self.arm:
             return
-        with arm_deadline(3):
+        with arm_deadline():
             self.arm = ultraArmP340(os.environ.get('MYAGV_P340_PORT', '/dev/ttyUSB0'), 115200)
             self.arm._serial_port.exclusive = True
         write = self.arm._serial_port.write
@@ -481,15 +484,15 @@ class Control:
         if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
             raise Stopped('Arm task lease expired')
         # shortcut: M15 may not interrupt absolute travel; verify firmware before relying on Web STOP.
-        with arm_deadline(.4):
+        with arm_deadline():
             self.arm.set_angles(target, 30)
-        self.angles = wait_arm(self.arm, target, timeout=30)
+        self.angles = wait_arm(self.arm, target)
         self.arm_stamp = time.monotonic()
 
     def grip(self, value):
         self.require_arm()
         number(value, 0, 100, 'Gripper value')
-        with arm_deadline(.4):
+        with arm_deadline():
             # Use the documented P340 frame; newer SDKs append a second M-code.
             with self.arm.lock:
                 self.arm._serial_port.write(('M25 A%s F500\r' % value).encode())
@@ -529,10 +532,10 @@ class Control:
             raise Stopped('Arm step cancelled or lease expired')
         if guard:
             guard()
-        with arm_deadline(.4):
+        with arm_deadline():
             self.arm.set_mode(0)
             self.arm.set_coords(coords, 30)
-        end = time.monotonic() + 3 * max(1, distance, abs(y_mm))
+        end = time.monotonic() + P340_TIMEOUT_S
         actual = None
         while time.monotonic() < end:
             if self.stop_pending or not lease_valid(self.deadline, time.monotonic()):
@@ -541,8 +544,8 @@ class Control:
                 waiting = time.monotonic()
                 guard()
                 end += time.monotonic() - waiting
-            actual = self.arm_feedback(self.arm.get_coords_info, guard)
-            if actual and len(actual) >= len(coords) and all(type(a) in (int, float) and math.isfinite(a)
+            actual = self.arm_feedback(self.arm.get_coords_info, guard, deadline=end)
+            if time.monotonic() < end and actual and len(actual) >= len(coords) and all(type(a) in (int, float) and math.isfinite(a)
                     and abs(a-b) <= (1 if pickup and axis == 'Z' and i == 2 else .5)
                     for i, (a, b) in enumerate(zip(actual[:len(coords)], coords))):
                 self.read_arm(guard=guard)
@@ -598,9 +601,9 @@ class Control:
         confirmed = False
         try:
             if self.arm:
-                with arm_deadline(.4):
+                with arm_deadline():
                     self.arm.set_jog_stop()
-                self.angles = wait_arm(self.arm, timeout=2)
+                self.angles = wait_arm(self.arm)
                 self.arm_stamp = time.monotonic()
                 arm_stopped = True
             self.robot.nav.wait_stopped(timeout=2)
@@ -751,9 +754,9 @@ class Control:
             self.robot.zero()
             self.robot.nav.wait_stopped()
             self.connect_arm()
-            with arm_deadline(.4):
+            with arm_deadline():
                 self.arm.set_jog_stop()
-            self.angles = wait_arm(self.arm, timeout=3)
+            self.angles = wait_arm(self.arm)
             self.arm_stamp = time.monotonic()
             self.arm_homed = packet.get('arm_homed') is True
             self.home_cancelled = False
@@ -766,7 +769,7 @@ class Control:
             self.home_cancelled = True  # Keep the fault latched until all stopped feedback is verified.
             self.robot.recover_base_stop()
             self.connect_arm()
-            self.angles = wait_arm(self.arm, timeout=3)
+            self.angles = wait_arm(self.arm)
             self.arm_stamp = time.monotonic()
             self.arm_homed, self.home_cancelled = False, False
         elif kind == 'initial_pose':
@@ -815,9 +818,9 @@ class Control:
             self.robot.nav.wait_stopped()
             if kind == 'home':
                 self.phase, self.status, self.arm_homed = 'homing', 'Homing arm', False
-                with arm_deadline(60):
+                with arm_deadline():
                     self.arm.go_zero()
-            self.angles = wait_arm(self.arm, timeout=60 if kind == 'home' else 5)
+            self.angles = wait_arm(self.arm)
             self.arm_stamp, self.arm_homed = time.monotonic(), True
         elif kind == 'gripper':
             self.robot.nav.wait_stopped()
@@ -839,7 +842,7 @@ class Control:
             radius = number(packet.get('clearance_m'), .15, 1, 'Measured folded clearance radius')
             if packet.get('measured') is not True:
                 raise ValueError('Explicit measured-clearance confirmation required')
-            angles = validate_angles(wait_arm(self.arm, timeout=5))
+            angles = validate_angles(wait_arm(self.arm))
             self.robot.set_clearance(radius)
             self.robot.nav.approach_settings = (.3, .03, radius)
             self.robot.nav.aligner = None
@@ -859,7 +862,7 @@ class Control:
                 raise ValueError('Confirm overwrite of the current station revision')
             self.robot.nav.wait_stopped()
             pose = self.robot.nav.get_pose()
-            angles = pickup_angles(wait_arm(self.arm, timeout=5))
+            angles = pickup_angles(wait_arm(self.arm))
             if load_stations(self.stations_path).get(name) != previous:
                 raise ValueError('Station changed while recording; retry')
             save_station(name, dict(base=pose, arm_angles_deg=angles), self.stations_path)
@@ -870,8 +873,8 @@ class Control:
         elif kind == 'capture_grasp_height':
             self.require_arm()
             self.robot.nav.wait_stopped()
-            wait_arm(self.arm, timeout=3)
-            with arm_deadline(.4):
+            wait_arm(self.arm)
+            with arm_deadline():
                 coords = self.arm.get_coords_info()
             if not coords or len(coords) < 3:
                 raise RuntimeError('Arm coordinate feedback unavailable')
@@ -879,9 +882,9 @@ class Control:
         elif kind == 'capture_grasp_goal':
             self.require_arm()
             self.robot.nav.wait_stopped()
-            before = wait_arm(self.arm, timeout=3)
+            before = wait_arm(self.arm)
             captures = {camera: self.capture(camera, grasp_goal=True)['capture_id'] for camera in ('front', 'arm')}
-            after = wait_arm(self.arm, timeout=3)
+            after = wait_arm(self.arm)
             if len(before) != len(after) or any(abs(a-b) > .5 for a, b in zip(before, after)):
                 raise RuntimeError('Arm moved while recording grasp goal')
             return dict(captures=captures)
@@ -897,7 +900,7 @@ class Control:
             if type(packet.get('preview')) is not bool:
                 raise ValueError('Explicit test mode required')
             self.robot.nav.wait_stopped()
-            angles = wait_arm(self.arm, timeout=3)
+            angles = wait_arm(self.arm)
             if not packet['preview']:
                 pickup_angles(angles)
             self.calibrate_fetch(packet, packet['fetch_settings'])
@@ -924,7 +927,7 @@ class Control:
             pose = dict(x_m=pose['x_m'], y_m=pose['y_m'], yaw_deg=math.degrees(pose['yaw_rad']))
             if self.config.get('grasp_test_hold'):
                 self.require_arm()
-                angles = wait_arm(self.arm, timeout=3)
+                angles = wait_arm(self.arm)
                 transport = self.config['transport_angles']
                 if (transport is None or len(angles) != len(transport)
                         or any(abs(a-b) > 1 for a, b in zip(angles[:3], transport[:3]))):
@@ -1360,8 +1363,8 @@ class Control:
         self.base_enabled = False
         self.robot.zero()
         self.robot.nav.wait_stopped()
-        pickup_angles(wait_arm(self.arm, timeout=3))
-        with arm_deadline(.4):
+        pickup_angles(wait_arm(self.arm))
+        with arm_deadline():
             coords = self.arm.get_coords_info()
         if not coords or len(coords) < 3:
             raise RuntimeError('Arm coordinate feedback unavailable')
@@ -1432,7 +1435,7 @@ class Control:
 
         current()
         self.robot.nav.wait_stopped()
-        start_arm, start_base = wait_arm(self.arm, timeout=5), dict(self.robot.nav.get_pose())
+        start_arm, start_base = wait_arm(self.arm), dict(self.robot.nav.get_pose())
         transport = self.config['transport_angles']
         if transport is None:
             raise ValueError('Record transport pose first')
@@ -1468,7 +1471,7 @@ class Control:
             self.calibrate_fetch(dict(packet, preview=False), calibration)
             current(assume_clear=True)
             self.test_grasp(dict(grasp, action='grasp'))
-            holding_angles = pickup_angles(wait_arm(self.arm, timeout=5))
+            holding_angles = pickup_angles(wait_arm(self.arm))
             current(assume_clear=True)
             self.fold()
             self.retreat_from_item()

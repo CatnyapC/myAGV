@@ -44,7 +44,7 @@ def main():
             raise RuntimeError('TELEOP camera session changed')
         # TELEOP owns serial; its main loop supplies feedback while motion keys are paused.
         teleop_before = control.teleop_feedback() if camera_id == 'arm' and teleop_observation else None
-        before = teleop_before['angles'] if teleop_before else wait_arm(control.arm, timeout=3) if camera_id == 'arm' and control.arm else None
+        before = teleop_before['angles'] if teleop_before else wait_arm(control.arm) if camera_id == 'arm' and control.arm else None
         if camera_id == 'arm' and before is None and not teleop_observation:
             raise RuntimeError('Arm feedback required for acquisition')
         goal_z = None
@@ -52,7 +52,7 @@ def main():
             if teleop_before:
                 coords = teleop_before['coords']
             else:
-                with arm_deadline(.4):
+                with arm_deadline():
                     coords = control.arm.get_coords_info()
             if not coords or len(coords) < 3:
                 raise RuntimeError('Arm coordinate feedback unavailable')
@@ -80,7 +80,7 @@ def main():
             if teleop_before:
                 coords = teleop_after['coords']
             else:
-                with arm_deadline(.4):
+                with arm_deadline():
                     coords = control.arm.get_coords_info()
             if not coords or len(coords) < 3:
                 raise RuntimeError('Arm coordinate feedback unavailable')

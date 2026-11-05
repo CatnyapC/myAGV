@@ -11,6 +11,8 @@ import tempfile
 import time
 
 
+P340_TIMEOUT_S = 3
+
 STATIONS = Path(__file__).with_name("stations.json")
 # Conservative P340 product limits; J4 is the optional end-effector servo.
 # Matches pymycobot 4.0.5 RobotLimit.robot_limit["ultraArmP340"].
@@ -96,7 +98,7 @@ class _ArmDeadlineExpired(BaseException):
 
 
 @contextmanager
-def arm_deadline(seconds=3):
+def arm_deadline(seconds=P340_TIMEOUT_S):
     """Bound SDK calls that can otherwise wait forever; main thread on Linux/macOS."""
     def expired(_signum, _frame):
         raise _ArmDeadlineExpired()
@@ -112,12 +114,12 @@ def arm_deadline(seconds=3):
         signal.signal(signal.SIGALRM, previous)
 
 
-def read_arm_angles(arm):
-    with arm_deadline():
+def read_arm_angles(arm, timeout=P340_TIMEOUT_S):
+    with arm_deadline(timeout):
         return validate_angles(arm.get_angles_info())
 
 
-def wait_arm(arm, target=None, timeout=30):
+def wait_arm(arm, target=None, timeout=P340_TIMEOUT_S):
     """Require stable measured angles and, for moves, agreement with the target."""
     if target is not None:
         print("Waiting for measured arm target: %s" % target, flush=True)
@@ -125,7 +127,9 @@ def wait_arm(arm, target=None, timeout=30):
     previous = None
     stable_reads = 0
     while time.monotonic() < deadline:
-        angles = read_arm_angles(arm)
+        angles = read_arm_angles(arm, timeout=min(P340_TIMEOUT_S, max(0.001, deadline - time.monotonic())))
+        if time.monotonic() >= deadline:
+            break
         if target is not None and len(angles) != len(target):
             raise ValueError("P340 feedback and target joint counts differ")
         # "Moving end" is not reliable for idle/no-op commands. Use feedback

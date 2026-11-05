@@ -327,7 +327,7 @@ class FetchCalibrationTest(unittest.IsolatedAsyncioTestCase):
                 saved = Mock()
                 namespace = dict(control=SimpleNamespace(localized=True, arm=arm, read_arm=lambda: [90,30,40]),
                     robot=SimpleNamespace(grid=dict(map_id='map'), nav=Mock(), stopped=lambda: True),
-                    wait_arm=Mock(return_value=[90,30,40]), arm_deadline=lambda _: nullcontext(),
+                    wait_arm=Mock(return_value=[90,30,40]), arm_deadline=lambda *_: nullcontext(),
                     number=number, LIMITS=LIMITS, fresh=fresh, frame_lock=threading.Lock(),
                     time=SimpleNamespace(time=lambda: 100, monotonic=lambda: 0),
                     frames=dict(arm=('pixels', dict(captured_at_s=100, map_id='map'))),

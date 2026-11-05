@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 import copy
 import json
 import math
@@ -260,7 +262,7 @@ class StationsTest(unittest.TestCase):
             nav.get_pose.return_value = dict(POSE)
             wait.return_value = [10, 20, 30]
             c.handle("p", 2)
-            wait.assert_called_once_with(c.arm, timeout=5)
+            wait.assert_called_once_with(c.arm)
             ask_name.assert_called_once()
             output.assert_any_call("Recording cancelled")
 
@@ -298,10 +300,23 @@ class StationsTest(unittest.TestCase):
             with self.subTest(feedback=feedback):
                 arm = Mock()
                 arm.get_angles_info.side_effect = feedback
-                with patch("navigation.time.sleep"), patch(
-                    "navigation.time.monotonic", side_effect=[0, 0, 0.2, 0.4, 0.6, 1.1]
+                clock = [0]
+                with patch("navigation.time.sleep", side_effect=lambda _: clock.__setitem__(0, clock[0] + .3)), patch(
+                    "navigation.time.monotonic", side_effect=lambda: clock[0]
                 ), self.assertRaisesRegex(TimeoutError, "requested pose"):
                     navigation.wait_arm(arm, [10, 20, 30], timeout=1)
+
+    def test_arm_completion_default_is_three_seconds(self):
+        clock = [0]
+        arm = Mock()
+        arm.get_angles_info.return_value = [0, 20, 30]
+        with patch("navigation.time.monotonic", side_effect=lambda: clock[0]), patch(
+                "navigation.time.sleep", side_effect=lambda _: clock.__setitem__(0, clock[0] + 1)), \
+                patch("navigation.arm_deadline", return_value=nullcontext()) as deadline, \
+                self.assertRaises(TimeoutError):
+            navigation.wait_arm(arm, [10, 20, 30])
+        self.assertEqual(clock[0], 3)
+        self.assertEqual([call.args[0] for call in deadline.call_args_list], [3, 2, 1])
 
     def test_joint_three_uses_p340_sdk_range(self):
         from pymycobot.error import RobotLimit

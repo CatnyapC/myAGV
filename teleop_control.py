@@ -76,8 +76,8 @@ class Controller:
                 raise RuntimeError(self.observation_error)
             if not self.arm_homed:
                 raise ValueError('Home arm in TELEOP before recording, or start with --arm-homed if already homed')
-            angles = wait_arm(self.arm, timeout=3) if new else None
-            with arm_deadline(self.args.arm_timeout):
+            angles = wait_arm(self.arm) if new else None
+            with arm_deadline():
                 if angles is None:
                     angles = validate_angles(self.arm.get_angles_info())
                 coords = self.arm.get_coords_info()
@@ -160,7 +160,7 @@ class Controller:
             self.stop()
             self.arm_homed = False
             print("Homing arm; wait for completion")
-            with arm_deadline(60):
+            with arm_deadline():
                 self.arm.go_zero()
             self.arm_homed = True
             print("Arm homed")
@@ -252,7 +252,7 @@ def record_station(controller, nav, ask_name):
     print("Recording: reading map position (up to 3s)...", flush=True)
     pose = nav.get_pose()
     print("Recording: waiting for stable arm angles...", flush=True)
-    angles = wait_arm(controller.arm, timeout=5)
+    angles = wait_arm(controller.arm)
     station = {"base": pose, "arm_angles_deg": angles}
     print("Measured pose: %s" % station)
     name = ask_name().strip()

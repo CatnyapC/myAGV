@@ -419,7 +419,7 @@ class ControlTest(unittest.TestCase):
                 c.arm.get_coords_info.side_effect = [[0, 200, 0], [0, 205, 0], [0, 210, 0]]
                 c.arm.get_angles_info.return_value = [90, 0, 0]
                 def advance(_seconds):
-                    clock[0] += 4
+                    clock[0] += 1
                     if stop:
                         c.stop_pending = 'STOP'
                 with patch('robot_control.arm_deadline', return_value=nullcontext()), \
@@ -431,6 +431,26 @@ class ControlTest(unittest.TestCase):
                     else:
                         c.arm_step('X', 1, pickup=True, distance=10)
                 c.arm.set_coords.assert_called_once_with([0, 210, 0], 30)
+
+    def test_pickup_motion_completion_retries_share_three_second_budget(self):
+        c = fake_control()
+        clock = [0]
+        c.deadline = 60
+        reads = [0]
+        def feedback():
+            reads[0] += 1
+            if reads[0] == 1:
+                return [0, 150, 35, 27]
+            clock[0] += 1
+            raise TimeoutError('P340 did not respond in time')
+        c.arm.get_coords_info.side_effect = feedback
+        with patch('robot_control.time.monotonic', side_effect=lambda: clock[0]), \
+                patch('robot_control.arm_deadline', return_value=nullcontext()) as deadline, \
+                self.assertRaises(TimeoutError):
+            c.arm_step('X', 1, pickup=True, distance=60)
+        self.assertEqual(clock[0], 3)
+        self.assertEqual([call.args[0] for call in deadline.call_args_list if call.args], [3, 3, 2, 1])
+        c.arm.set_coords.assert_called_once_with([0, 210, 35, 27], 30)
 
     def test_pickup_correction_keeps_limits_and_pre_motion_stop(self):
         for reason in ('distance', 'workspace', 'heading', 'stop', 'lease', 'manual'):
@@ -480,7 +500,7 @@ class ControlTest(unittest.TestCase):
                 patch('robot_control.wait_arm', return_value=[90, 10, 20]) as wait:
             c.fold()
         c.arm.set_angles.assert_called_once_with([90, 10, 20], 30)
-        wait.assert_called_once_with(c.arm, [90, 10, 20], timeout=30)
+        wait.assert_called_once_with(c.arm, [90, 10, 20])
         self.assertEqual(c.angles, [90, 10, 20])
 
     def test_full_arm_target_preserves_pre_motion_gates(self):
