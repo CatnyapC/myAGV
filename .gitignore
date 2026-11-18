@@ -193,3 +193,5 @@ cython_debug/
 # Finder metadata and Office temporary lock files
 .DS_Store
 ~$*
+
+/paper/
